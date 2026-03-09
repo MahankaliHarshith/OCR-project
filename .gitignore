@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+backups/
+
+# Runtime directories
+uploads/*
+exports/*
+logs/*
+models/*
+data/*
+
+# Keep directory structure
+!uploads/.gitkeep
+!exports/.gitkeep
+!logs/.gitkeep
+!models/.gitkeep
+!data/.gitkeep
+
+# OS files
+Thumbs.db
+.DS_Store

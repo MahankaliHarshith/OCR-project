@@ -1,0 +1,31 @@
+# Handwritten Receipt Scanner - Dependencies
+# Python 3.11+
+# Pinned to exact versions for reproducible builds.
+# To upgrade, edit versions here and run: pip install -r requirements.txt
+
+# ─── Core OCR ─────────────────────────────────────────────
+easyocr==1.7.2
+opencv-python==4.13.0.92
+numpy==2.4.2
+
+# ─── Azure Document Intelligence (Cloud OCR — optional) ──
+# Install for hybrid mode (highest accuracy + speed).
+# Without this, the app falls back to local EasyOCR automatically.
+azure-ai-documentintelligence==1.0.2
+azure-core==1.38.2
+
+# ─── Excel Generation ────────────────────────────────────
+openpyxl==3.1.5
+
+# ─── Web Framework ───────────────────────────────────────
+fastapi==0.132.0
+uvicorn[standard]==0.41.0
+python-multipart==0.0.22
+
+# ─── Utilities ───────────────────────────────────────────
+Pillow==12.1.1
+python-dotenv==1.2.1
+
+# ─── Testing (dev) ───────────────────────────────────────
+pytest==9.0.2
+httpx==0.28.1

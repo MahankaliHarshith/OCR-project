@@ -1,0 +1,1137 @@
+# Product Requirements Document: Handwritten Receipt Scanner Application
+
+**Version:** 1.0.0 (Built & Working)
+**Date:** February 21, 2026
+**Status:** Implemented — ready for recreation by AI
+
+---
+
+## 1. Executive Summary
+
+This document describes a **fully implemented** web application that scans handwritten shop receipts, extracts item names and quantities using EasyOCR, and generates structured Excel reports. It is a **desktop web application** (not mobile) built with Python/FastAPI on the backend and vanilla HTML/CSS/JS on the frontend.
+
+**Core Value:** Transform hours of manual data entry into seconds of automated processing with 90%+ accuracy for handwritten receipt digitization.
+
+**Target Users:** Small to medium retail shop owners (paint shops, hardware stores), shop managers, and accountants needing digitized handwritten sales records.
+
+---
+
+## 2. Tech Stack (Exact Versions)
+
+| Component          | Technology                | Version     |
+|--------------------|---------------------------|-------------|
+| Language           | Python                    | 3.11+       |
+| OCR Engine         | EasyOCR                   | 1.7.1+      |
+| Image Processing   | OpenCV (cv2)              | 4.9.0+      |
+| Excel Generation   | OpenPyXL                  | 3.1.2+      |
+| Backend Framework  | FastAPI                   | 0.110.0+    |
+| ASGI Server        | Uvicorn (with standard)   | 0.27.0+     |
+| File Upload        | python-multipart          | 0.0.9+      |
+| Image Library      | Pillow                    | 10.2.0+     |
+| Array Library      | NumPy                     | 1.26.0+     |
+| Database           | SQLite (stdlib sqlite3)   | Built-in    |
+| Frontend           | Vanilla HTML / CSS / JS   | N/A         |
+| Font               | Google Fonts - Inter      | N/A         |
+| Testing            | pytest                    | 8.0.0+      |
+| HTTP Test Client   | httpx                     | 0.27.0+     |
+
+### requirements.txt (exact)
+
+```
+# Handwritten Receipt Scanner - Dependencies
+# Python 3.11+
+
+# --- Core OCR ---
+easyocr>=1.7.1
+opencv-python>=4.9.0
+numpy>=1.26.0
+
+# --- Excel Generation ---
+openpyxl>=3.1.2
+
+# --- Web Framework ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# --- Utilities ---
+Pillow>=10.2.0
+
+# --- Testing (dev) ---
+pytest>=8.0.0
+httpx>=0.27.0
+```
+
+---
+
+## 3. Project Structure (Exact)
+
+```
+OCR project/
+├── run.py                       # Server startup script (entry point)
+├── requirements.txt             # Python dependencies
+├── README.md                    # Project README
+├── Product Requirements Document Han.txt  # This document
+├── app/
+│   ├── __init__.py              # Package init (__version__ = "1.0.0")
+│   ├── config.py                # All configuration constants
+│   ├── database.py              # SQLite database layer (singleton `db`)
+│   ├── logging_config.py        # Centralized logging setup
+│   ├── main.py                  # FastAPI application entry point
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── routes.py            # All REST API endpoint definitions
+│   ├── ocr/
+│   │   ├── __init__.py
+│   │   ├── preprocessor.py      # OpenCV image preprocessing pipeline
+│   │   ├── engine.py            # EasyOCR text extraction engine
+│   │   └── parser.py            # Receipt data parser (regex + fuzzy match)
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── product_service.py   # Product catalog CRUD (singleton `product_service`)
+│   │   ├── receipt_service.py   # Receipt processing pipeline (singleton `receipt_service`)
+│   │   └── excel_service.py     # Excel report generation (singleton `excel_service`)
+│   └── static/
+│       ├── index.html           # Single-page web frontend
+│       ├── styles.css           # Complete CSS styling
+│       └── app.js               # Frontend JavaScript logic
+├── uploads/                     # Uploaded & processed receipt images (auto-created)
+├── exports/                     # Generated Excel/CSV files (auto-created)
+├── models/                      # EasyOCR model files (auto-downloaded on first run)
+│   ├── craft_mlt_25k.pth       # CRAFT text detection model
+│   └── english_g2.pth          # English recognition model
+├── logs/                        # Log files (auto-created)
+│   └── app.log                 # Rotating log file
+├── tests/
+│   ├── __init__.py
+│   └── test_app.py             # Unit tests (parser, excel, database)
+└── receipt_scanner.db           # SQLite database file (auto-created at runtime)
+```
+
+---
+
+## 4. How to Run
+
+### Start the server:
+```bash
+pip install -r requirements.txt
+python run.py
+```
+
+### Server output:
+```
+==================================================
+  Receipt Scanner v1.0.0
+==================================================
+  App:      http://localhost:8000
+  Docs:     http://localhost:8000/docs
+  Log file: logs/app.log
+  Level:    DEBUG
+==================================================
+```
+
+The server runs on 0.0.0.0:8000 with reload=True (debug mode).
+
+### Run tests:
+```bash
+python -m pytest tests/test_app.py -v
+```
+
+### Environment variable:
+- LOG_LEVEL — Set console log verbosity: DEBUG | INFO | WARNING | ERROR (default: DEBUG). File always logs at DEBUG level.
+
+---
+
+## 5. Configuration (app/config.py)
+
+All settings are centralized in app/config.py. Key values:
+
+### Base Paths
+- BASE_DIR = project root (parent of app/)
+- UPLOAD_DIR = BASE_DIR / "uploads" (auto-created)
+- EXPORT_DIR = BASE_DIR / "exports" (auto-created)
+- MODEL_DIR = BASE_DIR / "models" (auto-created)
+- DATABASE_PATH = BASE_DIR / "receipt_scanner.db"
+
+### OCR Configuration
+- OCR_LANGUAGE = "en"
+- OCR_USE_GPU = False
+- OCR_CONFIDENCE_THRESHOLD = 0.85 (below this -> flag for review)
+- OCR_LOW_CONFIDENCE_THRESHOLD = 0.70 (below this -> flag entire receipt)
+- OCR_TEXT_THRESHOLD = 0.7
+- OCR_LOW_TEXT = 0.4
+- OCR_LINK_THRESHOLD = 0.4
+- OCR_CANVAS_SIZE = 2560
+- OCR_MAG_RATIO = 1.5
+- OCR_MIN_SIZE = 10
+
+### Image Preprocessing
+- IMAGE_MIN_WIDTH = 800
+- IMAGE_MIN_HEIGHT = 600
+- IMAGE_MAX_DIMENSION = 2560
+- GAUSSIAN_BLUR_KERNEL = (5, 5)
+- ADAPTIVE_THRESH_BLOCK_SIZE = 11
+- ADAPTIVE_THRESH_C = 2
+- CLAHE_CLIP_LIMIT = 2.0
+- CLAHE_TILE_GRID_SIZE = (8, 8)
+
+### Fuzzy Matching
+- FUZZY_MATCH_CUTOFF = 0.8 (80% similarity threshold)
+- FUZZY_MAX_RESULTS = 3
+
+### Excel Styling
+- EXCEL_HEADER_COLOR = "4472C4" (blue)
+- EXCEL_HEADER_FONT_COLOR = "FFFFFF" (white)
+- EXCEL_ALT_ROW_COLOR = "F2F2F2" (light gray)
+- EXCEL_LOW_CONFIDENCE_COLOR = "FFD966" (yellow)
+- EXCEL_MAX_COLUMN_WIDTH = 50
+
+### Application Settings
+- APP_TITLE = "Handwritten Receipt Scanner"
+- APP_VERSION = "1.0.0"
+- MAX_RECEIPTS_PER_BATCH = 50
+- MAX_FILE_SIZE_MB = 20
+- ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+- AUTO_SAVE_INTERVAL_SECONDS = 30
+
+### Logging
+- LOG_LEVEL = from env var LOG_LEVEL or "DEBUG"
+- LOG_DIR = BASE_DIR / "logs" (auto-created)
+- LOG_FILE = LOG_DIR / "app.log"
+- LOG_FILE_MAX_BYTES = 10 * 1024 * 1024 (10 MB)
+- LOG_FILE_BACKUP_COUNT = 5
+- LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-30s | %(funcName)-20s | L%(lineno)-4d | %(message)s"
+- LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+- LOG_CONSOLE_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+
+### API Settings
+- API_HOST = "0.0.0.0"
+- API_PORT = 8000
+- API_DEBUG = True
+- CORS_ORIGINS = ["*"]
+
+---
+
+## 6. Database Schema (SQLite)
+
+The database file is receipt_scanner.db at the project root. It is auto-created on first run. The Database class in app/database.py is instantiated as a singleton `db`.
+
+### Table: products
+```sql
+CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_code VARCHAR(10) UNIQUE NOT NULL,
+    product_name VARCHAR(200) NOT NULL,
+    category VARCHAR(50),
+    unit VARCHAR(20) DEFAULT 'Piece',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_product_code ON products(product_code);
+CREATE INDEX IF NOT EXISTS idx_product_name ON products(product_name);
+```
+
+### Table: receipts
+```sql
+CREATE TABLE IF NOT EXISTS receipts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_number VARCHAR(50) UNIQUE NOT NULL,
+    scan_date DATE NOT NULL,
+    scan_time TIME NOT NULL,
+    image_path VARCHAR(500),
+    processed_image_path VARCHAR(500),
+    processing_status VARCHAR(20) DEFAULT 'pending',
+    total_items INTEGER DEFAULT 0,
+    ocr_confidence_avg REAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_receipt_date ON receipts(scan_date);
+```
+
+### Table: receipt_items
+```sql
+CREATE TABLE IF NOT EXISTS receipt_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_id INTEGER NOT NULL,
+    product_code VARCHAR(10) NOT NULL,
+    product_name VARCHAR(200),
+    quantity REAL NOT NULL,
+    unit VARCHAR(20),
+    ocr_confidence REAL,
+    manually_edited BOOLEAN DEFAULT 0,
+    FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_receipt_items ON receipt_items(receipt_id);
+```
+
+### Table: processing_logs
+```sql
+CREATE TABLE IF NOT EXISTS processing_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_id INTEGER,
+    stage VARCHAR(50),
+    status VARCHAR(20),
+    duration_ms INTEGER,
+    error_message TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (receipt_id) REFERENCES receipts(id)
+);
+```
+
+### Default Seed Data (auto-inserted on first run via INSERT OR IGNORE)
+
+| Code | Product Name          | Category    | Unit   |
+|------|-----------------------|-------------|--------|
+| ABC  | 1L Exterior Paint     | Paint       | Litre  |
+| XYZ  | 1L Interior Paint     | Paint       | Litre  |
+| PQR  | 5L Primer White       | Paint       | Litre  |
+| MNO  | Paint Brush 2 inch    | Accessories | Piece  |
+| DEF  | 1L Wood Varnish       | Paint       | Litre  |
+| GHI  | Sandpaper Sheet       | Accessories | Piece  |
+| JKL  | Putty Knife 4 inch    | Tools       | Piece  |
+| STU  | Wall Filler 1kg       | Material    | Kg     |
+| VWX  | Masking Tape 1 inch   | Accessories | Roll   |
+| RST  | Thinner 500ml         | Solvent     | Bottle |
+
+---
+
+## 7. Backend Architecture
+
+### 7.1 Entry Point: run.py
+
+Uses uvicorn.run() to start the FastAPI app defined in app.main:app.
+- Host: 0.0.0.0, Port: 8000, Reload: True (debug mode)
+- Imports API_HOST, API_PORT, API_DEBUG, LOG_FILE, LOG_LEVEL from app.config
+- Prints startup banner with app URL, docs URL, log file path, and log level.
+
+### 7.2 FastAPI Application: app/main.py
+
+- Creates a FastAPI instance with title=APP_TITLE, version=APP_VERSION, description, docs_url="/docs", redoc_url="/redoc".
+- Adds CORSMiddleware allowing all origins (CORS_ORIGINS=["*"]), all methods, all headers, credentials=True.
+- Adds HTTP request logging middleware that logs every request with method, URL path, client IP, response status code, and duration in milliseconds. Uses WARNING level for 400+ status codes, DEBUG otherwise.
+- Mounts static file directories using FastAPI StaticFiles:
+  - /static -> app/static/
+  - /uploads -> uploads/
+  - /exports -> exports/
+- Includes the API router from app.api.routes.
+- Serves index.html at the root path / via a GET endpoint (excluded from schema).
+- On startup event, logs app info (title, version, upload dir, export dir, log file, API docs URL).
+- Calls setup_logging() from app.logging_config at module load time (not in startup event).
+
+### 7.3 Logging: app/logging_config.py
+
+setup_logging() is called once at startup. It configures:
+
+1. **Rotating File Handler**: Logs ALL levels to logs/app.log (10MB max per file, 5 backup files, UTF-8 encoding). Uses the detailed LOG_FORMAT.
+2. **Console Handler**: Respects LOG_LEVEL env var, uses ANSI colored output via a custom ColoredFormatter class:
+   - DEBUG = Cyan (\033[36m)
+   - INFO = Green (\033[32m)
+   - WARNING = Yellow (\033[33m)
+   - ERROR = Red (\033[31m)
+   - CRITICAL = Bold Red (\033[1;31m)
+   Uses the compact LOG_CONSOLE_FORMAT.
+3. **Quiets noisy third-party loggers**: Sets these to WARNING level: easyocr, PIL, matplotlib, urllib3, httpcore, httpx, multipart, watchfiles, torch. Sets uvicorn.access and uvicorn.error to INFO.
+
+Root logger level is set to DEBUG (captures everything, handlers filter).
+All pre-existing handlers are cleared first to avoid duplicates on reload.
+
+### 7.4 Database: app/database.py
+
+The Database class manages all SQLite operations. It is instantiated as a module-level singleton: `db = Database()`.
+
+**Key design patterns:**
+- Each method creates a new sqlite3.Connection with row_factory=sqlite3.Row and PRAGMA foreign_keys=ON.
+- Connections are always closed in finally blocks.
+- _create_tables() is called in __init__ (uses CREATE TABLE IF NOT EXISTS).
+- _seed_default_products() is called in __init__ (uses INSERT OR IGNORE).
+- Products use soft-delete (is_active=0), not hard delete.
+- Receipts use hard delete (DELETE FROM) with ON DELETE CASCADE for items.
+
+**Product CRUD Methods:**
+- get_all_products(active_only=True) — returns list of dicts, ordered by product_code. If active_only, filters WHERE is_active=1.
+- get_product_by_code(code) — returns dict or None. Converts code to uppercase. Filters is_active=1.
+- add_product(code, name, category, unit) — inserts product, returns the created product dict.
+- update_product(code, **kwargs) — updates allowed fields (product_name, category, unit, is_active), sets updated_at. Returns updated product.
+- delete_product(code) — calls update_product(code, is_active=0). Returns bool.
+- search_products(query) — LIKE search on both product_code and product_name. Returns list of dicts.
+- get_product_code_map() — returns {code: name} dict for all active products.
+- get_product_catalog_full() — returns {code: {name, category, unit}} dict.
+
+**Receipt CRUD Methods:**
+- create_receipt(receipt_number, image_path, processed_image_path) — inserts receipt with current date/time. Returns receipt_id (int).
+- add_receipt_items(receipt_id, items) — inserts each item, then updates receipt's total_items, processing_status='completed', and ocr_confidence_avg.
+- get_receipt(receipt_id) — returns receipt dict with nested items list, or None.
+- get_recent_receipts(limit=10) — returns list of receipt dicts ordered by created_at DESC.
+- get_receipts_by_date(date) — returns list of receipt dicts with nested items, filtered by scan_date, ordered by scan_time.
+- update_receipt_item(item_id, product_code, product_name, quantity) — updates item fields and sets manually_edited=1.
+- delete_receipt(receipt_id) — hard deletes receipt (CASCADE deletes items). Returns bool.
+
+**Processing Log Methods:**
+- add_processing_log(receipt_id, stage, status, duration_ms, error_message) — inserts log entry.
+- get_processing_logs(receipt_id) — returns list of log dicts ordered by timestamp.
+
+---
+
+## 8. OCR Pipeline (app/ocr/)
+
+### 8.1 Image Preprocessor: app/ocr/preprocessor.py
+
+The ImagePreprocessor class has a main preprocess() method that runs an 8+ stage pipeline:
+
+1. **Load image** — cv2.imread(), validates file existence and minimum size (400x300 pixels, which is half of IMAGE_MIN_WIDTH/HEIGHT).
+2. **Resize** — If any dimension exceeds IMAGE_MAX_DIMENSION (2560), scale down proportionally using cv2.INTER_AREA.
+3. **Grayscale** — cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).
+4. **Quality assessment** — Calculates:
+   - Blur detection: Laplacian variance < 100 means blurry.
+   - Brightness: mean < 60 too dark, > 220 too bright.
+   - Contrast: std dev < 30 is low contrast.
+   - Overall score: 0-100 based on laplacian_var/10, penalized by 0.7 for brightness issues, 0.8 for contrast issues.
+5. **Gaussian blur** — cv2.GaussianBlur(gray, (5,5), 0) for noise reduction.
+6. **Perspective correction** (optional) — Uses Canny edge detection (thresholds 50,150) -> findContours (RETR_EXTERNAL, CHAIN_APPROX_SIMPLE) -> find largest 4-point contour in top 5 by area -> approxPolyDP with 2% epsilon -> cv2.getPerspectiveTransform -> cv2.warpPerspective. Skipped if no quadrilateral found.
+7. **Adaptive thresholding** — cv2.adaptiveThreshold() with ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, block_size=11, C=2.
+8. **Denoising** — cv2.fastNlMeansDenoising(thresh, h=10).
+9. **CLAHE enhancement** — Contrast Limited Adaptive Histogram Equalization with clipLimit=2.0, tileGridSize=(8,8).
+10. **Sharpening** — Unsharp masking: cv2.addWeighted(image, 1.5, gaussian_blur, -0.5, 0) where gaussian uses kernel (0,0) sigma=3.
+
+Returns a tuple of (processed_image_ndarray, metadata_dict).
+Metadata contains: stages list, warnings list, original_size, processed_size, quality dict, processing_time_ms.
+
+Also has:
+- preprocess_for_display(image_path) — light preprocessing for preview only (load + resize to max 1200px).
+- save_processed_image(image, output_path) — saves ndarray to disk with cv2.imwrite(). Creates parent dirs.
+- _order_points(pts) — orders 4 points as top-left, top-right, bottom-right, bottom-left using sum and diff.
+
+### 8.2 OCR Engine: app/ocr/engine.py
+
+The OCREngine class wraps EasyOCR. It is accessed via a lazy singleton function get_ocr_engine().
+
+**Initialization:**
+```python
+self.reader = easyocr.Reader(
+    [language],                          # ['en']
+    gpu=use_gpu,                         # False by default
+    model_storage_directory=str(MODEL_DIR),
+    download_enabled=True,
+    detector=True,
+    recognizer=True,
+    verbose=False,
+    quantize=True,                       # Reduce memory usage
+)
+```
+
+**extract_text(image) method:**
+- Calls self.reader.readtext() with parameters from config: detail=1, paragraph=False, min_size=10, text_threshold=0.7, low_text=0.4, link_threshold=0.4, canvas_size=2560, mag_ratio=1.5.
+- Returns list of dicts with: bbox (native Python list of lists), text (stripped string), confidence (float rounded to 4 decimals), needs_review (bool, True if conf < 0.85).
+- Converts all numpy types to native Python types for JSON serialization (bbox.tolist(), float(confidence), bool(needs_review)).
+- Logs each detection with index, text, confidence, and review status.
+- Catches exceptions from readtext and returns empty list on failure.
+
+**Other methods:**
+- extract_text_simple(image) — returns only text strings (no metadata).
+- get_avg_confidence(detections) — average confidence across detections, rounded to 4 decimals.
+- get_low_confidence_items(detections, threshold) — filter items below threshold.
+
+### 8.3 Receipt Parser: app/ocr/parser.py
+
+The ReceiptParser class parses OCR text output into structured item-quantity pairs.
+
+**Regex patterns (compiled re.IGNORECASE, in priority order):**
+1. ([A-Za-z]{2,6})\s+(\d+\.?\d*) — "ABC 2" or "ABC 2.5"
+2. (\d+\.?\d*)\s+([A-Za-z]{2,6}) — "2 ABC" (quantity first)
+3. ([A-Za-z]{2,6})\s*[xX*]\s*(\d+\.?\d*) — "ABC x 2" or "ABC X 2"
+4. ([A-Za-z]{2,6})\s*[-\u2013\u2014]\s*(\d+\.?\d*) — "ABC - 2" (dash, en-dash, em-dash)
+5. ([A-Za-z]{2,6})\s*:\s*(\d+\.?\d*) — "ABC: 2"
+6. ([A-Za-z]{2,6})\s*\(\s*(\d+\.?\d*)\s*\) — "ABC(2)"
+
+**Skip patterns (lines that are skipped):**
+- Empty lines / whitespace only
+- Lines containing: total, subtotal, sum, grand
+- Lines containing: date, time, invoice, receipt #
+- Lines containing: thank, signature, sign, cash, change
+- Date patterns: dd/mm/yyyy or dd-mm-yyyy or dd.mm.yyyy
+- Time patterns: hh:mm
+- Separator lines: 3+ chars of #, -, =, _, *
+
+**Product code mapping (_map_product_code):**
+1. Exact match (case-insensitive, all codes stored uppercase). Returns (name, "exact").
+2. Fuzzy match using difflib.get_close_matches() with n=FUZZY_MAX_RESULTS(3), cutoff=FUZZY_MATCH_CUTOFF(0.8). Returns (name, "fuzzy").
+3. If no match: returns ("UNKNOWN PRODUCT", "unknown").
+
+**Line parsing (_parse_line):**
+- Tries each regex pattern in order.
+- _identify_code_and_quantity() determines which capture group is alphabetic (code) vs numeric (quantity).
+- Maps code to product name.
+- Gets unit from product catalog (defaults to "Piece").
+- Returns item dict with: code, product, quantity, unit, confidence, needs_review, match_type, raw_text.
+
+**Duplicate handling (_aggregate_duplicates):**
+- If same product code appears multiple times in one receipt, quantities are summed, raw_text values are joined with " | ", and the item is flagged needs_review=True.
+
+**Receipt number generation:**
+- Format: "REC-YYYYMMDD-HHMMSS"
+
+**Output structure of parse() method:**
+```json
+{
+    "receipt_id": "REC-20260221-173400",
+    "scan_timestamp": "2026-02-21T17:34:00.000000",
+    "items": [
+        {
+            "code": "ABC",
+            "product": "1L Exterior Paint",
+            "quantity": 2.0,
+            "unit": "Litre",
+            "confidence": 0.95,
+            "needs_review": false,
+            "match_type": "exact",
+            "raw_text": "ABC 2"
+        }
+    ],
+    "total_items": 1,
+    "avg_confidence": 0.95,
+    "needs_review": false,
+    "unparsed_lines": [],
+    "processing_status": "success"
+}
+```
+If no items found, processing_status is "no_items_found".
+needs_review at receipt level is true if any item has needs_review=true OR avg_confidence < 0.85.
+
+Has an update_catalog(catalog) method to refresh the product catalog dict at runtime.
+
+---
+
+## 9. Services Layer (app/services/)
+
+### 9.1 Receipt Service: app/services/receipt_service.py
+
+The ReceiptService class orchestrates the full pipeline. Module-level singleton: `receipt_service = ReceiptService()`.
+
+**Constructor:** Creates ImagePreprocessor instance, references db singleton, parser is lazy-initialized.
+
+**parser property (lazy):** On first access, loads product catalog from product_service.get_product_code_map() and creates ReceiptParser.
+
+**refresh_catalog():** Reloads catalog from DB and updates the parser. Called before every scan.
+
+**process_receipt(image_path) — 5-step pipeline:**
+
+Step 1: Save uploaded image — Copies to uploads/ with timestamp prefix "receipt_YYYYMMDD_HHMMSS.ext". If already in uploads dir (same resolved parent), skips copy and returns the existing path.
+
+Step 2: Preprocess image — Calls ImagePreprocessor.preprocess(saved_path), saves processed image as "processed_{original_filename}" in uploads dir via preprocessor.save_processed_image().
+
+Step 3: OCR text extraction — Gets the OCR engine singleton via get_ocr_engine(), calls extract_text() on the processed image ndarray. If no results, adds error message and returns early.
+
+Step 4: Parse receipt data — Calls self.parser.parse(ocr_results). If processing_status is "no_items_found", adds error message, sets receipt_data, and returns early.
+
+Step 5: Save to database — Creates receipt record with db.create_receipt(), enriches items with unit info from product_service.get_product_catalog_full(), calls db.add_receipt_items(), then logs all 4 processing stages (preprocessing, ocr_extraction, data_parsing, total_pipeline) with durations via db.add_processing_log(). Sets db_id on receipt_data.
+
+**Return structure:**
+```json
+{
+    "success": true/false,
+    "receipt_data": { receipt parser output + "db_id" },
+    "metadata": {
+        "image_path": "...",
+        "processed_image_path": "...",
+        "preprocessing": { stages, quality, timing },
+        "ocr_time_ms": 1234,
+        "ocr_detections": 5,
+        "ocr_avg_confidence": 0.91,
+        "raw_ocr": [ {"text": "...", "confidence": 0.95}, ... ],
+        "parse_time_ms": 12,
+        "total_time_ms": 3456
+    },
+    "errors": []
+}
+```
+
+**Error resilience:** If DB save fails after successful OCR, parsed data is still returned with success=True.
+
+**Other methods:** get_receipt(id), get_recent_receipts(limit), get_receipts_by_date(date), update_receipt_item(item_id, code, name, qty), delete_receipt(id).
+
+### 9.2 Product Service: app/services/product_service.py
+
+The ProductService class manages the product catalog. Module-level singleton: `product_service = ProductService()`.
+
+**Methods:**
+- get_all_products() — returns list of active product dicts from db.
+- get_product(code) — returns single product dict or None. Uppercases code.
+- add_product(code, name, category, unit) — validates non-empty code and name, checks for duplicates via db.get_product_by_code(), raises ValueError if exists. Strips and uppercases code.
+- update_product(code, **kwargs) — raises ValueError if product not found. Passes kwargs to db.update_product().
+- delete_product(code) — soft delete via db. Returns bool.
+- search_products(query) — delegates to db.search_products(). LIKE search.
+- get_product_code_map() — returns {code: name} dict from db.
+- get_product_catalog_full() — returns {code: {name, category, unit}} dict from db.
+- import_from_csv(csv_content) — parses with csv.DictReader. Expected columns: product_code, product_name, category, unit. Skips existing codes. Returns {added, skipped, errors}.
+- export_to_csv() — writes all products to CSV string via csv.DictWriter with columns: product_code, product_name, category, unit.
+
+### 9.3 Excel Service: app/services/excel_service.py
+
+The ExcelService class generates formatted .xlsx files. Module-level singleton: `excel_service = ExcelService()`.
+
+**Style constants (set in __init__):**
+- header_fill: PatternFill solid blue (#4472C4)
+- header_font: Font bold, white, size 12
+- alt_row_fill: PatternFill solid light gray (#F2F2F2)
+- low_conf_fill: PatternFill solid yellow (#FFD966)
+- border: Border with thin sides all around
+- center_align: Alignment horizontal center, vertical center
+- left_align: Alignment horizontal left, vertical center
+
+**generate_report(receipts, output_path) creates two sheets:**
+
+**Sheet 1 "Daily Sales Report" (_build_data_sheet):**
+- Row 1: Merged A1:H1 title "Daily Sales Report" (bold, size 16, blue color)
+- Row 2: Merged A2:H2 date string "Generated: DD Month YYYY, HH:MM" (size 10, italic, gray #666666)
+- Row 4: Headers with blue background, white bold text, centered, bordered:
+  Receipt No | Date | Time | Product Code | Product Name | Quantity | Unit | Confidence
+- Row 5+: Data rows with thin borders. Columns 1,4,6,7,8 center-aligned; others left-aligned.
+- Alternating row colors: even rows get light gray fill.
+- Low-confidence highlighting: if item confidence < 0.85, entire row gets yellow fill (overrides alternating color).
+- Confidence displayed as percentage with 1 decimal: e.g., "95.0%"
+- Auto-adjusted column widths (min 10, max 50)
+- Freeze panes at A5 (header row stays visible when scrolling)
+
+**Sheet 2 "Summary" (_build_summary_sheet):**
+- Row 1: Merged A1:D1 "Sales Summary" title
+- Row 3-5: Stats — Total Receipts, Total Line Items, Total Quantity (bold labels)
+- Row 7: Product totals headers (same blue style): Product Code | Product Name | Total Quantity | Unit
+- Row 8+: Product totals sorted by product code, with alternating row colors.
+- Grand total row at end: "GRAND TOTAL" in bold size 12 with total quantity.
+
+**File naming:** Sales_YYYYMMDD_HHMMSS.xlsx in exports directory. Creates parent dirs if needed.
+
+**generate_from_db_receipts(receipt_ids, output_path):**
+- Loads each receipt from db.get_receipt(id).
+- Formats items: maps product_code->code, product_name->product, quantity, unit (default "Piece"), ocr_confidence->confidence.
+- Raises ValueError if no receipts found.
+- Calls generate_report().
+
+**generate_daily_report(date, output_path):**
+- Defaults date to today (YYYY-MM-DD format).
+- Loads receipts from db.get_receipts_by_date(date).
+- Raises ValueError if no receipts found for that date.
+- Formats and calls generate_report().
+
+---
+
+## 10. REST API Endpoints (app/api/routes.py)
+
+All routes use an APIRouter. A custom NumpyEncoder (subclass of json.JSONEncoder) handles numpy int, float, bool, and ndarray types for JSON serialization.
+
+### Pydantic Request/Response Models:
+- ProductCreate: product_code (str, min_length=1, max_length=10), product_name (str, min_length=1, max_length=200), category (str, default="", max_length=50), unit (str, default="Piece", max_length=20)
+- ProductUpdate: product_name (Optional[str]), category (Optional[str]), unit (Optional[str])
+- ItemUpdate: product_code (str), product_name (str), quantity (float)
+- ExcelGenerateRequest: receipt_ids (list[int])
+
+### Receipt Processing Endpoints
+
+POST /api/receipts/scan [tag: Receipts]
+- Accepts: multipart file upload (UploadFile)
+- Validates file extension against ALLOWED_IMAGE_EXTENSIONS
+- Validates file size against MAX_FILE_SIZE_MB (reads entire file into memory)
+- Saves as upload_YYYYMMDD_HHMMSS.ext in UPLOAD_DIR
+- Calls receipt_service.process_receipt()
+- Response serialized through NumpyEncoder then parsed back for JSONResponse
+- Returns: full result dict with success, receipt_data, metadata, errors
+- Errors: 400 (bad file type/size), 500 (processing failure)
+
+GET /api/receipts?limit=10 [tag: Receipts]
+- Query param: limit (int, ge=1, le=100, default=10)
+- Returns: {receipts: [...], count: N}
+
+GET /api/receipts/{receipt_id} [tag: Receipts]
+- Returns: receipt dict with items, or 404
+
+DELETE /api/receipts/{receipt_id} [tag: Receipts]
+- Returns: {message: "Receipt deleted successfully."} or 404
+
+PUT /api/receipts/items/{item_id} [tag: Receipts]
+- Body: ItemUpdate {product_code, product_name, quantity}
+- Returns: {message: "Item updated successfully."} or 400
+
+GET /api/receipts/date/{date} [tag: Receipts]
+- Path param: date (str, format YYYY-MM-DD)
+- Returns: {date, receipts: [...], count: N}
+
+### Product Catalog Endpoints
+
+GET /api/products [tag: Products]
+- Returns: {products: [...], count: N}
+
+GET /api/products/search?q=... [tag: Products]
+- Query param: q (str, min_length=1)
+- Returns: {products: [...], count: N}
+
+GET /api/products/{code} [tag: Products]
+- Returns: product dict or 404
+
+POST /api/products [tag: Products]
+- Body: ProductCreate
+- Returns: {message: "Product added successfully.", product: {...}} or 400 if code exists
+
+PUT /api/products/{code} [tag: Products]
+- Body: ProductUpdate (uses model_dump(exclude_none=True))
+- Returns: {message: "Product updated successfully.", product: {...}} or 400
+
+DELETE /api/products/{code} [tag: Products]
+- Returns: {message: "Product deleted successfully."} or 404
+
+GET /api/products/export/csv [tag: Products]
+- Generates CSV file in EXPORT_DIR as products_YYYYMMDD_HHMMSS.csv
+- Returns: FileResponse with media_type text/csv
+
+POST /api/products/import/csv [tag: Products]
+- Accepts: multipart file upload
+- Reads and decodes as UTF-8
+- Returns: {added, skipped, errors}
+
+### Excel Export Endpoints
+
+POST /api/export/excel [tag: Export]
+- Body: ExcelGenerateRequest {receipt_ids: [1,2,3]}
+- Returns: {message, file_path, download_url: "/api/export/download/{filename}"}
+- Errors: 400 (no receipts), 500 (generation failure)
+
+GET /api/export/daily?date=YYYY-MM-DD [tag: Export]
+- Query param: date (optional, defaults to today)
+- Returns: {message, file_path, download_url}
+- Errors: 400 (no receipts for date), 500 (generation failure)
+
+GET /api/export/download/{filename} [tag: Export]
+- Serves file from EXPORT_DIR
+- Sets media type based on extension (.xlsx or .csv)
+- Returns: FileResponse or 404
+
+### Dashboard Endpoint
+
+GET /api/dashboard [tag: Dashboard]
+- Returns: {today: {date, receipts_count, items_count}, recent_receipts: [...], total_products: N}
+- today section: counts receipts and items for current date
+
+### Frontend Route
+
+GET / (exclude from schema)
+- Serves app/static/index.html via FileResponse
+- Fallback: returns JSON message if index.html doesn't exist
+
+---
+
+## 11. Frontend (app/static/)
+
+The frontend is a single-page app with 3 tabs: Scan, Receipts, Catalog. No build tools, no framework — pure vanilla HTML/CSS/JS.
+
+### 11.1 index.html
+
+Structure:
+- DOCTYPE html, lang="en", viewport meta, charset UTF-8
+- Title: "Receipt Scanner - Handwritten Receipt OCR"
+- Links: /static/styles.css, Google Fonts Inter (weights 300-700)
+
+**Header:** Logo with emoji "receipt scanner" and h1 "Receipt Scanner" styled blue. Nav bar with 3 buttons: Scan (default active), Receipts, Catalog.
+
+**Scan Tab (id="tab-scan"):**
+- Upload area (id="dropZone"): camera emoji, h2 "Scan Receipt", drag-drop text, hidden file input (accept="image/*"), browse button, hint text about supported formats.
+- Processing indicator (id="processing", hidden): spinner div, status text (id="processingStatus"), progress bar with fill div (id="progressFill").
+- Results container (id="resultsContainer", hidden): 2-column grid.
+  - Left (image-preview): h3 "Receipt Image", img tag (id="receiptImage").
+  - Right (extracted-data): header with h3 "Extracted Items" + confidence badge (id="avgConfidence"). Editable table (id="itemsTable") with thead: Product Code | Product Name | Quantity | Confidence | Actions. tbody (id="itemsBody"). Action buttons: Add Row, Confirm & Save, Download Excel (hidden initially), Scan Another. Warnings div (hidden). Collapsible details "Raw OCR Output" with pre (id="rawOcrOutput").
+- Batch bar (id="batchBar", hidden): span with counter, "Export All to Excel" button.
+
+**Receipts Tab (id="tab-receipts"):**
+- Section header: h2 "Recent Receipts", date input (id="dateFilter"), Filter button, Daily Report button.
+- Receipts list div (id="receiptsList"): placeholder "Loading receipts...".
+
+**Catalog Tab (id="tab-catalog"):**
+- Section header: h2 "Product Catalog", search input (id="catalogSearch"), Add Product button, Export CSV button.
+- Product form (id="productForm", hidden): h3 title, form grid with 4 fields:
+  - Product Code (text input, maxlength=10)
+  - Product Name (text input)
+  - Category (text input)
+  - Unit (select dropdown: Piece, Litre, Kg, Bottle, Roll, Box, Set)
+  - Save/Cancel buttons.
+- Catalog table (id="catalogTable") with thead: Code | Product Name | Category | Unit | Actions. tbody (id="catalogBody").
+
+**Toast container** (id="toastContainer"): fixed position, bottom-right.
+
+**Modal overlay** (id="modalOverlay", hidden): modal div with title, message, Confirm/Cancel buttons.
+
+Script: /static/app.js
+
+### 11.2 styles.css (657 lines)
+
+**CSS Variables (on :root):**
+- --primary: #4472C4 (blue)
+- --primary-dark: #365FA0
+- --primary-light: #6C9BD2
+- --success: #28A745 (green)
+- --warning: #FFD966 (yellow)
+- --danger: #DC3545 (red)
+- --bg: #F5F7FA (light gray background)
+- --surface: #FFFFFF (white cards)
+- --text: #2D3748 (dark gray)
+- --text-light: #718096 (medium gray)
+- --border: #E2E8F0 (light border)
+- --shadow: 0 2px 8px rgba(0,0,0,0.08)
+- --shadow-lg: 0 8px 24px rgba(0,0,0,0.12)
+- --radius: 10px
+- --radius-sm: 6px
+- --transition: 0.2s ease
+
+**Full CSS reset:** box-sizing border-box on *, body uses Inter font.
+
+**Component styles:**
+- Header: sticky top, white bg, bottom border, shadow.
+- Logo: flex row, emoji 1.75rem, h1 1.3rem bold blue.
+- Nav buttons: pill-style, active=blue bg white text.
+- Main: max-width 1200px centered, 1.5rem padding.
+- Tab content: display none, .active = display block.
+- Upload area: white bg, 2px dashed border, 3rem padding, hover turns border blue.
+- Buttons: .btn base (flex, gap, padding, rounded), variants: btn-primary (blue), btn-success (green), btn-danger (red), btn-secondary (gray bg), btn-outline (transparent, border), btn-sm (smaller).
+- Spinner: 48x48, 4px border with blue top, rotate animation 0.8s.
+- Progress bar: 300px wide, 6px tall, blue fill with smooth width transition.
+- Results grid: 2 columns (1fr : 1.5fr), responsive to 1 column at 768px.
+- Image preview: max-height 500px, object-fit contain, rounded border.
+- Confidence badges: rounded pill, .confidence-high (green bg), .confidence-medium (yellow bg), .confidence-low (red bg).
+- Data table: 100% width, collapse borders, blue header, alternating row colors (#FAFBFC even rows), hover highlight, editable inputs with transparent bg and focus border.
+- Row low confidence: background #FFF8E1 !important.
+- Warnings: yellow bg with yellow border.
+- Raw OCR: collapsible, dark pre block (#1A202C bg).
+- Batch bar: white bg, blue border, flex between.
+- Section headers: flex between, wrap.
+- Input fields: standard styling with focus ring.
+- Product form: white bg, border, shadow, grid layout.
+- Receipt cards: white bg, border, flex between, hover shadow.
+- Toasts: fixed bottom-right, white bg with colored left border (4px), slide-in animation, auto-dismiss.
+- Modal: fixed overlay (rgba black 40%), centered white dialog.
+- Responsive: 600px breakpoint stacks header, section headers, form grid to single column.
+
+### 11.3 app.js (641 lines)
+
+**State object:**
+```javascript
+const state = {
+    currentTab: 'scan',           // Active tab name
+    batchReceiptIds: [],          // Array of DB IDs for batch export
+    currentReceiptData: null,     // Current scan result object
+    editingProduct: null,         // Product code being edited (or null for add)
+};
+```
+
+**Helper:** const $ = (sel) => document.querySelector(sel); const $$ = (sel) => document.querySelectorAll(sel);
+
+**Tab Navigation:** Click handler on .nav-btn elements. Updates state.currentTab, toggles .active class on buttons and tab sections. Loads data when switching: loadReceipts() for receipts tab, loadCatalog() for catalog tab.
+
+**File Upload:**
+- Browse button click and dropZone click both trigger fileInput.click().
+- Drag-over/leave/drop handlers with visual feedback (add/remove .drag-over class).
+- fileInput change handler calls processFile().
+
+**processFile(file):**
+- Client-side validates: file type (jpeg, png, bmp, tiff, webp by MIME or extension), size (max 20MB).
+- Shows processing UI (hides dropZone, shows #processing), calls simulateProgress().
+- Sends FormData with key 'file' to POST /api/receipts/scan.
+- On success: calls displayResults(data, file).
+- On error: shows toast, calls resetScanUI().
+
+**simulateProgress():** 4 stages at 800ms intervals: 20% "Enhancing image...", 50% "Extracting text...", 75% "Structuring data...", 90% "Finalizing...". Purely visual.
+
+**displayResults(data, file):**
+- Hides processing, shows resultsContainer.
+- Stores data in state.currentReceiptData.
+- Shows image preview via FileReader.readAsDataURL.
+- If no receipt_data or no items: shows toast warning and "No items detected" in table.
+- Displays avg confidence badge with color class.
+- Calls populateItemsTable().
+- Shows warnings if errors exist or needs_review is true.
+- Shows raw OCR in pre block.
+- If receipt has db_id: pushes to batchReceiptIds, calls updateBatchBar().
+
+**populateItemsTable(items):**
+- Clears tbody, creates tr for each item.
+- Each cell is an editable input with data-idx and data-field attributes.
+- Quantity input: type=number, step=0.5, min=0.
+- Confidence cell: non-editable, shows percentage, color-coded class.
+- Delete button calls removeRow(idx).
+
+**getConfClass(conf):** >= 0.90 = "confidence-high conf-high", >= 0.80 = "confidence-medium conf-medium", else "confidence-low conf-low".
+
+**Row actions:**
+- removeRow(idx): splices item from state array, re-populates table.
+- Add Row button: pushes new item {code:'', product:'', quantity:1, confidence:1.0, unit:'Piece'}, re-populates.
+
+**Confirm & Save button:**
+- Reads all .editable inputs from #itemsBody, updates state items array.
+- Shows success toast, shows exportExcelBtn.
+
+**Export Excel button:**
+- Gets db_id from state.
+- POST /api/export/excel with {receipt_ids: [dbId]}.
+- Opens download_url in new tab.
+
+**Scan Another button:** Calls resetScanUI() — shows dropZone, hides processing and results, clears fileInput.
+
+**Batch Export:**
+- updateBatchBar(): shows/hides batch bar based on batchReceiptIds length.
+- Export All button: POST /api/export/excel with all batchReceiptIds.
+
+**Receipts Tab (loadReceipts):**
+- GET /api/receipts?limit=20.
+- Renders receipt cards with: receipt_number, scan_date, scan_time, total_items, processing_status.
+- Each card has: View (shows alert with JSON), Excel (POST export), Delete (with confirm dialog).
+
+**Date filter:** GET /api/receipts/date/{date}, renders filtered cards.
+
+**Daily report button:** GET /api/export/daily (optional ?date=), opens download URL.
+
+**Catalog Tab (loadCatalog):**
+- GET /api/products.
+- Renders table rows with: product_code (bold), product_name, category (or "-"), unit (or "Piece"), Edit/Delete buttons.
+
+**Catalog search:** Input event on #catalogSearch. If empty, calls loadCatalog(). Otherwise GET /api/products/search?q={encoded}. Renders filtered table.
+
+**Add Product:** Shows form with empty fields, prodCode enabled, formTitle "Add New Product".
+**Edit Product (editProduct):** GET /api/products/{code}, fills form, disables prodCode, formTitle "Edit Product: {code}".
+**Save Product:**
+- Validates code and name non-empty.
+- If editing: PUT /api/products/{code} with {product_name, category, unit}.
+- If adding: POST /api/products with {product_code, product_name, category, unit}.
+- Hides form, reloads catalog.
+
+**Delete Product (deleteProduct):** confirm() dialog, then DELETE /api/products/{code}, reloads catalog.
+
+**Export Catalog CSV:** Opens /api/products/export/csv in new tab.
+
+**showToast(message, type):** Creates toast div with class "toast {type}", appends to container. Auto-removes after 4s with fade-out (opacity 0, translateX 100%, then remove after 300ms).
+
+**escHtml(str):** XSS prevention — creates div, sets textContent, returns innerHTML.
+
+**DOMContentLoaded:** Sets #dateFilter value to today's date (ISO format split at T).
+
+---
+
+## 12. Tests (tests/test_app.py)
+
+Tests use pytest. No httpx/TestClient integration tests — only unit tests for parser, excel service, and database.
+
+Test catalog used across parser tests:
+```python
+TEST_CATALOG = {
+    "ABC": "1L Exterior Paint",
+    "XYZ": "1L Interior Paint",
+    "PQR": "5L Primer White",
+    "MNO": "Paint Brush 2 inch",
+}
+```
+
+### TestReceiptParser (16 tests):
+- test_parse_code_then_quantity: "ABC 2" -> code=ABC, qty=2.0, product="1L Exterior Paint"
+- test_parse_quantity_then_code: "3 XYZ" -> code=XYZ, qty=3.0
+- test_parse_multiplication_format: "ABC x 5" -> qty=5.0
+- test_parse_dash_format: "PQR - 2" -> code=PQR, qty=2.0
+- test_parse_decimal_quantity: "ABC 2.5" -> qty=2.5
+- test_parse_multiple_items: 3 items -> total_items=3
+- test_skip_header_lines: date and "Total" lines skipped, only 1 item parsed
+- test_unknown_product_code: "ZZZ 5" -> product="UNKNOWN PRODUCT", match_type="unknown"
+- test_fuzzy_match: "ABD 2" -> match_type in ("fuzzy", "unknown")
+- test_duplicate_aggregation: "ABC 2" + "ABC 3" -> qty=5.0, total_items=1
+- test_empty_input: [] -> total_items=0, processing_status="no_items_found"
+- test_confidence_flagging: confidence 0.70 -> needs_review=True
+- test_case_insensitive_matching: "abc 2" -> code="ABC"
+- test_receipt_number_generated: starts with "REC-"
+- test_colon_format: "MNO: 4" -> code=MNO, qty=4.0
+
+### TestExcelService (2 tests):
+- test_import: ExcelService can be instantiated
+- test_generate_report: generates .xlsx file at tmp_path, file exists and size > 0. Uses sample receipt with 2 items.
+
+### TestDatabase (4 tests):
+- test_import: Database class can be imported
+- test_create_in_memory: creates DB in tmp_path, gets seeded products (list, length > 0)
+- test_add_and_get_product: adds "TST" product, retrieves it, verifies name = "Test Product"
+- test_create_receipt: creates receipt "REC-TEST-001", adds 1 item, retrieves receipt with 1 item
+
+---
+
+## 13. Key Design Patterns
+
+1. **Singletons**: All services (db, product_service, receipt_service, excel_service) and the OCR engine are module-level singletons, instantiated at import time (database, services) or lazily (OCR engine via get_ocr_engine()).
+
+2. **Lazy OCR init**: The EasyOCR reader takes ~5-10 seconds to load models. It is initialized only on the first scan via get_ocr_engine(), not at app startup.
+
+3. **Catalog refresh**: Before every receipt scan, the parser's product catalog is refreshed from the database via receipt_service.refresh_catalog() so newly added products are immediately available.
+
+4. **Numpy JSON safety**: A custom NumpyEncoder in routes.py handles numpy types (int, float, bool, ndarray) that EasyOCR returns, converting them to native Python types before JSON serialization. The OCR engine also converts bbox numpy arrays to native Python lists inline.
+
+5. **Soft delete for products**: Products are never actually removed from the database — is_active is set to 0. All queries filter by is_active=1.
+
+6. **Processing logs**: Every stage of the receipt pipeline is logged to the processing_logs table with timing in milliseconds (preprocessing, ocr_extraction, data_parsing, total_pipeline).
+
+7. **Error resilience**: If the database save fails after successful OCR, the parsed data is still returned to the user (success is set to True).
+
+8. **Connection per operation**: Database class creates a new sqlite3.Connection for each method call and closes it in a finally block. This avoids thread-safety issues with SQLite.
+
+---
+
+## 14. OCR Processing Flow (End-to-End)
+
+```
+User uploads image via drag-drop or browse
+       |
+       v
+POST /api/receipts/scan (multipart file upload)
+       |
+       v
+Validate file extension and size (max 20MB)
+       |
+       v
+Save to uploads/ as "upload_YYYYMMDD_HHMMSS.ext"
+       |
+       v
+receipt_service.process_receipt(upload_path)
+       |
+       +-- Step 1: Copy to uploads/ as "receipt_YYYYMMDD_HHMMSS.ext"
+       |           (skips if already in uploads dir)
+       |
+       +-- Step 2: ImagePreprocessor.preprocess()
+       |   +-- Load image (cv2.imread)
+       |   +-- Resize if > 2560px
+       |   +-- Convert to grayscale
+       |   +-- Quality assessment (blur, brightness, contrast)
+       |   +-- Gaussian blur (5x5 kernel)
+       |   +-- Perspective correction (optional, if quadrilateral found)
+       |   +-- Adaptive threshold (Gaussian, block=11, C=2)
+       |   +-- Denoise (fastNlMeansDenoising, h=10)
+       |   +-- CLAHE enhancement (clip=2.0, grid=8x8)
+       |   +-- Sharpen (unsharp mask)
+       |   +-- Save as "processed_receipt_*.ext"
+       |
+       +-- Step 3: OCREngine.extract_text()
+       |   +-- EasyOCR reader.readtext() with config params
+       |   +-- Returns [{bbox, text, confidence, needs_review}, ...]
+       |
+       +-- Step 4: ReceiptParser.parse()
+       |   +-- Skip noise lines (dates, totals, separators)
+       |   +-- Match text against 6 regex patterns
+       |   +-- Map product codes (exact -> fuzzy -> unknown)
+       |   +-- Aggregate duplicate product codes
+       |   +-- Returns structured receipt data
+       |
+       +-- Step 5: Save to SQLite
+           +-- Create receipt record
+           +-- Add receipt_items with unit info from catalog
+           +-- Log processing stages with durations
+       |
+       v
+Return JSON response with {success, receipt_data, metadata, errors}
+       |
+       v
+Frontend displays results in editable table
+```
+
+---
+
+## 15. Excel Generation Flow
+
+```
+User clicks "Download Excel" or "Export All to Excel"
+       |
+       v
+POST /api/export/excel  { receipt_ids: [1, 2, 3] }
+       |
+       v
+excel_service.generate_from_db_receipts(receipt_ids)
+       |
+       +-- Load each receipt from DB with items
+       +-- Format into standard receipt dict structure
+       |
+       v
+excel_service.generate_report(receipts)
+       |
+       +-- Create Workbook (OpenPyXL)
+       +-- Sheet 1 "Daily Sales Report":
+       |   +-- Merged title row (blue, bold, size 16)
+       |   +-- Merged date row (italic, gray)
+       |   +-- Header row (blue bg, white text, bordered)
+       |   +-- Data rows (alternating colors, low-conf = yellow)
+       |   +-- Auto-adjust column widths
+       |   +-- Freeze header row
+       +-- Sheet 2 "Summary":
+       |   +-- Stats: total receipts, items, quantity
+       |   +-- Product totals table (sorted by code)
+       |   +-- Grand total row
+       +-- Save as "Sales_YYYYMMDD_HHMMSS.xlsx" in exports/
+       |
+       v
+Return { download_url: "/api/export/download/Sales_*.xlsx" }
+       |
+       v
+Frontend opens URL in new browser tab to trigger download
+```
+
+---
+
+## 16. Important Implementation Notes
+
+1. **EasyOCR models**: On first run, EasyOCR downloads ~500MB of model files (craft_mlt_25k.pth and english_g2.pth) to the models/ directory. Subsequent runs use the cached models. Set download_enabled=True.
+
+2. **File upload handling**: routes.py reads the entire file into memory (await file.read()) before saving. The 20MB limit keeps it manageable.
+
+3. **No authentication**: No auth, no user management. Designed for local/single-user use.
+
+4. **No PaddleOCR**: Only EasyOCR is used. No fallback OCR engine implemented.
+
+5. **No mobile app**: Web-only application with responsive HTML/CSS/JS frontend served by FastAPI.
+
+6. **No cloud features**: All data stored locally (SQLite database, local file system). No cloud sync. Only external request is Google Fonts CDN in the HTML.
+
+7. **Receipt image preview**: Frontend shows the original uploaded image (via FileReader), not the preprocessed version.
+
+8. **Batch session**: Batch mode accumulates receipt DB IDs in JavaScript state. No server-side session. Resets on page refresh.
+
+9. **View Receipt**: The "View" button in Receipts tab shows raw JSON in a browser alert() dialog.
+
+10. **CSV import format**: Must have header row with columns: product_code,product_name,category,unit.
+
+11. **Database location**: SQLite database receipt_scanner.db is created at the project root.
+
+12. **CORS**: Allow all origins (["*"]), all methods, all headers. For local development.
+
+13. **__init__.py files**: app/__init__.py has __version__ = "1.0.0" and __author__ = "Receipt Scanner Team". All other __init__.py files are empty.
+
+14. **Static file serving**: FastAPI StaticFiles mounts /static, /uploads, /exports. The root / serves index.html via FileResponse.
+
+---
+
+## 17. Recreating This Application
+
+To recreate this application from scratch, an AI should:
+
+1. Create the project structure exactly as described in Section 3.
+2. Create requirements.txt with dependencies from Section 2.
+3. Implement app/__init__.py with __version__ and __author__.
+4. Implement app/config.py with ALL constants from Section 5 (paths, OCR params, image params, fuzzy match, excel styling, app settings, logging, API settings).
+5. Implement app/logging_config.py with ColoredFormatter class and setup_logging() function as in Section 7.3.
+6. Implement app/database.py with the exact schema from Section 6, all CRUD methods from Section 7.4, seed data, and singleton instantiation.
+7. Implement app/ocr/preprocessor.py with the full 10-stage pipeline, quality assessment, perspective correction, and all helper methods as in Section 8.1.
+8. Implement app/ocr/engine.py with EasyOCR wrapper, lazy singleton, numpy type conversion, and all methods as in Section 8.2.
+9. Implement app/ocr/parser.py with 6 regex patterns, 7 skip patterns, fuzzy matching, duplicate aggregation, and receipt number generation as in Section 8.3.
+10. Implement app/services/product_service.py with all CRUD, CSV import/export, and singleton as in Section 9.2.
+11. Implement app/services/receipt_service.py with the 5-step pipeline, lazy parser, catalog refresh, and singleton as in Section 9.1.
+12. Implement app/services/excel_service.py with 2-sheet generation, all styling, and singleton as in Section 9.3.
+13. Implement app/api/routes.py with ALL endpoints (Pydantic models, NumpyEncoder, receipt/product/export/dashboard routes) as in Section 10.
+14. Implement app/main.py with FastAPI app, CORS, request logging middleware, static file mounts, root route, and startup event as in Section 7.2.
+15. Implement run.py as the entry point with banner as in Section 7.1.
+16. Build app/static/index.html with the exact 3-tab layout, all form elements, and structure as in Section 11.1.
+17. Build app/static/styles.css with all CSS variables, component styles, animations, and responsive breakpoints as in Section 11.2.
+18. Build app/static/app.js with state management, file upload, progress simulation, results display, editable table, batch mode, receipts/catalog CRUD, toasts, and all event handlers as in Section 11.3.
+19. Write tests/test_app.py with TestReceiptParser (16 tests), TestExcelService (2 tests), and TestDatabase (4 tests) as in Section 12.
+20. Create empty __init__.py files in: app/api/, app/ocr/, app/services/, tests/.
+
+The application should work end-to-end: upload a handwritten receipt image -> preprocess with OpenCV -> OCR with EasyOCR -> parse items with regex + fuzzy match -> save to SQLite -> review/edit in browser -> export to formatted Excel with summary sheet.
+
+---
+
+**Last Updated:** February 21, 2026

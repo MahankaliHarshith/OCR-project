@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#4F6BF6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="description" content="Scan handwritten receipts instantly with AI-powered OCR. Fast, accurate, elegant.">
+    <title>Receipt Scanner — Instant Handwritten OCR</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons — served locally to avoid CSP issues -->
+    <script src="/static/lucide.min.js"></script>
+</head>
+<body>
+
+    <!-- ─── Header ─────────────────────────────────────────────────── -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <div class="logo-mark">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                        <polyline points="10 9 9 9 8 9"/>
+                    </svg>
+                </div>
+                <div class="logo-text">
+                    <h1>Receipt Scanner</h1>
+                    <span class="logo-sub">Instant OCR</span>
+                </div>
+            </div>
+            <nav class="nav" aria-label="Main navigation">
+                <div class="nav-track" role="tablist" aria-label="Application sections">
+                    <div class="nav-indicator" id="navIndicator"></div>
+                    <button class="nav-btn active" data-tab="scan" role="tab" aria-selected="true" aria-controls="tab-scan" id="tab-btn-scan">
+                        <i data-lucide="scan-line" class="nav-icon"></i>
+                        <span>Scan</span>
+                    </button>
+                    <button class="nav-btn" data-tab="receipts" role="tab" aria-selected="false" aria-controls="tab-receipts" id="tab-btn-receipts">
+                        <i data-lucide="receipt-text" class="nav-icon"></i>
+                        <span>Receipts</span>
+                    </button>
+                    <button class="nav-btn" data-tab="catalog" role="tab" aria-selected="false" aria-controls="tab-catalog" id="tab-btn-catalog">
+                        <i data-lucide="package" class="nav-icon"></i>
+                        <span>Catalog</span>
+                    </button>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <!-- ─── Main Content ───────────────────────────────────────────── -->
+    <main class="main">
+
+        <!-- ─── Scan Tab ───────────────────────────────────────────── -->
+        <section id="tab-scan" class="tab-content active" role="tabpanel" aria-labelledby="tab-btn-scan">
+            <!-- Quick Stats Bar -->
+            <div class="quick-stats" id="quickStats" aria-label="Scanning statistics">
+                <div class="stat-pill">
+                    <i data-lucide="scan-line" style="width:14px;height:14px" aria-hidden="true"></i>
+                    <span id="statTodayScans">0</span>
+                    <span class="stat-label">today</span>
+                </div>
+                <div class="stat-pill">
+                    <i data-lucide="package" style="width:14px;height:14px" aria-hidden="true"></i>
+                    <span id="statTotalProducts">0</span>
+                    <span class="stat-label">products</span>
+                </div>
+                <div class="stat-pill">
+                    <i data-lucide="zap" style="width:14px;height:14px" aria-hidden="true"></i>
+                    <span id="statAvgSpeed">—</span>
+                    <span class="stat-label">avg speed</span>
+                </div>
+                <div class="stat-pill" id="azureUsagePill" title="Azure OCR pages used today / daily limit" style="display:none; cursor:pointer" onclick="showAzureUsageModal()">
+                    <i data-lucide="cloud" style="width:14px;height:14px" aria-hidden="true"></i>
+                    <span id="statAzureUsage">—</span>
+                    <span class="stat-label">azure</span>
+                </div>
+                <div class="stat-pill shortcut-hint" title="Keyboard shortcuts: 1/2/3=tabs, C=camera, N=new scan, Ctrl+V=paste">
+                    <i data-lucide="keyboard" style="width:14px;height:14px" aria-hidden="true"></i>
+                    <kbd>V</kbd> paste · <kbd>C</kbd> camera
+                </div>
+            </div>
+
+            <!-- Azure Free Tier Warning Banner -->
+            <div id="azureWarningBanner" class="azure-warning-banner" style="display:none">
+                <div class="azure-warning-content">
+                    <i data-lucide="alert-triangle" style="width:18px;height:18px;flex-shrink:0"></i>
+                    <span id="azureWarningText">Azure free tier limit approaching</span>
+                    <button onclick="document.getElementById('azureWarningBanner').style.display='none'" class="azure-warning-close" title="Dismiss">&times;</button>
+                </div>
+            </div>
+
+            <!-- Azure Usage Details Modal -->
+            <div id="azureUsageModal" class="azure-usage-modal" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+                <div class="azure-usage-card">
+                    <div class="azure-usage-header">
+                        <h3><i data-lucide="cloud" style="width:20px;height:20px"></i> Azure Document Intelligence Usage</h3>
+                        <button onclick="document.getElementById('azureUsageModal').style.display='none'" class="azure-warning-close">&times;</button>
+                    </div>
+                    <div class="azure-usage-body">
+                        <div class="azure-meter">
+                            <label>Today</label>
+                            <div class="azure-meter-bar"><div id="azureDailyBar" class="azure-meter-fill"></div></div>
+                            <span id="azureDailyText">0 / 50 pages</span>
+                        </div>
+                        <div class="azure-meter">
+                            <label>This Month</label>
+                            <div class="azure-meter-bar"><div id="azureMonthlyBar" class="azure-meter-fill"></div></div>
+                            <span id="azureMonthlyText">0 / 500 pages</span>
+                        </div>
+                        <div class="azure-tier-info">
+                            <div id="azureTierStatus" class="azure-tier-badge tier-free">✅ FREE TIER</div>
+                            <p id="azureTierDetail">You have 500 free pages remaining this month. No charges will apply.</p>
+                        </div>
+                        <div class="azure-pacing" id="azurePacingInfo"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="scan-container">
+                <!-- Upload Area -->
+                <div class="upload-area" id="dropZone" role="button" tabindex="0" aria-label="Upload receipt image. Tap to scan with camera or choose from gallery.">
+                    <div class="upload-visual">
+                        <div class="upload-ring">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                <circle cx="12" cy="13" r="4"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <h2>Scan your receipt</h2>
+                    <p class="upload-subtitle">Take a photo or choose from gallery</p>
+                    <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.bmp,.tiff,.webp,image/*" multiple hidden>
+                    <div class="upload-btn-group">
+                        <button class="btn btn-primary btn-upload btn-camera" id="openCameraBtn">
+                            <i data-lucide="camera" style="width:18px;height:18px"></i>
+                            Scan with Camera
+                        </button>
+                        <label for="fileInput" class="btn btn-ghost btn-upload" id="browseBtn">
+                            <i data-lucide="image-plus" style="width:16px;height:16px"></i>
+                            Choose from Gallery
+                        </label>
+                    </div>
+                    <div class="upload-formats">
+                        <span class="format-tag">JPG</span>
+                        <span class="format-tag">PNG</span>
+                        <span class="format-tag">BMP</span>
+                        <span class="format-tag">TIFF</span>
+                        <span class="format-tag">WebP</span>
+                        <span class="format-sep">·</span>
+                        <span class="format-limit">Max 20 MB</span>
+                    </div>
+                </div>
+
+                <!-- ─── Camera Scanner Overlay ─────────────────────────── -->
+                <div class="camera-overlay" id="cameraOverlay" style="display:none">
+                    <!-- Camera Top Bar -->
+                    <div class="camera-topbar">
+                        <button class="camera-btn camera-close-btn" id="cameraCloseBtn" title="Close camera">
+                            <i data-lucide="x" style="width:22px;height:22px"></i>
+                        </button>
+                        <span class="camera-title">Scan Receipt</span>
+                        <button class="camera-btn camera-flash-btn" id="cameraFlashBtn" title="Toggle flash">
+                            <i data-lucide="zap-off" style="width:20px;height:20px" id="flashIcon"></i>
+                        </button>
+                    </div>
+
+                    <!-- Live Viewfinder -->
+                    <div class="camera-viewfinder">
+                        <video id="cameraVideo" autoplay playsinline muted></video>
+                        <!-- Document Guide Frame -->
+                        <div class="camera-guide">
+                            <div class="guide-corner guide-tl"></div>
+                            <div class="guide-corner guide-tr"></div>
+                            <div class="guide-corner guide-bl"></div>
+                            <div class="guide-corner guide-br"></div>
+                        </div>
+                        <p class="camera-hint">Align receipt within the frame</p>
+                    </div>
+
+                    <!-- Camera Bottom Bar -->
+                    <div class="camera-bottombar">
+                        <button class="camera-btn camera-gallery-btn" id="cameraGalleryBtn" title="Choose from gallery">
+                            <i data-lucide="image" style="width:22px;height:22px"></i>
+                        </button>
+                        <button class="camera-capture-btn" id="cameraCaptureBtn" title="Take photo">
+                            <span class="capture-ring"></span>
+                        </button>
+                        <button class="camera-btn camera-switch-btn" id="cameraSwitchBtn" title="Switch camera">
+                            <i data-lucide="switch-camera" style="width:22px;height:22px"></i>
+                        </button>
+                    </div>
+
+                    <!-- Capture Preview -->
+                    <div class="camera-preview" id="cameraPreview" style="display:none">
+                        <img id="capturedImage" src="" alt="Captured receipt">
+                        <div class="preview-actions">
+                            <button class="btn btn-ghost btn-lg" id="retakeBtn">
+                                <i data-lucide="refresh-cw" style="width:18px;height:18px"></i>
+                                Retake
+                            </button>
+                            <button class="btn btn-accent btn-lg" id="useCaptureBtn">
+                                <i data-lucide="check" style="width:18px;height:18px"></i>
+                                Use Photo
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Hidden canvas for photo capture -->
+                    <canvas id="cameraCanvas" style="display:none"></canvas>
+                </div>
+
+                <!-- Processing Indicator -->
+                <div class="processing" id="processing" style="display:none" role="status" aria-live="polite">
+                    <div class="processing-card">
+                        <div class="pulse-loader">
+                            <div class="pulse-dot"></div>
+                            <div class="pulse-dot"></div>
+                            <div class="pulse-dot"></div>
+                        </div>
+                        <p class="processing-status" id="processingStatus">Enhancing image…</p>
+                        <div class="progress-track">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <p class="processing-hint">This usually takes a few seconds</p>
+                        <div class="processing-tips" id="processingTips" style="display:none">
+                            <p class="tip-text" id="tipText"></p>
+                        </div>
+                        <button class="btn btn-ghost btn-sm" id="cancelScanBtn" style="margin-top:1rem">
+                            <i data-lucide="x" style="width:14px;height:14px"></i>
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Preview & Results -->
+                <div class="results-container" id="resultsContainer" style="display:none" aria-live="polite">
+                    <div class="results-grid">
+                        <!-- Image Preview -->
+                        <div class="image-preview-card">
+                            <div class="card-label">
+                                <i data-lucide="image" style="width:15px;height:15px"></i>
+                                Receipt Image
+                            </div>
+                            <div class="image-frame">
+                                <img id="receiptImage" src="" alt="Receipt">
+                            </div>
+                        </div>
+
+                        <!-- Extracted Data -->
+                        <div class="extracted-data">
+                            <div class="results-header">
+                                <div class="card-label">
+                                    <i data-lucide="list-checks" style="width:15px;height:15px"></i>
+                                    Extracted Items
+                                </div>
+                                <div class="results-meta">
+                                    <span class="processing-time" id="processingTime" style="display:none">
+                                        <i data-lucide="timer" style="width:12px;height:12px"></i>
+                                        <span id="processTimeValue"></span>
+                                    </span>
+                                    <div class="confidence-badge" id="avgConfidence"></div>
+                                </div>
+                            </div>
+
+                            <!-- Editable Table -->
+                            <div class="table-wrapper">
+                                <table class="data-table" id="itemsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Product Code</th>
+                                            <th>Product Name</th>
+                                            <th>Qty</th>
+                                            <th>Confidence</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="itemsBody"></tbody>
+                                </table>
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div class="action-buttons" id="actionButtons">
+                                <button class="btn btn-ghost" id="addRowBtn">
+                                    <i data-lucide="plus" style="width:15px;height:15px"></i>
+                                    Add Row
+                                </button>
+                                <div class="action-spacer"></div>
+                                <button class="btn btn-primary" id="confirmBtn">
+                                    <i data-lucide="check" style="width:15px;height:15px"></i>
+                                    Confirm &amp; Save
+                                </button>
+                                <button class="btn btn-accent" id="exportExcelBtn" style="display:none">
+                                    <i data-lucide="file-spreadsheet" style="width:15px;height:15px"></i>
+                                    Download Excel
+                                </button>
+                                <button class="btn btn-ghost" id="scanAgainBtn">
+                                    <i data-lucide="scan-line" style="width:15px;height:15px"></i>
+                                    Scan Again
+                                </button>
+                            </div>
+
+                            <!-- Post-Confirm Panel: shown after confirming, with batch assignment + scan next -->
+                            <div class="post-confirm-panel" id="postConfirmPanel" style="display:none">
+                                <div class="post-confirm-header">
+                                    <div class="post-confirm-check">
+                                        <i data-lucide="check-circle-2" style="width:22px;height:22px"></i>
+                                    </div>
+                                    <div>
+                                        <strong>Receipt saved!</strong>
+                                        <span class="post-confirm-id" id="postConfirmReceiptId"></span>
+                                    </div>
+                                </div>
+                                <div class="post-confirm-batch-row">
+                                    <span class="post-confirm-label">Add to batch:</span>
+                                    <div class="post-confirm-batch-controls">
+                                        <select id="postConfirmBatchSelect" class="input batch-select-input"></select>
+                                        <button class="btn btn-ghost btn-sm" id="postConfirmNewBatchBtn" title="Create new batch">
+                                            <i data-lucide="plus" style="width:14px;height:14px"></i>
+                                        </button>
+                                        <button class="btn btn-primary btn-sm" id="postConfirmAddBtn">
+                                            <i data-lucide="layers" style="width:14px;height:14px"></i>
+                                            Add
+                                        </button>
+                                    </div>
+                                    <span class="post-confirm-batch-status" id="postConfirmBatchStatus" style="display:none"></span>
+                                </div>
+                                <div class="post-confirm-actions">
+                                    <button class="btn btn-primary" id="scanNextBtn">
+                                        <i data-lucide="scan-line" style="width:16px;height:16px"></i>
+                                        Scan Next Receipt
+                                    </button>
+                                    <button class="btn btn-accent" id="postConfirmExportBtn">
+                                        <i data-lucide="file-spreadsheet" style="width:15px;height:15px"></i>
+                                        Download Excel
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Warnings -->
+                            <div class="warnings" id="warnings" style="display:none">
+                                <i data-lucide="alert-triangle" style="width:15px;height:15px;flex-shrink:0"></i>
+                                <p id="warningText"></p>
+                            </div>
+
+                            <!-- Raw OCR Output (collapsible) -->
+                            <details class="raw-ocr">
+                                <summary>
+                                    <i data-lucide="code-2" style="width:14px;height:14px"></i>
+                                    Raw OCR Output
+                                </summary>
+                                <pre id="rawOcrOutput"></pre>
+                            </details>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Batch Session -->
+                <div class="batch-bar" id="batchBar" style="display:none">
+                    <div class="batch-info">
+                        <i data-lucide="layers" style="width:16px;height:16px"></i>
+                        <select id="batchSelect" class="batch-selector" title="Switch batch"></select>
+                        <button class="batch-name-edit-btn" id="editBatchNameBtn" title="Rename batch">
+                            <i data-lucide="pencil" style="width:12px;height:12px"></i>
+                        </button>
+                        <input class="batch-name-input" id="batchNameInput" style="display:none" maxlength="30" placeholder="Batch name">
+                    </div>
+                    <div class="batch-actions">
+                        <button class="btn btn-ghost btn-sm" id="newBatchBtn" title="Create a new batch">
+                            <i data-lucide="plus" style="width:14px;height:14px"></i>
+                            New
+                        </button>
+                        <button class="btn btn-primary btn-sm" id="viewBatchBtn">
+                            <i data-lucide="eye" style="width:14px;height:14px"></i>
+                            View
+                        </button>
+                        <button class="btn btn-accent btn-sm" id="batchExportBtn">
+                            <i data-lucide="file-spreadsheet" style="width:14px;height:14px"></i>
+                            Export
+                        </button>
+                        <button class="btn btn-ghost btn-sm" id="deleteBatchBtn" title="Delete this batch">
+                            <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Batch Detail Panel -->
+                <div class="batch-detail-panel" id="batchDetailPanel" style="display:none">
+                    <div class="batch-detail-header">
+                        <h3><i data-lucide="layers" style="width:18px;height:18px"></i> Batch Receipts</h3>
+                        <button class="btn-close-form" id="closeBatchPanel" title="Close">
+                            <i data-lucide="x" style="width:18px;height:18px"></i>
+                        </button>
+                    </div>
+                    <div class="batch-detail-body" id="batchDetailBody">
+                        <p class="placeholder">Loading batch receipts...</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ─── Receipts Tab ───────────────────────────────────────── -->
+        <section id="tab-receipts" class="tab-content" role="tabpanel" aria-labelledby="tab-btn-receipts">
+            <div class="receipts-container">
+                <div class="section-header">
+                    <h2>Recent Receipts</h2>
+                    <div class="header-actions">
+                        <div class="input-group">
+                            <i data-lucide="calendar" class="input-icon" aria-hidden="true"></i>
+                            <input type="date" id="dateFilter" class="input input-with-icon" aria-label="Filter receipts by date">
+                        </div>
+                        <button class="btn btn-primary btn-sm" id="filterDateBtn">
+                            <i data-lucide="filter" style="width:14px;height:14px"></i>
+                            Filter
+                        </button>
+                        <button class="btn btn-ghost btn-sm" id="showAllBtn">
+                            <i data-lucide="list" style="width:14px;height:14px"></i>
+                            Show All
+                        </button>
+                        <button class="btn btn-accent btn-sm" id="dailyReportBtn">
+                            <i data-lucide="file-bar-chart" style="width:14px;height:14px"></i>
+                            Daily Report
+                        </button>
+                    </div>
+                </div>
+                <div class="receipts-list" id="receiptsList">
+                    <p class="placeholder">Loading receipts…</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ─── Catalog Tab ────────────────────────────────────────── -->
+        <section id="tab-catalog" class="tab-content" role="tabpanel" aria-labelledby="tab-btn-catalog">
+            <div class="catalog-container">
+                <div class="section-header">
+                    <h2>Product Catalog</h2>
+                    <div class="header-actions">
+                        <div class="input-group">
+                            <i data-lucide="search" class="input-icon" aria-hidden="true"></i>
+                            <input type="text" id="catalogSearch" class="input input-with-icon" placeholder="Search products…" aria-label="Search product catalog">
+                        </div>
+                        <button class="btn btn-primary btn-sm" id="addProductBtn">
+                            <i data-lucide="plus" style="width:14px;height:14px"></i>
+                            Add Product
+                        </button>
+                        <button class="btn btn-ghost btn-sm" id="exportCatalogBtn">
+                            <i data-lucide="download" style="width:14px;height:14px"></i>
+                            CSV
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Add Product Form (hidden by default) -->
+                <div class="product-form" id="productForm" style="display:none">
+                    <div class="form-header">
+                        <h3 id="formTitle">Add New Product</h3>
+                        <button class="btn-close-form" id="cancelProductBtn" title="Close">
+                            <i data-lucide="x" style="width:18px;height:18px"></i>
+                        </button>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="prodCode">Product Code</label>
+                            <input type="text" id="prodCode" class="input" placeholder="e.g. ABC" maxlength="10">
+                        </div>
+                        <div class="form-group">
+                            <label for="prodName">Product Name</label>
+                            <input type="text" id="prodName" class="input" placeholder="e.g. 1L Exterior Paint">
+                        </div>
+                        <div class="form-group">
+                            <label for="prodCategory">Category</label>
+                            <input type="text" id="prodCategory" class="input" placeholder="e.g. Paint">
+                        </div>
+                        <div class="form-group">
+                            <label for="prodUnit">Unit</label>
+                            <select id="prodUnit" class="input">
+                                <option value="Piece">Piece</option>
+                                <option value="Litre">Litre</option>
+                                <option value="Kg">Kg</option>
+                                <option value="Bottle">Bottle</option>
+                                <option value="Roll">Roll</option>
+                                <option value="Box">Box</option>
+                                <option value="Set">Set</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn btn-primary" id="saveProductBtn">
+                            <i data-lucide="save" style="width:15px;height:15px"></i>
+                            Save Product
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Product List -->
+                <div class="table-wrapper">
+                    <table class="data-table" id="catalogTable">
+                        <thead>
+                            <tr>
+                                <th>Code</th>
+                                <th>Product Name</th>
+                                <th>Category</th>
+                                <th>Unit</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="catalogBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ─── Batch Upload Progress ─────────────────────────────────── -->
+    <div class="batch-upload-overlay" id="batchUploadOverlay" style="display:none">
+        <div class="batch-upload-card">
+            <h3 id="batchUploadTitle">Processing Receipts…</h3>
+            <div class="batch-upload-progress">
+                <div class="progress-track"><div class="progress-fill" id="batchProgressFill"></div></div>
+                <p class="batch-upload-status" id="batchUploadStatus">0 / 0</p>
+            </div>
+            <div class="batch-upload-results" id="batchUploadResults"></div>
+            <div class="batch-upload-actions" id="batchUploadActions" style="display:none">
+                <button class="btn btn-primary" id="batchUploadDoneBtn">
+                    <i data-lucide="check" style="width:15px;height:15px"></i>
+                    Done — View Receipts
+                </button>
+                <button class="btn btn-ghost" id="batchUploadScanMoreBtn">
+                    <i data-lucide="scan-line" style="width:15px;height:15px"></i>
+                    Scan More
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Toast Notifications ────────────────────────────────────── -->
+    <div class="toast-container" id="toastContainer" aria-live="assertive" role="alert"></div>
+
+    <!-- ─── Modal ────────────────────────────────────────────────────── -->
+    <div class="modal-overlay" id="modalOverlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal">
+            <h3 id="modalTitle">Confirm</h3>
+            <div id="modalMessage"></div>
+            <div class="modal-actions">
+                <button class="btn btn-primary" id="modalConfirm">Confirm</button>
+                <button class="btn btn-ghost" id="modalCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

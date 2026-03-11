@@ -1,4 +1,4 @@
-# Python
+# ─── Python ──────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -6,41 +6,52 @@ __pycache__/
 *.egg
 dist/
 build/
+*.whl
 
-# Virtual environment
+# ─── Virtual Environment ────────────────────────────────
 .venv/
 venv/
 ENV/
 
-# IDE
+# ─── IDE / Editor ───────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
-# Environment variables
+# ─── Environment Variables ──────────────────────────────
 .env
 
-# Database
+# ─── Database ───────────────────────────────────────────
 *.db
 *.db-wal
 *.db-shm
-backups/
+backups/*
 
-# Runtime directories
+# ─── Runtime Directories ────────────────────────────────
 uploads/*
 exports/*
 logs/*
 models/*
 data/*
 
-# Keep directory structure
+# ─── Preserve Directory Structure ───────────────────────
 !uploads/.gitkeep
 !exports/.gitkeep
 !logs/.gitkeep
 !models/.gitkeep
 !data/.gitkeep
+!backups/.gitkeep
 
-# OS files
+# ─── Test / CI Artifacts ────────────────────────────────
+.pytest_cache/
+htmlcov/
+.coverage
+*.cover
+
+# ─── OS Files ───────────────────────────────────────────
 Thumbs.db
 .DS_Store
+Desktop.ini

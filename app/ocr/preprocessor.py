@@ -75,13 +75,17 @@ class ImagePreprocessor:
         logger.debug("  [3/6] Converted to grayscale")
 
         # 3a. Deskew: detect and correct small rotation (<15°)
+        # For same-type receipts: only deskew if angle is significant (> 1.5°)
+        # to avoid unnecessary processing on well-aligned photos
         skew_angle = self._detect_skew_angle(gray)
-        if abs(skew_angle) > 0.5:  # Only correct if > 0.5°
+        if abs(skew_angle) > 1.5:  # Higher threshold: skip minor rotations for speed
             gray = self._rotate_image(gray, -skew_angle)
             # Also rotate the color image so perspective correction uses aligned version
             img = self._rotate_image(img, -skew_angle)
             metadata["stages"].append("deskew")
             logger.debug(f"  [3a/6] Deskewed by {skew_angle:.1f}°")
+        elif abs(skew_angle) > 0.5:
+            logger.debug(f"  [3a/6] Minor skew {skew_angle:.1f}° detected but below correction threshold")
 
         # 4. Quality assessment
         quality = self._assess_quality(gray)

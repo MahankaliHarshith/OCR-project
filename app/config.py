@@ -18,7 +18,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 EXPORT_DIR = BASE_DIR / "exports"
 MODEL_DIR = BASE_DIR / "models"
-DATABASE_PATH = BASE_DIR / "receipt_scanner.db"
+
+# SQLite doesn't work in OneDrive/cloud-synced folders (locking issues).
+# Auto-redirect the database to a local folder if needed.
+def _safe_db_path(base: Path) -> Path:
+    base_str = str(base).lower()
+    if "onedrive" in base_str or "dropbox" in base_str or "google drive" in base_str:
+        local_dir = Path(os.environ.get("LOCALAPPDATA", base)) / "ReceiptScanner"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        return local_dir / "receipt_scanner.db"
+    return base / "receipt_scanner.db"
+
+DATABASE_PATH = _safe_db_path(BASE_DIR)
 
 # ─── Database Backend ─────────────────────────────────────────────────────────
 # "sqlite"      → local SQLite file  (default, zero-config)
@@ -53,14 +64,14 @@ OCR_LOW_CONFIDENCE_THRESHOLD = 0.25  # Below this → flag entire receipt
 OCR_TEXT_THRESHOLD = 0.4  # Lower to catch faint handwriting (was 0.7)
 OCR_LOW_TEXT = 0.3  # Lower to catch faint text (was 0.4)
 OCR_LINK_THRESHOLD = 0.3  # Link nearby characters (was 0.4)
-OCR_CANVAS_SIZE = 1536  # Balanced: enough detail for handwriting without being slow
-OCR_MAG_RATIO = 2.0  # Higher mag for handwritten digits (critical for qty accuracy)
+OCR_CANVAS_SIZE = 1280  # Optimized: fast enough for same-type receipts, still captures handwriting
+OCR_MAG_RATIO = 1.8  # Slightly lower mag trades marginal detail for ~15% speed gain
 OCR_MIN_SIZE = 10  # Lower to catch small handwritten digits (single-digit quantities)
 
 # Smart OCR pass strategy: run gray first (faster), only add color pass if
 # the first pass yields fewer items than expected.  This cuts OCR time ~45%
 # on typical receipts while preserving accuracy via fallback.
-OCR_SMART_PASS_THRESHOLD = 5   # Min items before skipping 2nd pass (high → always dual-pass for accuracy)
+OCR_SMART_PASS_THRESHOLD = 3   # Low threshold: skip 2nd pass once 3+ items found (same-receipt-type optimization)
 OCR_PARALLEL_DUAL_PASS = True  # Use ThreadPoolExecutor for dual-pass OCR
 
 
@@ -160,7 +171,7 @@ CLAHE_TILE_GRID_SIZE = (8, 8)
 
 
 # ─── Fuzzy Matching ──────────────────────────────────────────────────────────
-FUZZY_MATCH_CUTOFF = 0.6  # Balanced: catches OCR errors while avoiding false positives
+FUZZY_MATCH_CUTOFF = 0.72  # Tighter: prevents phantom codes while still catching real OCR errors
 FUZZY_MAX_RESULTS = 5  # More candidates (was 3)
 
 

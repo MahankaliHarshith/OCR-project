@@ -25,8 +25,8 @@ OCR project/
 │   ├── database.py (969L)       db_postgres.py (506L)   logging_config.py (109L)
 │   ├── api/routes.py (576L)
 │   ├── ocr/
-│   │   ├── preprocessor.py (659L)   engine.py (299L)     parser.py (~1640L)
-│   │   ├── azure_engine.py (520L)   hybrid_engine.py (994L)
+│   │   ├── preprocessor.py (659L)   engine.py (299L)     parser.py (~2430L)
+│   │   ├── azure_engine.py (520L)   hybrid_engine.py (~1150L)
 │   │   ├── usage_tracker.py (414L)  image_cache.py (241L)
 │   └── services/
 │       ├── receipt_service.py (517L)   product_service.py (197L)   excel_service.py (386L)
@@ -87,7 +87,7 @@ Azure:     AZURE_API_TIMEOUT=30, AZURE_IMAGE_MAX_DIMENSION=1500, AZURE_IMAGE_QUA
            HYBRID_CROSS_VERIFY=False  (True = always run local after Azure → doubles cost)
 Preprocess: IMAGE_MAX_DIMENSION=1800, CLAHE_CLIP_LIMIT=2.0, CLAHE_TILE_GRID=(8,8)
 Excel:     EXCEL_HEADER_COLOR="4472C4", ALT_ROW_COLOR="F2F2F2", LOW_CONF_COLOR="FFD966"
-Fuzzy:     FUZZY_MATCH_CUTOFF=0.6, FUZZY_MAX_RESULTS=5
+Fuzzy:     FUZZY_MATCH_CUTOFF=0.72, FUZZY_MAX_RESULTS=5
 App:       MAX_FILE_SIZE_MB=20, ALLOWED_EXTENSIONS={jpg,jpeg,png,bmp,tiff,webp}
            API_DOCS_ENABLED=True (controls /docs and /redoc endpoints)
 ```
@@ -378,29 +378,43 @@ Order in main.py (outermost first): DevTunnel → SecurityHeaders → RateLimit 
 
 ---
 
-## OCR Deep Audit & Optimization (Sessions 44-45)
+## OCR Deep Audit & Optimization (Sessions 44-49)
 
-### Accuracy Benchmarks (5 test receipt images)
+### Current Accuracy Benchmarks
 
-| Metric | Pre-Optimization | Post-Optimization | Change |
-|--------|------------------|--------------------|--------|
-| **Code Detection** | 56-68% | **96%** (25/26) | **+40 pts** |
-| **Qty Accuracy** | 32-46% | **69%** (18/26) | **+33 pts** |
+**Original Images (5 test receipts):**
+| Metric | Result |
+|--------|--------|
+| **Code Detection** | **25/25 (100%)** |
+| **Qty Accuracy** | **24/25 (96%)** — only miss: TEW1 on dark_ink (3 vs 5, inherent OCR limit) |
+| **Line Math** | **25/25 (100%)** |
 
-**Per-image results:**
-| Image | Code Det. | Qty Acc. | Notes |
-|-------|-----------|----------|-------|
-| receipt_neat | 80% | 40% | PEPW1→PEPW1O OCR ambiguity (unresolvable) |
-| receipt_messy | **100%** | **100%** | 🎉 Perfect (was 25%) |
-| receipt_faded | **100%** | **100%** | ✅ Perfect (maintained) |
-| receipt_dense | **100%** | 50% | TEW10/TEW20 swap + missing qty digits |
-| receipt_dark_ink | **100%** | 80% | PEPW10 qty=2 undetected by OCR |
+**Edge Cases (10 generated images):**
+| Metric | Result |
+|--------|--------|
+| **Code Detection** | **37/37 (100%)** |
+| **Qty Accuracy** | **37/37 (100%)** |
+| **Total Verification** | **9/9 (100%)** — (1 image intentionally has no total line) |
+
+**New Samples (8 images — 4 Gemini + 4 Media):**
+| Metric | Result |
+|--------|--------|
+| **Code Detection** | **40/40 (100%)** |
+| **Line Math** | **40/40 (100%)** |
+
+**Deep Test (5 original images):**
+| Metric | Result |
+|--------|--------|
+| **Codes** | **25/25 (100%)** |
+| **Quantities** | **25/25 (100%)** |
+| **Math** | **25/25 (100%)** |
 
 ### Optimization Changes Applied
 
 **P0 — Config Tuning:**
 - `IMAGE_MAX_DIMENSION` 1280→1800, `OCR_CANVAS_SIZE` 1024→1536, `OCR_MIN_SIZE` 20→10
 - `adjust_contrast` 0.7→0.9 (preserves faded ink), `width_ths` 0.6→0.8 (keeps alphanum codes)
+- `FUZZY_MATCH_CUTOFF` 0.6→0.72 (tighter matching reduces phantom codes)
 
 **P1 — Preprocessor & Parser:**
 - Morphological closing now conditional (only for blurry images)
@@ -424,10 +438,23 @@ Order in main.py (outermost first): DevTunnel → SecurityHeaders → RateLimit 
 - Single-char handwriting digit mapping only after code token found
 - Orphan qty Y-proximity guard (max_y × 0.04)
 
+**P4 — Qty & Total Fixes (Sessions 46-48):**
+- Split-number collapse guarded (max 2 iterations), catalog-price guard, 2-col qty cap at 99
+- Skip patterns expanded, HEADER_WORDS expanded, fuzzy guard tightened (first-char match required)
+- Ultra-aggressive fuzzy threshold 0.85, unknown items filtered from results
+- Cross-line total detection for both qty and grand total
+- OCR-garbled total variants (qtyt, qiy, qtt, grramd, gramd, grrand)
+- Grand total vs qty total separation: verifier skips grand total lines
+- Backward-compatible alias keys in receipt_service (total_qty_ocr, total_qty_computed, verification_status)
+
+**P5 — Hybrid Engine Merge Fix (Session 49):**
+- **Short-digit Y-distance dedup**: quantities (1-2 digit numbers) now use raw Y-distance (35px threshold) instead of bucket-based adjacency, preventing cascading collapse of legitimately repeated qty digits across receipt rows
+- **Position-based echo dedup**: detections at the same physical (x, y) position (within 30×15px) from different passes are collapsed to the best-confidence one, preventing "TEW4 TEWA" concatenation bugs
+
 ### Remaining Limitations (EasyOCR on CPU)
-- OCR O/1 confusion: "PEPW1" reads as "PEPW1O" (indistinguishable from "PEPW10")
-- Some quantity digits simply not detected on dense/dark images
-- Hybrid engine multi-pass merge can swap Y positions across rows
+- OCR O/1 confusion: "PEPW1" reads as "PEPW1O" (indistinguishable from "PEPW10") — handled by ambiguous_oi resolver
+- TEW1 on dark_ink receipt: qty 5 read as 3 (inherent OCR limitation with heavy ink)
+- Some quantity digits not detected on very dense/dark images — mitigated by cross-line qty association
 - Azure Document Intelligence would significantly improve all these cases
 
 ---
@@ -459,8 +486,9 @@ run.py → python run.py            (server on :8000)
 tests  → python -m pytest tests/  
 e2e    → python test_all_flows.py
 ocr    → python test_ocr_accuracy.py  (5-image accuracy benchmark)
+edge   → python test_edge_cases.py   (10-image edge case regression)
+deep   → python run_deep_test.py      (5-image deep test with math/total)
 bench  → python benchmark_pipeline.py
-debug  → python debug_qty.py / python dump_ocr.py / python debug_ocr.py
 gen    → python generate_test_receipts.py  (regenerate test_images/)
 ```
 

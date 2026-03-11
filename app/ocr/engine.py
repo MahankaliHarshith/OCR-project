@@ -111,7 +111,7 @@ class OCREngine:
                 slope_ths=0.4,          # Allow more slanted handwriting
                 ycenter_ths=0.5,        # Better vertical grouping for messy writing
                 height_ths=0.8,         # More flexible height matching
-                width_ths=0.8,          # Keep alphanumeric codes together (TEW1, PEPW10)
+                width_ths=0.7,          # Tighter to keep alphanumeric codes together (TEW1, PEPW10)
                 add_margin=0.15,        # Larger margin captures handwriting ascenders/descenders
             )
         except Exception as e:
@@ -153,9 +153,9 @@ class OCREngine:
 
     def extract_text_fast(self, image: np.ndarray) -> List[Dict]:
         """
-        Fast-path OCR with reduced canvas & mag_ratio for speed.
-        Used as the initial pass in the smart single/dual strategy.
-        Falls back to full extract_text quality when needed.
+        Fast-path OCR with optimized canvas & mag_ratio for speed.
+        Tuned to capture enough detail on the FIRST pass that a second
+        pass is rarely needed for same-type receipt scanning.
         """
         start = time.time()
         logger.debug(f"extract_text_fast called | image shape={image.shape}")
@@ -169,16 +169,16 @@ class OCREngine:
                 text_threshold=OCR_TEXT_THRESHOLD,
                 low_text=OCR_LOW_TEXT,
                 link_threshold=OCR_LINK_THRESHOLD,
-                canvas_size=min(OCR_CANVAS_SIZE, 960),   # Smaller canvas = faster
-                mag_ratio=1.2,                            # Lower mag = faster
+                canvas_size=min(OCR_CANVAS_SIZE, 1024),  # Balanced: enough detail for handwriting
+                mag_ratio=1.5,                            # Higher than before for better digit capture
                 batch_size=1,
                 contrast_ths=0.2,
-                adjust_contrast=0.7,
+                adjust_contrast=0.8,      # Better contrast handling for ink on paper
                 slope_ths=0.4,
                 ycenter_ths=0.5,
                 height_ths=0.8,
-                width_ths=0.6,
-                add_margin=0.1,
+                width_ths=0.7,            # Tighter grouping keeps codes together (TEW1, PEPW10)
+                add_margin=0.12,          # Slightly larger margin for handwriting
             )
         except Exception as e:
             logger.error(f"EasyOCR fast extraction failed: {e}")

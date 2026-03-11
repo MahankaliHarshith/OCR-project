@@ -248,6 +248,45 @@ def _migration_v2_composite_index(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_v3_add_prices(conn: sqlite3.Connection) -> None:
+    """Add price columns to products, receipt_items, and receipts tables."""
+    # Products: unit price for catalog-based price lookup
+    try:
+        conn.execute("ALTER TABLE products ADD COLUMN unit_price REAL DEFAULT 0.0")
+    except Exception:
+        pass  # column already exists
+
+    # Receipt items: price per unit and line total (qty × price)
+    try:
+        conn.execute("ALTER TABLE receipt_items ADD COLUMN unit_price REAL DEFAULT 0.0")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE receipt_items ADD COLUMN line_total REAL DEFAULT 0.0")
+    except Exception:
+        pass
+
+    # Receipts: bill total (monetary grand total)
+    try:
+        conn.execute("ALTER TABLE receipts ADD COLUMN bill_total REAL DEFAULT 0.0")
+    except Exception:
+        pass
+
+    # Seed default prices for existing products
+    price_map = {
+        "ABC": 200.0, "XYZ": 220.0, "PQR": 650.0, "MNO": 45.0,
+        "DEF": 300.0, "GHI": 25.0, "JKL": 80.0, "STU": 180.0,
+        "VWX": 35.0, "RST": 120.0,
+        "TEW1": 250.0, "TEW4": 850.0, "TEW10": 1800.0, "TEW20": 3200.0,
+        "PEPW1": 350.0, "PEPW4": 1200.0, "PEPW10": 2600.0, "PEPW20": 4800.0,
+    }
+    for code, price in price_map.items():
+        conn.execute(
+            "UPDATE products SET unit_price = ? WHERE product_code = ? AND unit_price = 0.0",
+            (price, code),
+        )
+
+
 class MigrationManager:
     """Tracks and applies numbered schema migrations.
 
@@ -264,9 +303,8 @@ class MigrationManager:
     MIGRATIONS: list[tuple[int, str, object]] = [
         (1, "baseline_schema", _migration_v1_baseline),
         (2, "composite_item_index", _migration_v2_composite_index),
+        (3, "add_price_columns", _migration_v3_add_prices),
         # ── add future migrations here ──────────────────────────────────
-        # (3, "add_notes_column",
-        #     "ALTER TABLE receipts ADD COLUMN notes TEXT DEFAULT ''"),
     ]
 
     def __init__(self, pool: ConnectionPool) -> None:
@@ -404,7 +442,8 @@ class DatabaseBackend(ABC):
     def get_receipts_by_date(self, date_str: str) -> List[Dict]: ...
 
     @abstractmethod
-    def update_receipt_item(self, item_id: int, product_code: str, product_name: str, quantity: float) -> bool: ...
+    def update_receipt_item(self, item_id: int, product_code: str, product_name: str, quantity: float,
+                            unit_price: float = 0.0, line_total: float = 0.0) -> bool: ...
 
     @abstractmethod
     def delete_receipt(self, receipt_id: int) -> bool: ...
@@ -450,9 +489,17 @@ class Database(DatabaseBackend):
 
         # Enable WAL mode (persists in the DB file once set)
         conn = self._pool.get()
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.commit()
-        logger.info("SQLite WAL mode enabled (concurrent-safe)")
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.commit()
+            logger.info("SQLite WAL mode enabled (concurrent-safe)")
+        except sqlite3.OperationalError as e:
+            logger.warning(f"WAL mode failed ({e}), using DELETE mode (normal for OneDrive folders)")
+            try:
+                conn.execute("PRAGMA journal_mode = DELETE")
+                conn.commit()
+            except Exception:
+                pass
 
         # Run schema migrations
         self._migrations = MigrationManager(self._pool)
@@ -475,24 +522,35 @@ class Database(DatabaseBackend):
     def _seed_default_products(self) -> None:
         """Seed the database with default product catalog entries."""
         defaults = [
-            ("ABC", "1L Exterior Paint", "Paint", "Litre"),
-            ("XYZ", "1L Interior Paint", "Paint", "Litre"),
-            ("PQR", "5L Primer White", "Paint", "Litre"),
-            ("MNO", "Paint Brush 2 inch", "Accessories", "Piece"),
-            ("DEF", "1L Wood Varnish", "Paint", "Litre"),
-            ("GHI", "Sandpaper Sheet", "Accessories", "Piece"),
-            ("JKL", "Putty Knife 4 inch", "Tools", "Piece"),
-            ("STU", "Wall Filler 1kg", "Material", "Kg"),
-            ("VWX", "Masking Tape 1 inch", "Accessories", "Roll"),
-            ("RST", "Thinner 500ml", "Solvent", "Bottle"),
+            # Pure-alpha codes (3 letters)                        (code, name, category, unit, price)
+            ("ABC", "1L Exterior Paint", "Paint", "Litre", 200.0),
+            ("XYZ", "1L Interior Paint", "Paint", "Litre", 220.0),
+            ("PQR", "5L Primer White", "Paint", "Litre", 650.0),
+            ("MNO", "Paint Brush 2 inch", "Accessories", "Piece", 45.0),
+            ("DEF", "1L Wood Varnish", "Paint", "Litre", 300.0),
+            ("GHI", "Sandpaper Sheet", "Accessories", "Piece", 25.0),
+            ("JKL", "Putty Knife 4 inch", "Tools", "Piece", 80.0),
+            ("STU", "Wall Filler 1kg", "Material", "Kg", 180.0),
+            ("VWX", "Masking Tape 1 inch", "Accessories", "Roll", 35.0),
+            ("RST", "Thinner 500ml", "Solvent", "Bottle", 120.0),
+            # Alphanumeric codes (TEW = Thinnable Exterior Wash)
+            ("TEW1", "1L Thinnable Exterior Wash", "Paint", "Litre", 250.0),
+            ("TEW4", "4L Thinnable Exterior Wash", "Paint", "Litre", 850.0),
+            ("TEW10", "10L Thinnable Exterior Wash", "Paint", "Litre", 1800.0),
+            ("TEW20", "20L Thinnable Exterior Wash", "Paint", "Litre", 3200.0),
+            # Alphanumeric codes (PEPW = Premium Exterior Premium Wash)
+            ("PEPW1", "1L Premium Exterior Premium Wash", "Paint", "Litre", 350.0),
+            ("PEPW4", "4L Premium Exterior Premium Wash", "Paint", "Litre", 1200.0),
+            ("PEPW10", "10L Premium Exterior Premium Wash", "Paint", "Litre", 2600.0),
+            ("PEPW20", "20L Premium Exterior Premium Wash", "Paint", "Litre", 4800.0),
         ]
         conn = self._conn()
         try:
-            for code, name, category, unit in defaults:
+            for code, name, category, unit, price in defaults:
                 conn.execute(
-                    "INSERT OR IGNORE INTO products (product_code, product_name, category, unit) "
-                    "VALUES (?, ?, ?, ?)",
-                    (code, name, category, unit),
+                    "INSERT OR IGNORE INTO products (product_code, product_name, category, unit, unit_price) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (code, name, category, unit, price),
                 )
             conn.commit()
             logger.info("Default products seeded.")
@@ -638,6 +696,7 @@ class Database(DatabaseBackend):
                 "name": p["product_name"],
                 "category": p["category"],
                 "unit": p["unit"],
+                "unit_price": p.get("unit_price", 0.0),
             }
             for p in products
         }
@@ -681,8 +740,8 @@ class Database(DatabaseBackend):
         try:
             conn.executemany(
                 "INSERT INTO receipt_items "
-                "(receipt_id, product_code, product_name, quantity, unit, ocr_confidence) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(receipt_id, product_code, product_name, quantity, unit, ocr_confidence, unit_price, line_total) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         receipt_id,
@@ -691,16 +750,20 @@ class Database(DatabaseBackend):
                         item.get("quantity", 0),
                         item.get("unit", "Piece"),
                         item.get("confidence", 0),
+                        item.get("unit_price", 0.0),
+                        item.get("line_total", 0.0),
                     )
                     for item in items
                 ],
             )
+            bill_total = sum(i.get("line_total", 0.0) for i in items)
             conn.execute(
                 "UPDATE receipts SET total_items = ?, processing_status = 'completed', "
-                "ocr_confidence_avg = ? WHERE id = ?",
+                "ocr_confidence_avg = ?, bill_total = ? WHERE id = ?",
                 (
                     len(items),
                     sum(i.get("confidence", 0) for i in items) / max(len(items), 1),
+                    bill_total,
                     receipt_id,
                 ),
             )
@@ -806,7 +869,8 @@ class Database(DatabaseBackend):
         return results
 
     def update_receipt_item(
-        self, item_id: int, product_code: str, product_name: str, quantity: float
+        self, item_id: int, product_code: str, product_name: str, quantity: float,
+        unit_price: float = 0.0, line_total: float = 0.0,
     ) -> bool:
         """Update a receipt item (manual correction). Returns False if not found."""
         logger.debug("update_receipt_item(item_id=%d, code=%r, qty=%s)", item_id, product_code, quantity)
@@ -815,9 +879,10 @@ class Database(DatabaseBackend):
         try:
             cursor = conn.execute(
                 "UPDATE receipt_items "
-                "SET product_code = ?, product_name = ?, quantity = ?, manually_edited = 1 "
+                "SET product_code = ?, product_name = ?, quantity = ?, "
+                "unit_price = ?, line_total = ?, manually_edited = 1 "
                 "WHERE id = ?",
-                (product_code, product_name, quantity, item_id),
+                (product_code, product_name, quantity, unit_price, line_total, item_id),
             )
             conn.commit()
             if cursor.rowcount == 0:
@@ -839,6 +904,7 @@ class Database(DatabaseBackend):
             if not row:
                 logger.warning("Receipt not found for deletion: id=%d", receipt_id)
                 return False
+            conn.execute("DELETE FROM receipt_items WHERE receipt_id = ?", (receipt_id,))
             conn.execute("DELETE FROM processing_logs WHERE receipt_id = ?", (receipt_id,))
             conn.execute("DELETE FROM receipts WHERE id = ?", (receipt_id,))
             conn.commit()

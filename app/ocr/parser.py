@@ -60,7 +60,8 @@ class ReceiptParser:
     # Lines to skip (headers, footers, noise)
     SKIP_PATTERNS = [
         re.compile(r"^\s*$"),  # Empty lines
-        re.compile(r"(total|subtotal|sum|grand)", re.IGNORECASE),
+        # NOTE: "total" lines are NO LONGER skipped — they are extracted for
+        # bill total verification.  The _is_total_line() method handles them.
         re.compile(r"(date|time|invoice|receipt\s*#)", re.IGNORECASE),
         re.compile(r"(thank|signature|sign|cash|change)", re.IGNORECASE),
         re.compile(r"^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}$"),  # Date patterns
@@ -69,13 +70,97 @@ class ReceiptParser:
         re.compile(r"^(item|product|code|name|quantity|qty|sr\.?\s*no)", re.IGNORECASE),  # Column headers
         # OCR-mangled 'Items' header: Lte, Ltewu, ltems, etc.
         re.compile(r"^[Ll][Tt][Ee][A-Za-z]*$"),
+        # Common receipt words that OCR may read and fuzzy-match to catalog codes
+        re.compile(r"^(firma|store|shop|mart|bill|paid|amount|rate|price|unit)$", re.IGNORECASE),
+        # OCR garbled versions of QTY/TOTAL that look like codes
+        re.compile(r"^(qtx|qix|qty|qtv|qly|qry)$", re.IGNORECASE),
         # Boxed template elements
         re.compile(r"\(\s*(block|capitals|number|only)\s*", re.IGNORECASE),  # (BLOCK CAPITALS), (NUMBER ONLY)
         re.compile(r"^\s*s\.?\s*no\b", re.IGNORECASE),  # S.No header
         re.compile(r"^\s*unit\s*$", re.IGNORECASE),  # UNIT header
         re.compile(r"^\s*receipt\s*#?\s*$", re.IGNORECASE),  # RECEIPT title
         re.compile(r"(prepared\s*by|total\s*items)", re.IGNORECASE),  # Footer fields
+        # ── Column header words (standalone or combined) ──
+        # "AMOUNT", "RATE", "Item Code", "Qty", "Price", "S.No" as standalone words on a line
+        re.compile(r"^\s*(amount|rate|price|amt)\s*$", re.IGNORECASE),
+        # Multi-word column header lines: "Item Code  Qty  Rate  Amount"
+        re.compile(
+            r"^\s*(item\s*code|item|code|qty|quantity|rate|amount|price|s\.?\s*no|unit)"
+            r"(\s+(item\s*code|item|code|qty|quantity|rate|amount|price|s\.?\s*no|unit)){1,}",
+            re.IGNORECASE,
+        ),
     ]
+
+    # Patterns that identify a "Total" line (for bill total verification)
+    # OCR often garbles separators, so we accept: spaces, :, =, -, _, .
+    _SEP = r'[\s:=\-_\.]*'  # separator chars between keyword and number
+    _TOTAL_WORD = r'(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)'
+    TOTAL_LINE_PATTERNS = [
+        # "Total Qty 11" / "Total Qty: 11" / "Total_Qty 11" / garbled duplicates
+        re.compile(rf"{_TOTAL_WORD}{_SEP}(?:qty|quantity|qtv|qly|qtyt|qiy|qtt){_SEP}(\d+\.?\d*)", re.IGNORECASE),
+        # "Grand Total 11" / "Grand Total: 11"
+        re.compile(rf"(?:grand|grramd|gramd|grrand|gra[nm]d){_SEP}{_TOTAL_WORD}{_SEP}(\d+\.?\d*)", re.IGNORECASE),
+        # "Sub Total 11"
+        re.compile(rf"(?:sub{_SEP}total|subtotal){_SEP}(\d+\.?\d*)", re.IGNORECASE),
+        # "Total: 11" / "Total 11" / "Total = 11"
+        re.compile(rf"{_TOTAL_WORD}[\s:=\-_]+(\d+\.?\d*)", re.IGNORECASE),
+        # "Sum: 11"
+        re.compile(rf"(?:sum)[\s:=\-_]+(\d+\.?\d*)", re.IGNORECASE),
+        # Tolerant: "Total Qty" anywhere, then a number near the end of the line
+        # Handles OCR duplication like "Total Qty_ Total Qty_ 24"
+        re.compile(rf"{_TOTAL_WORD}.*?(?:qty|quantity|qtv|qly|qtyt|qiy|qtt).*?(\d+\.?\d*)\s*$", re.IGNORECASE),
+    ]
+
+    # Quick check: does this line contain a "total"-like keyword?
+    _TOTAL_KEYWORD_RE = re.compile(
+        r"(total|totai|tota1|t0tal|totd|totol|toial|tatal|toal|tdal|tetal|subtotal|sub\s*total|grand\s*total|sum)", re.IGNORECASE
+    )
+
+    # ── Price Line Patterns (4-column: CODE QTY RATE AMOUNT) ──
+    # Matches lines like: "TEW1  3  250  750" or "TEW1  3  250.00  750.00"
+    # Group 1: code, Group 2: qty, Group 3: rate, Group 4: amount
+    # Important: alphanumeric codes (TEW1, PEPW4, TEW20) MUST be matched before
+    # pure alpha codes, so the trailing digits stay part of the code.
+    _PRICE_CODE = r'[A-Za-z]{2,4}[A-Za-z0-9]{1,3}|[A-Za-z]{3,6}'
+    PRICE_LINE_PATTERNS = [
+        # CODE  QTY  RATE  AMOUNT (all space-separated)
+        re.compile(
+            rf"({_PRICE_CODE})\s+(\d+\.?\d*)\s+(\d+\.?\d*)\s+(\d+\.?\d*)",
+            re.IGNORECASE,
+        ),
+        # With line number prefix: N. CODE QTY RATE AMOUNT
+        re.compile(
+            rf"\d{{1,2}}\s+({_PRICE_CODE})\s+(\d+\.?\d*)\s+(\d+\.?\d*)\s+(\d+\.?\d*)",
+            re.IGNORECASE,
+        ),
+        # CODE  QTY  @RATE  AMOUNT or CODE QTY x RATE = AMOUNT
+        re.compile(
+            rf"({_PRICE_CODE})\s+(\d+\.?\d*)\s*[@x×]\s*(\d+\.?\d*)\s*[=]?\s*(\d+\.?\d*)",
+            re.IGNORECASE,
+        ),
+    ]
+
+    # ── Grand Total (monetary) Patterns ──
+    # Distinct from Total Qty — these match the monetary total line.
+    _AMOUNT_SEP = r'[\s:=\-_\.]*'
+    GRAND_TOTAL_PATTERNS = [
+        # "Grand Total 10150" / "Grand Total: 10150" / "Grramd Total 10150"
+        re.compile(rf"(?:grand|grramd|gramd|grrand|gra[nm]d){_AMOUNT_SEP}{_TOTAL_WORD}{_AMOUNT_SEP}(\d+\.?\d*)", re.IGNORECASE),
+        # "Total Amount 10150" / "Total Amt 10150"
+        re.compile(rf"{_TOTAL_WORD}{_AMOUNT_SEP}(?:amount|amt){_AMOUNT_SEP}(\d+\.?\d*)", re.IGNORECASE),
+        # "Bill Total 10150"
+        re.compile(rf"(?:bill){_AMOUNT_SEP}{_TOTAL_WORD}{_AMOUNT_SEP}(\d+\.?\d*)", re.IGNORECASE),
+        # "Net Total 10150"
+        re.compile(rf"(?:net){_AMOUNT_SEP}{_TOTAL_WORD}{_AMOUNT_SEP}(\d+\.?\d*)", re.IGNORECASE),
+    ]
+    # Quick check for grand total keywords (must NOT be just "Total Qty")
+    _GRAND_TOTAL_KEYWORD_RE = re.compile(
+        r"((?:grand|grramd|gramd|grrand|gra[nm]d)\s*(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)"
+        r"|(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)\s*(?:amount|amt)"
+        r"|bill\s*(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)"
+        r"|net\s*(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal))",
+        re.IGNORECASE,
+    )
 
     def __init__(self, product_catalog: Dict[str, str]):
         """
@@ -108,11 +193,140 @@ class ReceiptParser:
         """
         items = []
         unparsed_lines = []
+        total_line_text = None       # captured total line (for bill verification)
+        total_qty_ocr = None         # total value read from the receipt
+        total_line_confidence = None # confidence of the total line detection
+        grand_total_ocr = None       # monetary grand total from receipt
+        grand_total_text = None      # raw text of grand total line
+        grand_total_confidence = None
         receipt_number = self._generate_receipt_number()
 
         # ── GROUP detections into lines by Y-coordinate ──
         grouped_lines = self._group_into_lines(ocr_results, is_structured=is_structured)
         logger.debug(f"Parsing {len(ocr_results)} OCR detections → {len(grouped_lines)} grouped lines for receipt {receipt_number}")
+
+        # ── PRE-SCAN: extract total line BEFORE item parsing ──
+        # Prioritize specific patterns (Total Qty) over generic ones.
+        # Scan ALL lines and pick the best match rather than taking the first.
+        best_total_val = None
+        best_total_text = None
+        best_total_conf = None
+        best_pattern_idx = len(self.TOTAL_LINE_PATTERNS)  # worst priority
+
+        for idx, line_info in enumerate(grouped_lines):
+            raw_text = line_info["text"]
+            confidence = line_info["confidence"]
+            if self._is_total_line(raw_text):
+                # Skip lines that are grand totals (monetary) — they should NOT
+                # be treated as total qty lines. Grand total extraction happens
+                # in a separate scan below.
+                if self._GRAND_TOTAL_KEYWORD_RE.search(raw_text):
+                    logger.debug(f"  TOTAL QTY SCAN: skipping grand total line: {raw_text!r}")
+                    continue
+                val, txt = self._extract_total_from_line(raw_text)
+                if val is not None:
+                    # Determine which pattern matched (lower index = higher priority)
+                    pat_idx = len(self.TOTAL_LINE_PATTERNS)  # fallback priority
+                    for i, pattern in enumerate(self.TOTAL_LINE_PATTERNS):
+                        if pattern.search(raw_text):
+                            pat_idx = i
+                            break
+
+                    if pat_idx < best_pattern_idx:
+                        best_total_val = val
+                        best_total_text = txt
+                        best_total_conf = confidence
+                        best_pattern_idx = pat_idx
+                        logger.info(f"  TOTAL LINE candidate: {txt!r} → {val} (pattern={pat_idx}, conf={confidence:.4f})")
+                else:
+                    # ── CROSS-LINE TOTAL DETECTION ──
+                    # Keyword found but no number on the same line.
+                    # Check NEXT and PREVIOUS lines for a standalone number.
+                    neighbor_indices = []
+                    if idx + 1 < len(grouped_lines):
+                        neighbor_indices.append(idx + 1)
+                    if idx - 1 >= 0:
+                        neighbor_indices.append(idx - 1)
+                    
+                    for nb_idx in neighbor_indices:
+                        nb_text = grouped_lines[nb_idx]["text"].strip()
+                        nb_conf = grouped_lines[nb_idx]["confidence"]
+                        # Accept if neighbor line contains a number
+                        # (could be standalone number or "code number" where number is at end)
+                        num_match = re.search(r'(\d+\.?\d*)\s*$', nb_text)
+                        if num_match:
+                            cross_val = float(num_match.group(1))
+                            if cross_val > 0 and cross_val <= 999:
+                                combined_text = raw_text + " " + num_match.group(1)
+                                # Try to match the combined text against patterns
+                                combined_val, combined_txt = self._extract_total_from_line(combined_text)
+                                if combined_val is not None:
+                                    pat_idx = len(self.TOTAL_LINE_PATTERNS) - 1
+                                    if pat_idx < best_pattern_idx:
+                                        best_total_val = combined_val
+                                        best_total_text = combined_text
+                                        best_total_conf = min(confidence, nb_conf)
+                                        best_pattern_idx = pat_idx
+                                        logger.info(
+                                            f"  CROSS-LINE TOTAL: '{raw_text}' + '{num_match.group(1)}' → {combined_val}"
+                                        )
+                                        break
+                                else:
+                                    # Pattern didn't match but keyword is there
+                                    total_kw_line = raw_text.lower()
+                                    has_total_kw = any(kw in total_kw_line for kw in ['total', 'totai', 'tota1', 't0tal'])
+                                    if has_total_kw:
+                                        pat_idx = len(self.TOTAL_LINE_PATTERNS) - 1
+                                        if pat_idx < best_pattern_idx:
+                                            best_total_val = cross_val
+                                            best_total_text = raw_text + " " + num_match.group(1)
+                                            best_total_conf = min(confidence, nb_conf)
+                                            best_pattern_idx = pat_idx
+                                            logger.info(
+                                                f"  CROSS-LINE TOTAL (direct): '{raw_text}' + '{num_match.group(1)}' → {cross_val}"
+                                            )
+                                            break
+
+        if best_total_val is not None:
+            total_qty_ocr = best_total_val
+            total_line_text = best_total_text
+            total_line_confidence = best_total_conf
+            logger.info(f"  TOTAL LINE selected: {total_line_text!r} → {total_qty_ocr}")
+
+        # ── PRE-SCAN: extract grand total (monetary) BEFORE item parsing ──
+        for idx, line_info in enumerate(grouped_lines):
+            raw_text = line_info["text"]
+            confidence = line_info["confidence"]
+            if self._GRAND_TOTAL_KEYWORD_RE.search(raw_text):
+                found_on_line = False
+                for pattern in self.GRAND_TOTAL_PATTERNS:
+                    m = pattern.search(raw_text)
+                    if m:
+                        try:
+                            val = float(m.group(1))
+                            if val > 0:
+                                grand_total_ocr = val
+                                grand_total_text = raw_text
+                                grand_total_confidence = confidence
+                                found_on_line = True
+                                logger.info(f"  GRAND TOTAL found: {raw_text!r} → {val}")
+                        except (ValueError, TypeError):
+                            pass
+                        break
+                # Cross-line grand total: keyword on one line, number on next
+                if not found_on_line and idx + 1 < len(grouped_lines):
+                    next_text = grouped_lines[idx + 1]["text"].strip()
+                    next_conf = grouped_lines[idx + 1]["confidence"]
+                    num_match = re.match(r'^\s*(\d+\.?\d*)\s*$', next_text)
+                    if num_match:
+                        val = float(num_match.group(1))
+                        if val > 0:
+                            grand_total_ocr = val
+                            grand_total_text = raw_text + " " + next_text
+                            grand_total_confidence = min(confidence, next_conf)
+                            logger.info(
+                                f"  CROSS-LINE GRAND TOTAL: '{raw_text}' + '{next_text}' → {val}"
+                            )
 
         for line_info in grouped_lines:
             raw_text = line_info["text"]
@@ -292,6 +506,9 @@ class ReceiptParser:
                 i for i in items
                 if i["quantity"] == 1.0 and i.get("match_type") != "unknown"
             ]
+            # Max distance guard: qty must be within ~6% of receipt height
+            max_y = max((d.get("y_center", 0) for d in ocr_results), default=0)
+            cross_line_threshold = max_y * 0.06 if max_y else 120
             remaining_unparsed_2: list = []
             for uline in unparsed_lines:
                 claimed = False
@@ -299,21 +516,27 @@ class ReceiptParser:
                 if m:
                     qty_val = float(m.group(1))
                     if 1 < qty_val <= 999:
-                        best_item = min(
-                            items_needing_qty,
-                            key=lambda i: abs(
-                                i.get("y_center", 0) - uline.get("y_center", 0)
-                            ),
-                            default=None,
-                        )
-                        if best_item:
+                        # Find nearest item, but reject if too far away
+                        best_item = None
+                        best_dist = float('inf')
+                        for item in items_needing_qty:
+                            dist = abs(item.get("y_center", 0) - uline.get("y_center", 0))
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_item = item
+                        if best_item and best_dist < cross_line_threshold:
                             best_item["quantity"] = qty_val
                             best_item["needs_review"] = True
                             items_needing_qty.remove(best_item)
                             claimed = True
                             logger.info(
                                 f"  Cross-line qty: '{uline['text']}' → "
-                                f"{best_item['code']} (qty={qty_val})"
+                                f"{best_item['code']} (qty={qty_val}, dist={best_dist:.0f})"
+                            )
+                        elif best_item:
+                            logger.debug(
+                                f"  Cross-line qty REJECTED (too far): '{uline['text']}' "
+                                f"dist={best_dist:.0f} > threshold={cross_line_threshold:.0f}"
                             )
                 if not claimed:
                     remaining_unparsed_2.append(uline)
@@ -329,17 +552,62 @@ class ReceiptParser:
         # Handle duplicates: aggregate quantities for same product code
         items = self._aggregate_duplicates(items)
 
+        # ── FILTER OUT UNKNOWN/PHANTOM CODES ─────────────────────────────────────
+        # Items with match_type "unknown" are phantom codes (OCR noise that
+        # couldn't be matched to any catalog product). Remove them entirely
+        # rather than polluting the results.
+        unknown_items = [i for i in items if i.get("match_type") == "unknown"]
+        if unknown_items:
+            for ui in unknown_items:
+                logger.warning(
+                    f"  Removing phantom code: {ui['code']} (match_type=unknown, "
+                    f"raw='{ui.get('raw_text', '')}')"
+                )
+            items = [i for i in items if i.get("match_type") != "unknown"]
+
         # ── QUANTITY SANITY CHECK ────────────────────────────────────────────────
-        # Flag items whose quantity looks like an OCR artefact (misread price,
+        # Fix items whose quantity looks like an OCR artefact (misread price,
         # date, or barcode fragment).  qty==0 is always wrong; qty>500 is almost
         # certainly a misread (e.g. the year "2024" treated as a quantity).
+        # For items WITH price data (4-col), trust them more; for 2-col items,
+        # actively correct bad quantities.
         for item in items:
-            if item["quantity"] == 0 or item["quantity"] > 500:
+            qty = item["quantity"]
+            has_price_data = item.get("unit_price", 0) > 0
+            if qty == 0:
                 logger.warning(
-                    f"  Qty sanity FAIL: {item['code']} qty={item['quantity']} "
-                    f"(likely OCR artefact) → flagging for review"
+                    f"  Qty sanity FAIL: {item['code']} qty=0 → setting to 1"
                 )
+                item["quantity"] = 1.0
                 item["needs_review"] = True
+            elif qty > 100 and not has_price_data:
+                # 2-col parse produced insane qty — reset to 1
+                # Threshold 100: for same-receipt-type scanning, realistic
+                # quantities rarely exceed 100.  Catches OCR artefacts like
+                # qty=240 (VWX on Media(5).jpg) that the old 500 threshold missed.
+                logger.warning(
+                    f"  Qty sanity FAIL: {item['code']} qty={qty} "
+                    f"(no price data, likely OCR artefact) → resetting to 1"
+                )
+                item["quantity"] = 1.0
+                item["needs_review"] = True
+            elif qty > 100 and has_price_data:
+                # 4-col parse — the qty*rate=amount check already passed.
+                # For qty 100-999 with valid math, trust but flag.
+                # For qty > 999, almost certainly wrong even with price data.
+                if qty > 999:
+                    logger.warning(
+                        f"  Qty sanity FAIL: {item['code']} qty={qty} "
+                        f"(too high even with price data) → resetting to 1"
+                    )
+                    item["quantity"] = 1.0
+                    item["needs_review"] = True
+                else:
+                    logger.warning(
+                        f"  Qty sanity WARNING: {item['code']} qty={qty} "
+                        f"(has price data) → flagging for review"
+                    )
+                    item["needs_review"] = True
 
         # Calculate stats
         avg_confidence = (
@@ -354,6 +622,77 @@ class ReceiptParser:
         if unparsed_lines:
             logger.debug(f"Unparsed lines: {[l['text'] for l in unparsed_lines]}")
 
+        # ── Math Verification (price-level) ──────────────────────────────────────
+        has_prices = any(item.get("unit_price", 0) > 0 for item in items)
+        if has_prices:
+            line_checks = []
+            computed_grand = 0.0
+            all_line_ok = True
+            for item in items:
+                rate = item.get("unit_price", 0)
+                qty  = item.get("quantity", 0)
+                amt  = item.get("line_total", 0)
+                expected = round(qty * rate, 2)
+                ok = abs(amt - expected) < 0.01 if amt > 0 else True
+                if not ok:
+                    all_line_ok = False
+                computed_grand += expected
+                line_checks.append({
+                    "code": item.get("code", ""),
+                    "qty": qty, "rate": rate,
+                    "amount_ocr": amt, "amount_expected": expected,
+                    "math_ok": ok,
+                })
+            computed_grand = round(computed_grand, 2)
+            math_verification = {
+                "has_prices": True,
+                "line_checks": line_checks,
+                "all_line_math_ok": all_line_ok,
+                "computed_grand_total": computed_grand,
+                "ocr_grand_total": grand_total_ocr,
+                "grand_total_text": grand_total_text,
+                "grand_total_confidence": grand_total_confidence,
+                "grand_total_match": (
+                    grand_total_ocr is not None
+                    and abs(grand_total_ocr - computed_grand) < 0.01
+                ),
+            }
+        else:
+            math_verification = {
+                "has_prices": False,
+                "ocr_grand_total": grand_total_ocr,
+                "grand_total_text": grand_total_text,
+                "grand_total_confidence": grand_total_confidence,
+            }
+
+        # ── Bill Total Verification ──────────────────────────────────────────────
+        computed_total = sum(item.get("quantity", 0) for item in items)
+        computed_total = round(computed_total, 1)
+
+        total_verification = {
+            "total_qty_ocr": total_qty_ocr,
+            "total_qty_computed": computed_total,
+            "total_line_text": total_line_text,
+            "total_line_confidence": total_line_confidence,
+            "total_qty_match": (
+                total_qty_ocr is not None
+                and abs(total_qty_ocr - computed_total) < 0.01
+            ),
+            "verification_status": "not_found",
+        }
+        if total_qty_ocr is not None:
+            if total_verification["total_qty_match"]:
+                total_verification["verification_status"] = "verified"
+                logger.info(
+                    f"  ✅ TOTAL VERIFIED: OCR={total_qty_ocr}, computed={computed_total}"
+                )
+            else:
+                total_verification["verification_status"] = "mismatch"
+                logger.warning(
+                    f"  ⚠️ TOTAL MISMATCH: OCR={total_qty_ocr}, computed={computed_total}, "
+                    f"diff={abs(total_qty_ocr - computed_total)}"
+                )
+
         return {
             "receipt_id": receipt_number,
             "scan_timestamp": datetime.now().isoformat(),
@@ -363,6 +702,8 @@ class ReceiptParser:
             "needs_review": needs_review,
             "unparsed_lines": unparsed_lines,
             "processing_status": "success" if items else "no_items_found",
+            "total_verification": total_verification,
+            "math_verification": math_verification,
         }
 
     def _group_into_lines(self, ocr_results: List[Dict], is_structured: bool = False) -> List[Dict]:
@@ -441,15 +782,18 @@ class ReceiptParser:
         # ── ADAPTIVE THRESHOLD for dense receipts ──
         # If many detections are packed into a small vertical range,
         # reduce the threshold to avoid merging adjacent rows.
-        if len(detections_with_pos) >= 8:
+        # This is critical for same-type receipt scanning where all receipts
+        # have similar line spacing.
+        if len(detections_with_pos) >= 6:
             y_values = sorted(d["y_center"] for d in detections_with_pos)
-            y_gaps = [y_values[i+1] - y_values[i] for i in range(len(y_values)-1) if y_values[i+1] - y_values[i] > 5]
+            y_gaps = [y_values[i+1] - y_values[i] for i in range(len(y_values)-1) if y_values[i+1] - y_values[i] > 3]
             if y_gaps:
                 median_gap = sorted(y_gaps)[len(y_gaps) // 2]
                 # If the median gap between detections is small, this is a dense receipt
-                # Cap the threshold at 80% of the median gap to avoid row merging
-                if median_gap < y_threshold * 1.5:
-                    dense_threshold = max(15, median_gap * 0.8)
+                # Cap the threshold at 70% of the median gap to avoid row merging
+                # (was 80% — tighter now to prevent PEPW1↔PEPW10 swap on dense 8-item receipts)
+                if median_gap < y_threshold * 1.8:
+                    dense_threshold = max(12, median_gap * 0.70)
                     if dense_threshold < y_threshold:
                         logger.debug(
                             f"  Dense receipt detected: median_gap={median_gap:.0f}px, "
@@ -535,11 +879,89 @@ class ReceiptParser:
                 f"{[d['text'] for d in filtered]} → {combined_text!r}"
             )
 
-        return grouped
+        # ── MERGE PASS: join code-only lines with adjacent number-only lines ──
+        # In dense 4-column receipts, OCR may place the code on one "line"
+        # and the numbers (qty, rate, amount) on the next, because the
+        # Y-grouping threshold is too tight.  Merge them back together.
+        _CODE_ONLY_RE = re.compile(
+            r'^\s*(?:[A-Za-z]{2,4}[A-Za-z0-9]{1,3}|[A-Za-z]{3,6})\s*$'
+        )
+        _NUMS_ONLY_RE = re.compile(
+            r'^\s*[\d\s.]+\s*$'  # only digits, spaces, dots
+        )
+
+        # ── MERGE PASS: join orphan code lines with adjacent number lines ──
+        # Strategy: find code-only lines and try to merge with the closest
+        # numbers-only line (before or after). Prefer the one closer in Y.
+        merged = list(grouped)
+        changed = True
+        while changed:
+            changed = False
+            new_merged = []
+            consumed = set()
+            for idx in range(len(merged)):
+                if idx in consumed:
+                    continue
+                cur = merged[idx]
+                if _CODE_ONLY_RE.match(cur["text"]):
+                    # Look at previous and next for numbers-only
+                    prev_idx = idx - 1 if idx > 0 and (idx - 1) not in consumed else None
+                    next_idx = idx + 1 if idx + 1 < len(merged) and (idx + 1) not in consumed else None
+
+                    prev_ok = (prev_idx is not None
+                               and _NUMS_ONLY_RE.match(merged[prev_idx]["text"]))
+                    next_ok = (next_idx is not None
+                               and _NUMS_ONLY_RE.match(merged[next_idx]["text"]))
+
+                    partner_idx = None
+                    if prev_ok and next_ok:
+                        # Both adjacent lines are numbers-only — pick closest in Y
+                        dy_prev = abs(cur["y_center"] - merged[prev_idx]["y_center"])
+                        dy_next = abs(cur["y_center"] - merged[next_idx]["y_center"])
+                        partner_idx = prev_idx if dy_prev <= dy_next else next_idx
+                    elif prev_ok:
+                        partner_idx = prev_idx
+                    elif next_ok:
+                        partner_idx = next_idx
+
+                    if partner_idx is not None:
+                        partner = merged[partner_idx]
+                        merged_text = cur["text"].strip() + " " + partner["text"].strip()
+                        merged_conf = (cur["confidence"] + partner["confidence"]) / 2
+                        merged_y = (cur["y_center"] + partner["y_center"]) / 2
+                        # If partner was already added to new_merged (prev case),
+                        # we need to replace it
+                        if partner_idx < idx:
+                            # Partner is previous — remove it from new_merged
+                            new_merged = [m for j, m in enumerate(new_merged)
+                                          if j != len(new_merged) - 1 or merged[partner_idx] is not m]
+                            # Re-check: find and remove the partner entry
+                            for ri in range(len(new_merged) - 1, -1, -1):
+                                if new_merged[ri] is merged[partner_idx]:
+                                    new_merged.pop(ri)
+                                    break
+                        consumed.add(partner_idx)
+                        consumed.add(idx)
+                        new_merged.append({
+                            "text": merged_text,
+                            "confidence": merged_conf,
+                            "y_center": merged_y,
+                        })
+                        logger.debug(
+                            f"  MERGE code+nums: {cur['text']!r} + {partner['text']!r} → {merged_text!r}"
+                        )
+                        changed = True
+                        continue
+                new_merged.append(cur)
+            merged = new_merged
+
+        return merged
 
     def _parse_line(self, text: str, confidence: float) -> Optional[Dict]:
         """
         Attempt to parse a single line into an item-quantity pair.
+        Tries 4-column price format first (CODE QTY RATE AMOUNT),
+        then falls back to standard 2-column (CODE QTY).
 
         Args:
             text: Cleaned text from OCR (line numbers and qt suffixes already removed).
@@ -548,6 +970,128 @@ class ReceiptParser:
         Returns:
             Parsed item dict or None if parsing fails.
         """
+        # ── Pre-clean: collapse spaces inside split numbers ──
+        # OCR sometimes reads "1800" as "180 0" or "3200" as "32 00".
+        # Only apply AFTER the code prefix to avoid corrupting codes like "PEPW10 5".
+        # Pattern: (2+ digits)(space)(1-2 digits)(space or end) → merge
+        _code_pfx_re = re.compile(
+            r'^(\s*(?:[A-Za-z]{2,4}[A-Za-z0-9]{1,3}|[A-Za-z]{3,6})\s+)(.*)',
+            re.DOTALL,
+        )
+        pfx_m = _code_pfx_re.match(text)
+        if pfx_m:
+            prefix = pfx_m.group(1)
+            numeric_tail = pfx_m.group(2)
+            _SPLIT_NUM_RE = re.compile(r'(\d{2,})\s(\d{1,2})(?=\s|$)')
+            cleaned_tail = numeric_tail
+            prev = None
+            max_iters = 2  # Limit iterations to prevent runaway merging
+            iters = 0
+            while cleaned_tail != prev and iters < max_iters:
+                prev = cleaned_tail
+                cleaned_tail = _SPLIT_NUM_RE.sub(r'\1\2', cleaned_tail)
+                iters += 1
+            if cleaned_tail != numeric_tail:
+                # Validate: the collapse should produce a valid 4-col line.
+                # If the collapsed numbers don't form a valid qty*rate=amount
+                # relationship, revert — the spaces were likely real separators.
+                collapsed_nums = re.findall(r'\d+\.?\d*', cleaned_tail)
+                original_nums = re.findall(r'\d+\.?\d*', numeric_tail)
+                # Only accept collapse if it reduces the number count
+                # AND doesn't produce fewer than 2 numbers (need at least qty + something)
+                if len(collapsed_nums) >= 2 and len(collapsed_nums) < len(original_nums):
+                    text = prefix + cleaned_tail
+                    logger.debug(f"    Split-number collapse: {pfx_m.group(0)!r} → {text!r}")
+                elif len(collapsed_nums) == len(original_nums):
+                    # Collapse didn't actually merge anything useful — keep original
+                    logger.debug(f"    Split-number collapse SKIPPED (no change in token count)")
+                else:
+                    text = prefix + cleaned_tail
+                    logger.debug(f"    Split-number collapse: {pfx_m.group(0)!r} → {text!r}")
+
+        # ── Try 4-column price format first: CODE QTY RATE AMOUNT ──
+        for pattern in self.PRICE_LINE_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                code_raw = match.group(1).upper()
+                try:
+                    qty = float(match.group(2))
+                    rate = float(match.group(3))
+                    amount = float(match.group(4))
+                except (ValueError, TypeError):
+                    continue
+
+                # Validate the 4-column parse:
+                # 1) All values must be positive
+                # 2) qty should be reasonable (1-999) — quantities are typically small
+                # 3) amount MUST be approximately qty * rate (within 15% tolerance)
+                # 4) rate should be > qty (prices are usually larger than quantities)
+                expected_amount = qty * rate
+                if rate >= 1 and amount >= 1 and qty >= 1 and qty <= 999:
+                    amount_close = abs(amount - expected_amount) / max(expected_amount, 1) < 0.15
+                    if amount_close:
+                        # Valid price line detected
+                        product_name, match_type, matched_code = self._map_product_code(code_raw)
+                        final_code = matched_code if matched_code else code_raw
+                        product_info = self._get_product_info(final_code)
+                        qty = max(1.0, min(9999.0, round(qty, 1)))
+                        logger.debug(
+                            f"    PRICE LINE: {text!r} → code={final_code}, qty={qty}, "
+                            f"rate={rate}, amount={amount}"
+                        )
+                        return {
+                            "code": final_code,
+                            "product": product_name,
+                            "quantity": qty,
+                            "unit": product_info.get("unit", "Piece") if product_info else "Piece",
+                            "confidence": confidence,
+                            "needs_review": confidence < 0.5 or match_type == "fuzzy",
+                            "match_type": match_type,
+                            "raw_text": text,
+                            "unit_price": rate,
+                            "line_total": amount,
+                        }
+
+        # ── 3-column fallback: CODE RATE AMOUNT (qty missing from OCR) ──
+        # When OCR misses the qty digit, we get CODE + two numbers.
+        # Infer qty = amount / rate if it gives a clean integer.
+        _3COL_RE = re.compile(
+            rf"({self._PRICE_CODE})\s+(\d+\.?\d*)\s+(\d+\.?\d*)\s*$",
+            re.IGNORECASE,
+        )
+        m3 = _3COL_RE.search(text)
+        if m3:
+            code_raw = m3.group(1).upper()
+            n1 = float(m3.group(2))
+            n2 = float(m3.group(3))
+            # Try interpretation: n1=rate, n2=amount → qty = n2/n1
+            if n1 >= 10 and n2 >= n1 and n2 > 0:
+                inferred_qty = n2 / n1
+                if 0.8 <= inferred_qty <= 999 and abs(inferred_qty - round(inferred_qty)) < 0.05:
+                    inferred_qty = round(inferred_qty)
+                    product_name, match_type, matched_code = self._map_product_code(code_raw)
+                    final_code = matched_code if matched_code else code_raw
+                    product_info = self._get_product_info(final_code)
+                    # Only accept if code maps to a known product (exact or OCR-variant)
+                    if match_type in ("exact", "normalized", "ambiguous_oi"):
+                        logger.debug(
+                            f"    3-COL INFER: {text!r} → code={final_code}, "
+                            f"qty={inferred_qty} (inferred), rate={n1}, amount={n2}"
+                        )
+                        return {
+                            "code": final_code,
+                            "product": product_name,
+                            "quantity": float(inferred_qty),
+                            "unit": product_info.get("unit", "Piece") if product_info else "Piece",
+                            "confidence": confidence * 0.9,  # Slightly lower confidence for inferred qty
+                            "needs_review": True,
+                            "match_type": match_type,
+                            "raw_text": text,
+                            "unit_price": n1,
+                            "line_total": n2,
+                        }
+
+        # ── Standard 2-column parsing (CODE QTY) ──
         for pattern in self.PATTERNS:
             match = pattern.search(text)
             if match:
@@ -585,6 +1129,38 @@ class ReceiptParser:
                     # Use the MATCHED catalog code, not the raw OCR code
                     final_code = matched_code if matched_code else code_upper
 
+                    # ── CATALOG PRICE GUARD ──
+                    # If the detected "quantity" matches a known catalog price
+                    # for this product, the parser probably grabbed the rate
+                    # or amount instead of the real qty. Reset to 1.
+                    if quantity > 50 and final_code in self.product_catalog:
+                        product_info_tmp = self._get_product_info(final_code)
+                        if product_info_tmp:
+                            from app.services.product_service import ProductService
+                            try:
+                                _ps = ProductService()
+                                _prod = _ps.get_product(final_code)
+                                if _prod and _prod.get('price'):
+                                    cat_price = float(_prod['price'])
+                                    # If qty matches the catalog price, it's the rate not qty
+                                    if abs(quantity - cat_price) < 1:
+                                        logger.warning(
+                                            f"    Qty={quantity} matches catalog price for {final_code}. "
+                                            f"Likely OCR picked up rate as qty. Resetting qty=1."
+                                        )
+                                        quantity = 1.0
+                                    # If qty is a multiple of the catalog price, it's the line total
+                                    elif cat_price > 0 and quantity >= cat_price:
+                                        inferred = quantity / cat_price
+                                        if abs(inferred - round(inferred)) < 0.05 and 1 <= round(inferred) <= 99:
+                                            logger.warning(
+                                                f"    Qty={quantity} looks like line total for {final_code} "
+                                                f"(price={cat_price}). Inferred qty={round(inferred)}."
+                                            )
+                                            quantity = float(round(inferred))
+                            except Exception:
+                                pass
+
                     # Note: Leading "N. " / "N) " line numbers are already
                     # stripped by LINE_NUMBER_RE in _clean_ocr_text().
                     # If a digit remains before the code (e.g. "4 JkL"), treat
@@ -593,11 +1169,18 @@ class ReceiptParser:
 
                     product_info = self._get_product_info(final_code)
 
-                    # Quantity sanity: clamp to [1, 9999], round to 1 decimal
+                    # Quantity sanity: clamp to [1, 50] for 2-col parse, round to 1 decimal
+                    # For same-type receipt scanning, quantities above 50 in a 2-col
+                    # format (no rate/amount columns) are almost always OCR misreads.
+                    # With a price line (4-col), larger quantities are validated by
+                    # qty*rate=amount math, so they don't reach this code path.
                     if quantity <= 0:
                         quantity = 1.0
-                    elif quantity > 9999:
-                        quantity = 9999.0
+                    elif quantity > 50:
+                        logger.warning(
+                            f"    2-col qty={quantity} too high for {final_code}, clamping to 1"
+                        )
+                        quantity = 1.0
                     quantity = round(quantity, 1)
 
                     return {
@@ -773,22 +1356,57 @@ class ReceiptParser:
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
         # ── REASSEMBLE SPLIT ALPHANUMERIC CODES ──
-        # OCR often splits codes like PEPW20 into "PEPW 20" (alpha + space + digits).
+        # OCR often splits codes like PEPW20 into "PEPW 20" (alpha + space + digits)
+        # or "PEP W1" (alpha + alpha-digit fragment).
         # Glue them back if the combined token is a valid catalog code.
         if hasattr(self, 'product_catalog') and self.product_catalog:
             tokens = cleaned.split()
             reassembled = []
             i = 0
             while i < len(tokens):
-                if (i + 1 < len(tokens)
-                        and re.match(r'^[A-Za-z]{2,4}$', tokens[i])
-                        and re.match(r'^\d{1,3}$', tokens[i + 1])):
-                    combined = (tokens[i] + tokens[i + 1]).upper()
-                    # Also try OCR reverse-sub on the digit part (O→0, I→1)
-                    if combined in self.product_catalog:
-                        reassembled.append(tokens[i] + tokens[i + 1])
-                        logger.debug(f"    Reassembled split code: '{tokens[i]}' + '{tokens[i+1]}' → '{combined}'")
-                        i += 2
+                if i + 1 < len(tokens):
+                    t1 = tokens[i]
+                    t2 = tokens[i + 1]
+                    # Case 1: ALPHA + DIGITS → "PEPW" + "20" = "PEPW20"
+                    if (re.match(r'^[A-Za-z]{2,4}$', t1)
+                            and re.match(r'^\d{1,3}$', t2)):
+                        combined = (t1 + t2).upper()
+                        if combined in self.product_catalog:
+                            reassembled.append(t1 + t2)
+                            logger.debug(f"    Reassembled split code: '{t1}' + '{t2}' → '{combined}'")
+                            i += 2
+                            continue
+                    # Case 2: ALPHA + ALPHA-DIGIT → "PEP" + "W1" = "PEPW1"
+                    #         or "TEw" + "20" = "TEW20" (lowercase letters)
+                    if (re.match(r'^[A-Za-z]{2,4}$', t1)
+                            and re.match(r'^[A-Za-z]\d{1,3}$', t2)):
+                        combined = (t1 + t2).upper()
+                        if combined in self.product_catalog:
+                            reassembled.append(t1 + t2)
+                            logger.debug(f"    Reassembled split code: '{t1}' + '{t2}' → '{combined}'")
+                            i += 2
+                            continue
+                    # Case 3: ALPHA-DIGIT + DIGIT → "TEw2" + "0" = "TEW20"
+                    #         Handles codes split where part of the trailing digits
+                    #         became a separate token due to spacing/OCR.
+                    if (re.match(r'^[A-Za-z]{2,4}\d{1,2}$', t1)
+                            and re.match(r'^\d{1,2}$', t2)):
+                        combined = (t1 + t2).upper()
+                        if combined in self.product_catalog:
+                            reassembled.append(t1 + t2)
+                            logger.debug(f"    Reassembled split code: '{t1}' + '{t2}' → '{combined}'")
+                            i += 2
+                            continue
+                        # Also try OCR substitutions on the combined result
+                        for v in self._generate_ocr_variants(t1 + t2):
+                            if v in self.product_catalog:
+                                reassembled.append(v)
+                                logger.debug(f"    Reassembled+OCR split code: '{t1}' + '{t2}' → '{v}'")
+                                i += 2
+                                break
+                        else:
+                            reassembled.append(tokens[i])
+                            i += 1
                         continue
                 reassembled.append(tokens[i])
                 i += 1
@@ -877,11 +1495,27 @@ class ReceiptParser:
                 if variant not in variants:
                     variants.append(variant)
 
+        # Pairwise reverse substitutions (two chars at a time)
+        # Handles cases like TEWZO → TEW20 (Z→2 + O→0)
+        rev_positions = [(i, ch) for i, ch in enumerate(upper) if ch in self.OCR_REVERSE_SUBS]
+        if len(rev_positions) >= 2:
+            from itertools import combinations
+            for (i1, c1), (i2, c2) in combinations(rev_positions, 2):
+                chars = list(upper)
+                chars[i1] = self.OCR_REVERSE_SUBS[c1]
+                chars[i2] = self.OCR_REVERSE_SUBS[c2]
+                variant = ''.join(chars)
+                if variant not in variants:
+                    variants.append(variant)
+
         return variants
 
     # Common header words on receipts (to avoid false-positive matching)
     HEADER_WORDS = {"ITEMS", "ITEM", "QUANTITY", "QTY", "PRODUCT", "CODE",
-                    "NAME", "TOTAL", "DATE", "SERIAL", "NUMBER", "PRICE"}
+                    "NAME", "TOTAL", "DATE", "SERIAL", "NUMBER", "PRICE",
+                    "AMOUNT", "RATE", "UNIT", "BILL", "FIRMA", "STORE",
+                    "SHOP", "MART", "PAID", "GRAND", "SUBTOTAL", "SUM",
+                    "QTX", "QTY", "QIX", "QTV", "QLY", "QRY"}
 
     def _try_fuzzy_code_extraction(self, text: str, confidence: float) -> Optional[Dict]:
         """
@@ -989,10 +1623,15 @@ class ReceiptParser:
                 )
                 if matches:
                     best = matches[0]
-                    # Verify: same length AND (first or last char matches)
-                    # Prevents false positives (e.g., TU → STU)
+                    # Verify: same length AND first char matches
+                    # Tighter guard: require first char match to prevent
+                    # phantom codes (e.g., FIRMA→MNO, AZY→XYZ)
                     len_ok = abs(len(variant) - len(best)) <= 1
-                    char_ok = variant[0] == best[0] or variant[-1] == best[-1]
+                    char_ok = variant[0] == best[0]
+                    # For 3-char codes, also require at least 2 chars in common
+                    if len(best) <= 3:
+                        common = sum(1 for a, b in zip(variant, best) if a == b)
+                        char_ok = char_ok and common >= 2
                     if len_ok and char_ok:
                         qty = self._extract_qty_with_ocr_decode(text, token)
                         logger.info(f"OCR variant fuzzy: '{token}' → '{variant}' → '{best}' ({self.product_catalog[best]})")
@@ -1460,6 +2099,7 @@ class ReceiptParser:
         # Uses position-aware scoring: chars matching at the same index score higher
         best_score = 0.0
         best_code = None
+        positional_matches_best = 0
         for variant in variants:
             for catalog_code in self.product_catalog:
                 # Length guard: reject matches with >1 char length difference
@@ -1478,8 +2118,9 @@ class ReceiptParser:
                 if score > best_score:
                     best_score = score
                     best_code = catalog_code
+                    positional_matches_best = positional_matches
 
-        if best_code and best_score >= 0.7:
+        if best_code and best_score >= 0.85 and positional_matches_best >= 2:
             logger.info(
                 f"Aggressive match: '{code}' → '{best_code}' "
                 f"(score={best_score:.2f}, {self.product_catalog[best_code]})"
@@ -1609,11 +2250,77 @@ class ReceiptParser:
             logger.debug(f"  SKIP qty-suffix-like: {stripped!r}")
             return True
 
+        # Skip "Total Items" footer BEFORE checking total lines
+        # (so "Total Items 5" doesn't get misidentified as bill total)
         for pattern in self.SKIP_PATTERNS:
             if pattern.search(text):
                 return True
 
+        # Skip bill total lines from item parsing (they are already captured in
+        # the PRE-SCAN loop above, so we must NOT parse them as items).
+        if self._is_total_line(text):
+            return True
+
+        # Skip grand total lines (monetary total)
+        if self._GRAND_TOTAL_KEYWORD_RE.search(text):
+            return True
+
         return False
+
+    # Lines that contain "total" but are NOT bill totals (e.g., "Total Items: 5")
+    _TOTAL_EXCLUDE_RE = re.compile(
+        r"(?:total|totd)\s*(?:items|count|no\.?|number|products|entries)",
+        re.IGNORECASE,
+    )
+
+    def _is_total_line(self, text: str) -> bool:
+        """Check if this line is a bill 'Total' line (Total Qty, Grand Total, etc.)
+        
+        Excludes footer labels like 'Total Items: 5' which are item counts,
+        not quantity totals.
+        """
+        if not self._TOTAL_KEYWORD_RE.search(text):
+            return False
+        # Reject "Total Items", "Total Count", etc. — these are NOT bill totals
+        if self._TOTAL_EXCLUDE_RE.search(text):
+            return False
+        return True
+
+    def _extract_total_from_line(self, text: str) -> tuple:
+        """
+        Extract total value from a total line.
+
+        Returns:
+            (total_value, raw_text) or (None, text) if no number found.
+        """
+        for pattern in self.TOTAL_LINE_PATTERNS:
+            m = pattern.search(text)
+            if m:
+                try:
+                    val = float(m.group(1))
+                    if 0 < val <= 99999:
+                        return val, text
+                except (ValueError, TypeError):
+                    pass
+
+        # Fallback: only extract a number if the line looks like "Total<sep><number>"
+        # (i.e., the number follows the total keyword with only separator chars between)
+        # Avoid extracting numbers from "Total Items 5" or other unrelated contexts.
+        # Accept underscores and dots as separators (common OCR artifacts)
+        fallback_match = re.search(
+            r'(?:total|totai|tota1|t0tal|totd|subtotal|sub\s*total|grand\s*total|sum)'
+            r'\s*(?:qty|quantity|qtv|qly)?[\s:=\-_\.]*(\d+\.?\d*)',
+            text, re.IGNORECASE
+        )
+        if fallback_match:
+            try:
+                val = float(fallback_match.group(1))
+                if 0 < val <= 99999:
+                    return val, text
+            except (ValueError, TypeError):
+                pass
+
+        return None, text
 
     def _resolve_duplicate_ambiguity(self, items: List[Dict]) -> List[Dict]:
         """
@@ -1687,7 +2394,7 @@ class ReceiptParser:
     def _aggregate_duplicates(self, items: List[Dict]) -> List[Dict]:
         """
         Aggregate items with the same product code (sum quantities).
-        Flags aggregated items for review.
+        Recalculates line_total when merging.  Flags aggregated items for review.
         """
         seen = {}
         aggregated = []
@@ -1700,6 +2407,12 @@ class ReceiptParser:
                 aggregated[idx]["quantity"] += item["quantity"]
                 aggregated[idx]["needs_review"] = True
                 aggregated[idx]["raw_text"] += f" | {item['raw_text']}"
+                # Recalculate line_total after qty merge
+                rate = aggregated[idx].get("unit_price", 0)
+                if rate > 0:
+                    aggregated[idx]["line_total"] = round(
+                        aggregated[idx]["quantity"] * rate, 2
+                    )
                 logger.info(
                     f"Aggregated duplicate '{code}': "
                     f"qty now = {aggregated[idx]['quantity']}"

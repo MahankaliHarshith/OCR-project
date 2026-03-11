@@ -106,6 +106,8 @@ class ItemUpdate(BaseModel):
     product_code: str
     product_name: str
     quantity: float
+    unit_price: float = 0.0
+    line_total: float = 0.0
 
     @field_validator('product_code')
     @classmethod
@@ -126,6 +128,13 @@ class ItemUpdate(BaseModel):
         if v <= 0 or v > 99999:
             raise ValueError('Quantity must be between 1 and 99999')
         return v
+
+    @field_validator('unit_price', 'line_total')
+    @classmethod
+    def validate_price(cls, v: float) -> float:
+        if v < 0 or v > 9999999:
+            raise ValueError('Price values must be between 0 and 9,999,999')
+        return round(v, 2)
 
 
 class ExcelGenerateRequest(BaseModel):
@@ -352,7 +361,8 @@ async def update_receipt_item(item_id: int, data: ItemUpdate):
     """Update a receipt item (manual correction)."""
     try:
         updated = receipt_service.update_receipt_item(
-            item_id, data.product_code, data.product_name, data.quantity
+            item_id, data.product_code, data.product_name, data.quantity,
+            unit_price=data.unit_price, line_total=data.line_total,
         )
         if not updated:
             raise HTTPException(status_code=404, detail="Receipt item not found.")

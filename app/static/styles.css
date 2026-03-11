@@ -947,6 +947,165 @@ button:disabled, .btn:disabled {
     background: #FFFBEB !important;
 }
 
+/* ─── Bill Total Verification Panel ────────────────────────────────────── */
+.total-verification-panel {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--border-light);
+    background: var(--surface);
+    transition: background 0.2s;
+}
+.total-verification-panel.total-verified {
+    background: #F0FFF4;
+    border-top-color: #C6F6D5;
+}
+.total-verification-panel.total-mismatch {
+    background: #FFFBEB;
+    border-top-color: #FEFCBF;
+}
+.total-verification-panel.total-no-total {
+    background: #EBF8FF;
+    border-top-color: #BEE3F8;
+}
+
+.total-verification-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+.total-verification-icon {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+.total-verification-title {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+}
+
+.total-verification-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    margin-left: auto;
+}
+.badge-match {
+    background: #C6F6D5;
+    color: #22543D;
+}
+.badge-mismatch {
+    background: #FEFCBF;
+    color: #975A16;
+}
+.badge-no-total {
+    background: #BEE3F8;
+    color: #2A4365;
+}
+
+.total-verification-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.total-verification-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    justify-content: center;
+}
+.total-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+    min-width: 100px;
+}
+.total-stat-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 500;
+}
+.total-stat-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+.total-stat-divider {
+    font-size: 1.3rem;
+    font-weight: 700;
+    padding: 0 0.25rem;
+}
+.total-match-yes {
+    color: #38A169;
+}
+.total-match-no {
+    color: #D69E2E;
+}
+.total-verification-detail {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 0.3rem 0.5rem;
+    background: rgba(0,0,0,0.03);
+    border-radius: 6px;
+    margin-top: 0.25rem;
+}
+.total-detail-text strong {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* ─── Price & Math cells ───────────────────────────────────────────────── */
+.price-cell {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    text-align: right;
+}
+.math-cell {
+    text-align: center;
+    font-size: 0.9rem;
+}
+.math-ok { color: #38A169; }
+.math-fail { color: #E53E3E; }
+.math-na { color: var(--text-muted); }
+
+/* ─── Math Verification Summary ────────────────────────────────────────── */
+.math-summary-row {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 0.2rem 0;
+}
+.math-detail-section {
+    font-size: 0.78rem;
+    margin-top: 0.3rem;
+}
+.math-detail-section strong {
+    color: var(--text-primary);
+}
+.math-detail-section ul {
+    margin: 0.2rem 0 0.4rem 1.2rem;
+    padding: 0;
+}
+.math-detail-section li {
+    margin-bottom: 0.15rem;
+}
+.math-detail-section code {
+    background: rgba(0,0,0,0.06);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+}
+
 /* ─── Action Buttons ───────────────────────────────────────────────────── */
 .action-buttons {
     display: flex;

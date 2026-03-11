@@ -17,6 +17,7 @@ from app.ocr.preprocessor import ImagePreprocessor
 from app.ocr.engine import get_ocr_engine
 from app.ocr.hybrid_engine import get_hybrid_engine
 from app.ocr.parser import ReceiptParser
+from app.ocr.total_verifier import get_total_verifier
 from app.services.product_service import product_service
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,110 @@ class ReceiptService:
             logger.error(f"[Step 4/5] Data parsing failed: {e}", exc_info=True)
             return result
 
+        # ─── Step 4b: Bill Total Verification ────────────────────────────
+        try:
+            verifier = get_total_verifier()
+            verification_result = verifier.verify(
+                ocr_detections=ocr_results,
+                parsed_items=receipt_data.get("items", []),
+                azure_structured=azure_structured,
+            )
+            # Merge with parser's own total_verification if it exists
+            parser_verification = receipt_data.get("total_verification", {})
+            if parser_verification.get("total_qty_ocr") is not None and verification_result.get("ocr_total") is None:
+                # Parser found a total that the verifier didn't — use parser's
+                parser_ocr_total = parser_verification["total_qty_ocr"]
+                verification_result["ocr_total"] = parser_ocr_total
+                verification_result["total_line_text"] = parser_verification.get("total_line_text")
+                verification_result["total_line_confidence"] = parser_verification.get("total_line_confidence")
+
+                # Recalculate match status with parser's total
+                computed = verification_result.get("computed_total", 0)
+                if computed and abs(parser_ocr_total - computed) < 0.01:
+                    verification_result["total_qty_match"] = True
+                    verification_result["verified"] = True
+                    verification_result["confidence"] = parser_verification.get("total_line_confidence", 0.9)
+                    verification_result["verification_method"] = "parser_exact_match"
+                    verification_result["discrepancy"] = 0.0
+                else:
+                    verification_result["total_qty_match"] = False
+                    verification_result["verified"] = False
+                    verification_result["discrepancy"] = abs(parser_ocr_total - computed) if computed else None
+                    verification_result["verification_method"] = "parser_total_mismatch"
+
+                logger.info(
+                    f"[Step 4b] Parser total merged: ocr_total={parser_ocr_total}, "
+                    f"computed={computed}, match={verification_result['total_qty_match']}"
+                )
+
+            # Add backward-compatible alias keys
+            verification_result["total_qty_ocr"] = verification_result.get("ocr_total")
+            verification_result["total_qty_computed"] = verification_result.get("computed_total")
+            verification_result["verification_status"] = (
+                "verified" if verification_result.get("verified") else
+                ("mismatch" if verification_result.get("ocr_total") is not None else "not_found")
+            )
+
+            receipt_data["total_verification"] = verification_result
+            result["metadata"]["total_verification"] = verification_result
+            logger.info(
+                f"[Step 4b] Total verification: "
+                f"ocr_total={verification_result.get('ocr_total')}, "
+                f"computed={verification_result.get('computed_total')}, "
+                f"match={verification_result.get('total_qty_match')}, "
+                f"method={verification_result.get('verification_method')}"
+            )
+        except Exception as e:
+            logger.warning(f"[Step 4b] Total verification failed (non-fatal): {e}")
+            # Non-fatal — receipt still processes without verification
+
+        # ─── Step 4c: Math / Price Verification ──────────────────────────
+        catalog_full = {}  # initialized here so Step 5 can reuse it
+        try:
+            catalog_full = product_service.get_product_catalog_full()
+            parsed_items = receipt_data.get("items", [])
+
+            # Inject catalog prices for items that don't have OCR-extracted prices
+            for item in parsed_items:
+                code = item.get("code", "")
+                if code in catalog_full:
+                    cat_price = catalog_full[code].get("unit_price", 0)
+                    # If parser didn't extract a unit_price, fill from catalog
+                    if item.get("unit_price", 0) == 0 and cat_price > 0:
+                        item["unit_price"] = cat_price
+                        item["line_total"] = round(item.get("quantity", 0) * cat_price, 2)
+                        item["price_source"] = "catalog"
+                    elif item.get("unit_price", 0) > 0:
+                        item["price_source"] = "ocr"
+
+            # Extract grand total from parser's math_verification
+            parser_math = receipt_data.get("math_verification", {})
+            ocr_grand_total = parser_math.get("ocr_grand_total")
+
+            # Run verifier's math check (includes catalog price cross-check)
+            verifier = get_total_verifier()
+            math_result = verifier.verify_math(
+                parsed_items=parsed_items,
+                catalog=catalog_full,
+                ocr_grand_total=ocr_grand_total,
+            )
+
+            # Merge parser grand total info into verifier result
+            if ocr_grand_total is not None and math_result.get("has_prices"):
+                math_result["grand_total_text"] = parser_math.get("grand_total_text")
+                math_result["grand_total_confidence"] = parser_math.get("grand_total_confidence")
+
+            receipt_data["math_verification"] = math_result
+            result["metadata"]["math_verification"] = math_result
+            logger.info(
+                f"[Step 4c] Math verification: has_prices={math_result.get('has_prices')}, "
+                f"all_line_ok={math_result.get('all_line_math_ok')}, "
+                f"grand_total_match={math_result.get('grand_total_match')}, "
+                f"catalog_mismatches={len(math_result.get('catalog_mismatches', []))}"
+            )
+        except Exception as e:
+            logger.warning(f"[Step 4c] Math verification failed (non-fatal): {e}")
+
         # ─── Step 5: Save to database ────────────────────────────────────
         try:
             logger.debug("[Step 5/5] Saving to database...")
@@ -270,8 +375,9 @@ class ReceiptService:
                 processed_image_path=processed_path,
             )
 
-            # Add product unit info to items
-            catalog_full = product_service.get_product_catalog_full()
+            # Add product unit info to items (reuse catalog_full from Step 4c if available)
+            if not catalog_full:
+                catalog_full = product_service.get_product_catalog_full()
             for item in receipt_data["items"]:
                 code = item["code"]
                 if code in catalog_full:
@@ -330,9 +436,14 @@ class ReceiptService:
         product_code: str,
         product_name: str,
         quantity: float,
+        unit_price: float = 0.0,
+        line_total: float = 0.0,
     ) -> bool:
         """Update a receipt item (manual correction). Returns False if not found."""
-        return self.db.update_receipt_item(item_id, product_code, product_name, quantity)
+        return self.db.update_receipt_item(
+            item_id, product_code, product_name, quantity,
+            unit_price=unit_price, line_total=line_total,
+        )
 
     def delete_receipt(self, receipt_id: int) -> bool:
         """Delete a receipt."""
@@ -414,23 +525,35 @@ class ReceiptService:
                         code = desc_upper[:6] if len(desc_upper) >= 2 else "UNK"
                         match_type = "azure-unmatched"
 
-            # Look up unit from catalog
+            # Look up unit and price from catalog
             unit = "Piece"
+            unit_price = azure_item.get("unit_price", 0.0) or azure_item.get("price", 0.0) or 0.0
+            line_total = azure_item.get("total_price", 0.0) or azure_item.get("amount", 0.0) or 0.0
             if code and code in catalog:
                 product_info = product_service.get_product(code)
                 if product_info:
                     unit = product_info.get("unit", "Piece")
+                    # Use catalog price if Azure didn't provide one
+                    if unit_price == 0:
+                        unit_price = product_info.get("unit_price", 0.0) or 0.0
+
+            # Compute line_total if we have rate but no total
+            final_qty = max(1.0, min(9999.0, float(quantity)))
+            if line_total == 0 and unit_price > 0:
+                line_total = round(final_qty * unit_price, 2)
 
             items.append({
                 "code": code,
                 "product": product_name,
-                "quantity": max(1.0, min(9999.0, float(quantity))),
+                "quantity": final_qty,
                 "unit": unit,
                 "confidence": round(confidence, 4),
                 "needs_review": match_type == "azure-unmatched" or confidence < 0.6,
                 "match_type": match_type,
                 "raw_text": description,
                 "y_center": 0,
+                "unit_price": unit_price,
+                "line_total": line_total,
             })
 
         # If Azure found very few items, supplement with parser on raw OCR text
@@ -454,6 +577,25 @@ class ReceiptService:
 
         receipt_number = self.parser._generate_receipt_number()
 
+        # Bill total from Azure structured data
+        azure_total = azure_data.get("total") or azure_data.get("subtotal")
+        computed_total = round(sum(it.get("quantity", 0) for it in items), 1)
+        total_verification = {
+            "total_qty_ocr": float(azure_total) if azure_total is not None else None,
+            "total_qty_computed": computed_total,
+            "total_line_text": f"Azure receipt model total: {azure_total}" if azure_total else None,
+            "total_line_confidence": 0.95 if azure_total else None,
+            "total_qty_match": (
+                azure_total is not None
+                and abs(float(azure_total) - computed_total) < 0.01
+            ),
+            "verification_status": "not_found",
+        }
+        if azure_total is not None:
+            total_verification["verification_status"] = (
+                "verified" if total_verification["total_qty_match"] else "mismatch"
+            )
+
         return {
             "receipt_id": receipt_number,
             "scan_timestamp": datetime.now().isoformat(),
@@ -463,6 +605,7 @@ class ReceiptService:
             "needs_review": needs_review,
             "unparsed_lines": [],
             "processing_status": "success" if items else "no_items_found",
+            "total_verification": total_verification,
         }
 
     def _quick_item_count(self, ocr_results: List[Dict]) -> int:

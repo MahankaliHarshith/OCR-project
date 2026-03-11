@@ -33,6 +33,7 @@ Engine Modes:
 """
 
 import logging
+import re
 import time
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
@@ -717,17 +718,31 @@ class HybridOCREngine:
             }
 
         # ── SERIAL fallback (OCR_PARALLEL_DUAL_PASS=False or no color image) ──
-        logger.debug("[Local] Serial dual-pass")
+        logger.debug("[Local] Serial single/dual-pass")
         phase1_start = time.time()
         gray_results = ocr_engine.extract_text_fast(cropped_gray)
         phase1_ms = int((time.time() - phase1_start) * 1000)
         logger.info(f"[Local] Phase 1: {len(gray_results)} detections in {phase1_ms}ms")
 
         quick_items = self._quick_item_count_local(gray_results)
+        gray_conf = self._avg_confidence(gray_results)
+
+        # Smart-pass decision: skip 2nd pass if first pass is strong enough.
+        # For same-type receipts, the first pass almost always captures everything.
+        # Two conditions to skip: enough catalog items found AND decent confidence.
+        skip_second = (
+            quick_items >= OCR_SMART_PASS_THRESHOLD
+            and gray_conf >= 0.55
+        )
+        if skip_second:
+            logger.info(
+                f"[Local] ⚡ Smart skip: {quick_items} items found, "
+                f"conf={gray_conf:.3f} → single-pass sufficient"
+            )
 
         alt_results = []
-        if quick_items < OCR_SMART_PASS_THRESHOLD and original_color is not None:
-            logger.info(f"[Local] Phase 2: only {quick_items} items, running color pass...")
+        if not skip_second and original_color is not None:
+            logger.info(f"[Local] Phase 2: only {quick_items} items (conf={gray_conf:.3f}), running color pass...")
             phase2_start = time.time()
             color_results = ocr_engine.extract_text(original_color)
             phase2_ms = int((time.time() - phase2_start) * 1000)
@@ -960,19 +975,79 @@ class HybridOCREngine:
                 continue
             # Sort by Y position
             dets.sort(key=y_sort_key)
+            is_short_digit = bool(re.match(r'^\d{1,2}$', text.strip()))
             keep = [dets[0]]
             for d in dets[1:]:
-                prev_yb = _y_bucket(keep[-1])
-                cur_yb = _y_bucket(d)
-                if abs(cur_yb - prev_yb) <= 1:
-                    # Adjacent y-buckets, same text → multi-pass duplicate
-                    if d["confidence"] > keep[-1]["confidence"]:
-                        keep[-1] = d
+                cur_y = y_sort_key(d)
+                prev_y = y_sort_key(keep[-1])
+                y_dist = abs(cur_y - prev_y)
+                if is_short_digit:
+                    # ── Short digits (quantities): use raw Y-distance ──
+                    # Bucket-based adjacency causes cascading collapse when
+                    # the same digit appears on many consecutive rows (e.g.,
+                    # qty "1" on 4 rows at buckets 4,5,6,7 all merge into one).
+                    # Instead, only collapse if within 35px (same physical text
+                    # read at slightly different Y by two passes).
+                    if y_dist < 35:
+                        if d["confidence"] > keep[-1]["confidence"]:
+                            keep[-1] = d
+                    else:
+                        keep.append(d)
                 else:
-                    # Genuinely different line → keep both
-                    keep.append(d)
+                    prev_yb = _y_bucket(keep[-1])
+                    cur_yb = _y_bucket(d)
+                    if abs(cur_yb - prev_yb) <= 1:
+                        # Adjacent y-buckets, same text → multi-pass duplicate
+                        if d["confidence"] > keep[-1]["confidence"]:
+                            keep[-1] = d
+                    else:
+                        # Genuinely different line → keep both
+                        keep.append(d)
             deduped.extend(keep)
         merged = sorted(deduped, key=y_sort_key)
+
+        # ── Position-based dedup: collapse echo detections at the same (x, y) ──
+        # When two passes read the SAME physical text differently (e.g.,
+        # "TEWA" and "TEW4"), they appear at nearly identical (x, y) positions
+        # but with different text and y-buckets.  Without this step they'd
+        # both survive the text-based dedup and produce a bogus merged line
+        # like "TEW4 TEWA" that confuses the parser.
+        def _det_xy(det):
+            bbox = det.get("bbox", [])
+            try:
+                x = (float(bbox[0][0]) + float(bbox[2][0])) / 2
+                y = (float(bbox[0][1]) + float(bbox[2][1])) / 2
+                return x, y
+            except (IndexError, TypeError, ValueError):
+                return 0.0, 0.0
+
+        pos_deduped = []
+        consumed_pos = set()
+        for i, det in enumerate(merged):
+            if i in consumed_pos:
+                continue
+            xi, yi = _det_xy(det)
+            best = det
+            for j in range(i + 1, len(merged)):
+                if j in consumed_pos:
+                    continue
+                xj, yj = _det_xy(merged[j])
+                # Same physical position: within 30px X and 15px Y
+                if abs(xi - xj) < 30 and abs(yi - yj) < 15:
+                    consumed_pos.add(j)
+                    if merged[j]["confidence"] > best["confidence"]:
+                        best = merged[j]
+                    logger.debug(
+                        f"[Merge] Position dedup: '{det['text']}' vs '{merged[j]['text']}' "
+                        f"at ({xi:.0f},{yi:.0f}) — keeping '{best['text']}'"
+                    )
+            pos_deduped.append(best)
+        if len(pos_deduped) < len(merged):
+            logger.info(
+                f"[Merge] Position dedup removed {len(merged) - len(pos_deduped)} "
+                f"echo detections"
+            )
+        merged = pos_deduped
 
         # Log voting summary
         n_agreed = sum(1 for d in merged if d.get("vote_status") == "agreed")

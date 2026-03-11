@@ -278,12 +278,66 @@
                                             <th>Product Code</th>
                                             <th>Product Name</th>
                                             <th>Qty</th>
+                                            <th>Rate (₹)</th>
+                                            <th>Amount (₹)</th>
                                             <th>Confidence</th>
+                                            <th>Math</th>
                                             <th></th>
                                         </tr>
                                     </thead>
                                     <tbody id="itemsBody"></tbody>
                                 </table>
+                            </div>
+
+                            <!-- Bill Total Verification Panel -->
+                            <div class="total-verification-panel" id="totalVerificationPanel" style="display:none">
+                                <div class="total-verification-header">
+                                    <span class="total-verification-icon" id="totalVerifyIcon"></span>
+                                    <span class="total-verification-title" id="totalVerifyTitle">Bill Total Verification</span>
+                                    <span class="total-verification-badge" id="totalVerifyBadge"></span>
+                                </div>
+                                <div class="total-verification-body">
+                                    <div class="total-verification-row">
+                                        <div class="total-stat">
+                                            <span class="total-stat-label">Items Sum (Computed)</span>
+                                            <span class="total-stat-value" id="totalComputed">—</span>
+                                        </div>
+                                        <div class="total-stat-divider">
+                                            <span id="totalMatchIcon">≟</span>
+                                        </div>
+                                        <div class="total-stat">
+                                            <span class="total-stat-label">Receipt Total (OCR)</span>
+                                            <span class="total-stat-value" id="totalOcr">—</span>
+                                        </div>
+                                    </div>
+                                    <div class="total-verification-detail" id="totalVerifyDetail" style="display:none"></div>
+                                </div>
+                            </div>
+
+                            <!-- Math / Price Verification Panel -->
+                            <div class="total-verification-panel" id="mathVerificationPanel" style="display:none">
+                                <div class="total-verification-header">
+                                    <span class="total-verification-icon" id="mathVerifyIcon"></span>
+                                    <span class="total-verification-title" id="mathVerifyTitle">Price &amp; Math Verification</span>
+                                    <span class="total-verification-badge" id="mathVerifyBadge"></span>
+                                </div>
+                                <div class="total-verification-body">
+                                    <div class="total-verification-row">
+                                        <div class="total-stat">
+                                            <span class="total-stat-label">Computed Grand Total</span>
+                                            <span class="total-stat-value" id="mathGrandComputed">—</span>
+                                        </div>
+                                        <div class="total-stat-divider">
+                                            <span id="mathGrandMatchIcon">≟</span>
+                                        </div>
+                                        <div class="total-stat">
+                                            <span class="total-stat-label">Receipt Grand Total (OCR)</span>
+                                            <span class="total-stat-value" id="mathGrandOcr">—</span>
+                                        </div>
+                                    </div>
+                                    <div class="math-verification-summary" id="mathSummary" style="display:none"></div>
+                                    <div class="total-verification-detail" id="mathVerifyDetail" style="display:none"></div>
+                                </div>
                             </div>
 
                             <!-- Action Buttons -->

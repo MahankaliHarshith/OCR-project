@@ -833,7 +833,7 @@ function displayResults(data, file) {
     const receiptData = data.receipt_data;
     if (!receiptData || !receiptData.items) {
         showToast('No items found on receipt. Try a clearer image with good lighting.', 'warning');
-        $('#itemsBody').innerHTML = `<tr><td colspan="5" class="placeholder">
+        $('#itemsBody').innerHTML = `<tr><td colspan="8" class="placeholder">
             <div style="display:flex;flex-direction:column;align-items:center;gap:0.5rem">
                 <i data-lucide="search-x" style="width:32px;height:32px;color:var(--text-muted)"></i>
                 <strong>No items detected</strong>
@@ -848,7 +848,7 @@ function displayResults(data, file) {
 
     if (receiptData.items.length === 0) {
         showToast('No recognizable products found. You can add items manually.', 'warning');
-        $('#itemsBody').innerHTML = `<tr><td colspan="5" class="placeholder">
+        $('#itemsBody').innerHTML = `<tr><td colspan="8" class="placeholder">
             <div style="display:flex;flex-direction:column;align-items:center;gap:0.5rem">
                 <i data-lucide="plus-circle" style="width:28px;height:28px;color:var(--primary)"></i>
                 <strong>No products recognized</strong>
@@ -865,6 +865,12 @@ function displayResults(data, file) {
 
     // Populate table
     populateItemsTable(receiptData.items);
+
+    // ── Bill Total Verification Panel ─────────────────────────────────
+    displayTotalVerification(data);
+
+    // ── Math / Price Verification Panel ───────────────────────────────
+    displayMathVerification(data);
 
     // Show warnings
     if (data.errors && data.errors.length > 0) {
@@ -886,13 +892,215 @@ function displayResults(data, file) {
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
+// ─── Bill Total Verification Display ──────────────────────────────────────────
+function displayTotalVerification(data) {
+    const panel = $('#totalVerificationPanel');
+    if (!panel) return;
+
+    // Get verification data from receipt_data or metadata
+    const verification = data.receipt_data?.total_verification
+                      || data.metadata?.total_verification;
+
+    if (!verification) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    const ocrTotal = verification.ocr_total ?? verification.total_qty_ocr;
+    const computedTotal = verification.computed_total ?? verification.total_qty_computed;
+    const isMatch = verification.total_qty_match;
+    const status = verification.verification_status || verification.verification_method || 'unknown';
+    const totalLineText = verification.total_line_text;
+    const confidence = verification.confidence ?? verification.total_line_confidence;
+
+    // Always show if we have computed total (even without OCR total)
+    panel.style.display = 'block';
+
+    const iconEl = $('#totalVerifyIcon');
+    const titleEl = $('#totalVerifyTitle');
+    const badgeEl = $('#totalVerifyBadge');
+    const computedEl = $('#totalComputed');
+    const ocrEl = $('#totalOcr');
+    const matchIcon = $('#totalMatchIcon');
+    const detailEl = $('#totalVerifyDetail');
+
+    // Set computed total
+    computedEl.textContent = computedTotal != null ? computedTotal : '—';
+
+    // Set OCR total
+    ocrEl.textContent = ocrTotal != null ? ocrTotal : 'Not found';
+
+    if (ocrTotal != null && isMatch) {
+        // ✅ VERIFIED — totals match
+        panel.className = 'total-verification-panel total-verified';
+        iconEl.textContent = '✅';
+        titleEl.textContent = 'Bill Total Verified';
+        badgeEl.textContent = 'MATCH';
+        badgeEl.className = 'total-verification-badge badge-match';
+        matchIcon.textContent = '=';
+        matchIcon.className = 'total-match-yes';
+        detailEl.style.display = 'none';
+    } else if (ocrTotal != null && !isMatch) {
+        // ⚠️ MISMATCH
+        const diff = Math.abs(ocrTotal - (computedTotal || 0));
+        panel.className = 'total-verification-panel total-mismatch';
+        iconEl.textContent = '⚠️';
+        titleEl.textContent = 'Bill Total Mismatch';
+        badgeEl.textContent = `DIFF: ${diff}`;
+        badgeEl.className = 'total-verification-badge badge-mismatch';
+        matchIcon.textContent = '≠';
+        matchIcon.className = 'total-match-no';
+        detailEl.style.display = 'block';
+        detailEl.innerHTML = `
+            <span class="total-detail-text">
+                Receipt shows <strong>${ocrTotal}</strong> but items sum to <strong>${computedTotal}</strong>.
+                Please review the quantities above.
+            </span>
+        `;
+    } else {
+        // ℹ️ No total line found on receipt
+        panel.className = 'total-verification-panel total-no-total';
+        iconEl.textContent = 'ℹ️';
+        titleEl.textContent = 'Bill Total';
+        badgeEl.textContent = 'NO TOTAL LINE';
+        badgeEl.className = 'total-verification-badge badge-no-total';
+        matchIcon.textContent = '—';
+        matchIcon.className = '';
+        ocrEl.textContent = 'Not on receipt';
+        detailEl.style.display = 'block';
+        detailEl.innerHTML = `
+            <span class="total-detail-text">
+                No "Total" line detected on the receipt. Computed qty sum: <strong>${computedTotal}</strong>
+            </span>
+        `;
+    }
+
+    // Show total line text if captured
+    if (totalLineText && detailEl.style.display !== 'block') {
+        detailEl.style.display = 'block';
+        detailEl.innerHTML = `<span class="total-detail-text">Read from receipt: "${escHtml(totalLineText)}"</span>`;
+    }
+}
+
+// ─── Math / Price Verification Display ────────────────────────────────────────
+function displayMathVerification(data) {
+    const panel = $('#mathVerificationPanel');
+    if (!panel) return;
+
+    const math = data.receipt_data?.math_verification
+              || data.metadata?.math_verification;
+
+    if (!math || !math.has_prices) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    panel.style.display = 'block';
+
+    const iconEl = $('#mathVerifyIcon');
+    const titleEl = $('#mathVerifyTitle');
+    const badgeEl = $('#mathVerifyBadge');
+    const computedEl = $('#mathGrandComputed');
+    const ocrEl = $('#mathGrandOcr');
+    const matchIcon = $('#mathGrandMatchIcon');
+    const summaryEl = $('#mathSummary');
+    const detailEl = $('#mathVerifyDetail');
+
+    const lineChecks = math.line_checks || [];
+    const allOk = math.all_line_math_ok;
+    const computed = math.computed_grand_total;
+    const ocrGrand = math.ocr_grand_total;
+    const grandMatch = math.grand_total_match;
+    const mismatches = math.catalog_mismatches || [];
+
+    computedEl.textContent = computed != null ? '₹' + computed.toFixed(2) : '—';
+    ocrEl.textContent = ocrGrand != null ? '₹' + ocrGrand.toFixed(2) : 'Not found';
+
+    const linesOkCount = lineChecks.filter(c => c.math_ok).length;
+    const linesTotal = lineChecks.length;
+
+    if (allOk && (grandMatch || ocrGrand == null)) {
+        panel.className = 'total-verification-panel total-verified';
+        iconEl.textContent = '✅';
+        titleEl.textContent = 'Price & Math Verified';
+        badgeEl.textContent = `ALL ${linesTotal} OK`;
+        badgeEl.className = 'total-verification-badge badge-match';
+        matchIcon.textContent = '=';
+        matchIcon.className = 'total-match-yes';
+    } else {
+        panel.className = 'total-verification-panel total-mismatch';
+        iconEl.textContent = '⚠️';
+        titleEl.textContent = 'Math Issues Found';
+        const failCount = linesTotal - linesOkCount;
+        badgeEl.textContent = `${failCount} ERROR${failCount > 1 ? 'S' : ''}`;
+        badgeEl.className = 'total-verification-badge badge-mismatch';
+        matchIcon.textContent = grandMatch ? '=' : '≠';
+        matchIcon.className = grandMatch ? 'total-match-yes' : 'total-match-no';
+    }
+
+    // Summary line
+    summaryEl.style.display = 'block';
+    let summaryHtml = `<div class="math-summary-row">Line math: <strong>${linesOkCount}/${linesTotal}</strong> correct`;
+    if (ocrGrand != null) {
+        summaryHtml += ` · Grand total: ${grandMatch ? '✅ Match' : '❌ Mismatch'}`;
+    }
+    if (mismatches.length > 0) {
+        summaryHtml += ` · <span style="color:var(--warning)">⚠ ${mismatches.length} catalog price mismatch${mismatches.length > 1 ? 'es' : ''}</span>`;
+    }
+    summaryHtml += '</div>';
+    summaryEl.innerHTML = summaryHtml;
+
+    // Detail: show failing lines and catalog mismatches
+    const failLines = lineChecks.filter(c => !c.math_ok);
+    if (failLines.length > 0 || mismatches.length > 0) {
+        detailEl.style.display = 'block';
+        let html = '';
+        if (failLines.length > 0) {
+            html += '<div class="math-detail-section"><strong>Math errors:</strong><ul>';
+            failLines.forEach(c => {
+                html += `<li><code>${escHtml(c.code)}</code>: ${c.qty} × ₹${c.rate} = ₹${c.amount_expected.toFixed(2)} (receipt shows ₹${c.amount_ocr.toFixed(2)})</li>`;
+            });
+            html += '</ul></div>';
+        }
+        if (mismatches.length > 0) {
+            html += '<div class="math-detail-section"><strong>Catalog price differences:</strong><ul>';
+            mismatches.forEach(m => {
+                html += `<li><code>${escHtml(m.code)}</code>: Receipt ₹${m.ocr_price} vs Catalog ₹${m.catalog_price}</li>`;
+            });
+            html += '</ul></div>';
+        }
+        detailEl.innerHTML = html;
+    } else {
+        detailEl.style.display = 'none';
+    }
+}
+
 function populateItemsTable(items) {
     const tbody = $('#itemsBody');
     tbody.innerHTML = '';
 
+    // Get math verification line checks for per-row math status
+    const mathData = state.currentReceiptData?.receipt_data?.math_verification
+                  || state.currentReceiptData?.metadata?.math_verification;
+    const lineChecks = mathData?.line_checks || [];
+
     items.forEach((item, idx) => {
         const confClass = getConfClass(item.confidence);
         const rowClass = item.confidence < 0.85 ? 'row-low-confidence' : '';
+        const rate = item.unit_price || 0;
+        const amount = item.line_total || 0;
+        const hasPrice = rate > 0;
+
+        // Find matching line check for math status
+        let mathOk = null;
+        if (lineChecks.length > 0) {
+            const lc = lineChecks.find(c => c.code === item.code) || lineChecks[idx];
+            if (lc) mathOk = lc.math_ok;
+        }
+
+        const mathCell = mathOk === true ? '<span class="math-ok" title="Qty × Rate = Amount ✓">✅</span>'
+                       : mathOk === false ? '<span class="math-fail" title="Math mismatch ✗">❌</span>'
+                       : '<span class="math-na" title="No price data">—</span>';
 
         const tr = document.createElement('tr');
         tr.className = rowClass;
@@ -900,7 +1108,10 @@ function populateItemsTable(items) {
             <td><input class="editable" value="${escHtml(item.code)}" data-idx="${idx}" data-field="code"></td>
             <td><input class="editable" value="${escHtml(item.product)}" data-idx="${idx}" data-field="product"></td>
             <td><input class="editable" type="number" step="1" min="1" max="9999" value="${Math.max(1, Math.round(item.quantity || 0) || 1)}" data-idx="${idx}" data-field="quantity"></td>
+            <td class="price-cell">${hasPrice ? '₹' + rate.toFixed(2) : '—'}</td>
+            <td class="price-cell">${hasPrice ? '₹' + amount.toFixed(2) : '—'}</td>
             <td class="conf-cell ${confClass}">${(item.confidence * 100).toFixed(1)}%</td>
+            <td class="math-cell">${mathCell}</td>
             <td><button class="btn btn-sm btn-ghost" onclick="removeRow(${idx})" title="Remove row" style="padding:0.25rem 0.4rem;color:var(--danger)"><i data-lucide="trash-2" style="width:14px;height:14px"></i></button></td>
         `;
         tbody.appendChild(tr);
@@ -1011,6 +1222,26 @@ window.removeRow = function(idx) {
         state.currentReceiptData.receipt_data.items.splice(idx, 1);
         state.isDirty = true;
         populateItemsTable(state.currentReceiptData.receipt_data.items);
+        // Refresh math verification panel after row removal
+        const mathData = state.currentReceiptData.receipt_data.math_verification;
+        if (mathData) {
+            // Recalculate line_checks to match remaining items
+            const remaining = state.currentReceiptData.receipt_data.items;
+            if (mathData.line_checks) {
+                const remainingCodes = new Set(remaining.map(it => it.code));
+                mathData.line_checks = mathData.line_checks.filter(lc => remainingCodes.has(lc.code));
+                // Recalculate computed grand total
+                mathData.computed_grand_total = mathData.line_checks.reduce(
+                    (sum, lc) => sum + (lc.amount_expected || 0), 0
+                );
+                mathData.computed_grand_total = Math.round(mathData.computed_grand_total * 100) / 100;
+                if (mathData.ocr_grand_total != null) {
+                    mathData.grand_total_match = Math.abs(mathData.ocr_grand_total - mathData.computed_grand_total) < 0.01;
+                }
+                mathData.all_line_math_ok = mathData.line_checks.every(lc => lc.math_ok);
+            }
+            displayMathVerification(mathData);
+        }
     }
 };
 
@@ -1035,6 +1266,10 @@ $('#addRowBtn').addEventListener('click', () => {
         quantity: 1,
         confidence: 1.0,
         unit: 'Piece',
+        unit_price: 0,
+        line_total: 0,
+        match_type: 'manual',
+        needs_review: true,
     });
     state.isDirty = true;
     populateItemsTable(state.currentReceiptData.receipt_data.items);
@@ -1072,6 +1307,14 @@ $('#confirmBtn').addEventListener('click', async () => {
         }
     });
 
+    // Recalculate line_total when quantity was edited
+    items.forEach(item => {
+        const rate = item.unit_price || 0;
+        if (rate > 0) {
+            item.line_total = Math.round(item.quantity * rate * 100) / 100;
+        }
+    });
+
     // Validate: check for empty codes or zero/negative quantities
     const problems = [];
     items.forEach((item, i) => {
@@ -1103,6 +1346,8 @@ $('#confirmBtn').addEventListener('click', async () => {
                                 product_code: item.code,
                                 product_name: item.product,
                                 quantity: item.quantity,
+                                unit_price: item.unit_price || 0,
+                                line_total: item.line_total || 0,
                             }),
                         });
                         if (!r.ok) _saveFailures++;
@@ -1115,6 +1360,8 @@ $('#confirmBtn').addEventListener('click', async () => {
                                 product_code: item.code,
                                 product_name: item.product,
                                 quantity: item.quantity,
+                                unit_price: item.unit_price || 0,
+                                line_total: item.line_total || 0,
                             }),
                         });
                         if (!res.ok) { _saveFailures++; continue; }

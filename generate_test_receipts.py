@@ -94,13 +94,18 @@ def generate_receipt(
     title: str = "RECEIPT",
 ):
     """
-    Generate one receipt image.
+    Generate one receipt image with 4-column layout:
+        CODE   QTY   RATE   AMOUNT
 
-    items: list of (code, qty) tuples
-    style: dict with keys: bg_color, ink_color, font_size, jitter, rotation,
-           line_spacing, smudges, faded, coffee_stain
+    items: list of (code, qty, rate) tuples.
+           If rate is provided, renders full 4-col layout + Grand Total.
+           Otherwise, falls back to 2-col (code, qty) + Total Qty.
+    style: dict with rendering parameters.
     """
-    w, h = style.get("size", (850, 1100))
+    # Determine if we have priced items (3-tuple)
+    has_prices = len(items[0]) >= 3 if items else False
+
+    w, h = style.get("size", (1000, 1200))
     bg = style.get("bg_color", (235, 230, 220))
     ink = style.get("ink_color", (25, 20, 40))
     header_ink = style.get("header_ink", (15, 10, 30))
@@ -120,7 +125,6 @@ def generate_receipt(
     font_lg = get_font(int(font_size * 1.2))
 
     if faded:
-        # Lighten ink for faded effect (mild — still readable)
         ink = tuple(min(255, c + 45) for c in ink)
         header_ink = tuple(min(255, c + 35) for c in header_ink)
 
@@ -133,7 +137,7 @@ def generate_receipt(
     y = 40
 
     # Title
-    tx, ty = _jitter(w // 2 - 60, y, jitter_amt)
+    tx, ty = _jitter(w // 2 - 80, y, jitter_amt)
     draw.text((tx, ty), title, fill=header_ink, font=font_lg)
     y += int(line_spacing * 1.3)
 
@@ -146,11 +150,20 @@ def generate_receipt(
     _draw_wavy_line(draw, y, w - 60, (*ink[:3],), 1)
     y += 15
 
-    # Column headers
-    hx2, hy2 = _jitter(80, y, jitter_amt)
-    hx3, hy3 = _jitter(500, y, jitter_amt)
-    draw.text((hx2, hy2), "Item Code", fill=header_ink, font=font_sm)
-    draw.text((hx3, hy3), "Qty", fill=header_ink, font=font_sm)
+    if has_prices:
+        # 4-column headers: CODE  QTY  RATE  AMOUNT
+        col_positions = [80, 350, 520, 720]
+        headers = ["Item Code", "Qty", "Rate", "Amount"]
+        for i, hdr in enumerate(headers):
+            hx, hy = _jitter(col_positions[i], y, jitter_amt)
+            draw.text((hx, hy), hdr, fill=header_ink, font=font_sm)
+    else:
+        # 2-column headers
+        hx2, hy2 = _jitter(80, y, jitter_amt)
+        hx3, hy3 = _jitter(500, y, jitter_amt)
+        draw.text((hx2, hy2), "Item Code", fill=header_ink, font=font_sm)
+        draw.text((hx3, hy3), "Qty", fill=header_ink, font=font_sm)
+
     y += int(line_spacing * 0.9)
 
     # Separator
@@ -158,25 +171,88 @@ def generate_receipt(
     y += 12
 
     # Draw each item
-    for idx, (code, qty) in enumerate(items, 1):
+    for idx, item_tuple in enumerate(items, 1):
         if ruled:
             _draw_wavy_line(draw, y + int(line_spacing * 0.85), w - 60,
                             (200, 195, 185), 1)
 
-        # Code + Qty — draw as one continuous handwritten line
-        # e.g. "TEW1    3" so OCR reads them together
-        full_line = f"{code}    {qty}"
-        cx = 80
-        for ch in full_line:
-            if ch == ' ':
-                cx += random.randint(18, 28)  # natural hand-gap for spaces
-                continue
-            chx, chy = _jitter(cx, y, jitter_amt)
-            draw.text((chx, chy), ch, fill=ink, font=font)
-            # Get character width
-            bbox = font.getbbox(ch)
-            cx += bbox[2] - bbox[0] + random.randint(-1, 2)
+        if has_prices:
+            code, qty, rate = item_tuple[0], item_tuple[1], item_tuple[2]
+            amount = qty * rate
+            # Draw 4 columns with character-by-character jitter
+            col_texts = [str(code), str(qty), str(int(rate)), str(int(amount))]
+            col_x = [80, 370, 530, 730]
+            for ci, text in enumerate(col_texts):
+                cx = col_x[ci]
+                for ch in text:
+                    if ch == ' ':
+                        cx += random.randint(18, 28)
+                        continue
+                    chx, chy = _jitter(cx, y, jitter_amt)
+                    draw.text((chx, chy), ch, fill=ink, font=font)
+                    bbox = font.getbbox(ch)
+                    cx += bbox[2] - bbox[0] + random.randint(-1, 2)
+        else:
+            code, qty = item_tuple[0], item_tuple[1]
+            full_line = f"{code}    {qty}"
+            cx = 80
+            for ch in full_line:
+                if ch == ' ':
+                    cx += random.randint(18, 28)
+                    continue
+                chx, chy = _jitter(cx, y, jitter_amt)
+                draw.text((chx, chy), ch, fill=ink, font=font)
+                bbox = font.getbbox(ch)
+                cx += bbox[2] - bbox[0] + random.randint(-1, 2)
 
+        y += line_spacing
+
+    # Separator before total
+    y += 5
+    _draw_wavy_line(draw, y, w - 60, (*ink[:3],), 1)
+    y += 15
+
+    if has_prices:
+        # Total Qty line
+        total_qty = sum(item[1] for item in items)
+        total_line = f"Total Qty    {total_qty}"
+        tx = 80
+        for ch in total_line:
+            if ch == ' ':
+                tx += random.randint(18, 28)
+                continue
+            chx, chy = _jitter(tx, y, jitter_amt)
+            draw.text((chx, chy), ch, fill=header_ink, font=font)
+            bbox = font.getbbox(ch)
+            tx += bbox[2] - bbox[0] + random.randint(-1, 2)
+        y += line_spacing
+
+        # Grand Total line
+        grand_total = sum(item[1] * item[2] for item in items)
+        grand_line = f"Grand Total    {int(grand_total)}"
+        gx = 80
+        for ch in grand_line:
+            if ch == ' ':
+                gx += random.randint(18, 28)
+                continue
+            chx, chy = _jitter(gx, y, jitter_amt)
+            draw.text((chx, chy), ch, fill=header_ink, font=font)
+            bbox = font.getbbox(ch)
+            gx += bbox[2] - bbox[0] + random.randint(-1, 2)
+        y += line_spacing
+    else:
+        # Total Qty line only
+        total_qty = sum(item[1] for item in items)
+        total_line = f"Total Qty    {total_qty}"
+        tx = 80
+        for ch in total_line:
+            if ch == ' ':
+                tx += random.randint(18, 28)
+                continue
+            chx, chy = _jitter(tx, y, jitter_amt)
+            draw.text((chx, chy), ch, fill=header_ink, font=font)
+            bbox = font.getbbox(ch)
+            tx += bbox[2] - bbox[0] + random.randint(-1, 2)
         y += line_spacing
 
     # Bottom separator
@@ -211,109 +287,113 @@ RECEIPTS = [
         "name": "receipt_neat.jpg",
         "title": "PAINT STORE",
         "items": [
-            ("TEW1", 3),
-            ("TEW4", 2),
-            ("PEPW10", 5),
-            ("PEPW20", 1),
+            ("TEW1", 3, 250),
+            ("TEW4", 2, 850),
+            ("PEPW10", 5, 2600),
+            ("PEPW20", 1, 4800),
         ],
         "style": {
             "bg_color": (220, 215, 205),
             "ink_color": (10, 8, 25),
-            "font_size": 38,
+            "font_size": 34,
             "jitter": 1,
             "rotation": 0.8,
             "line_spacing": 55,
             "smudges": 0,
             "texture_intensity": 4,
+            "size": (1000, 1200),
         },
     },
     {
         "name": "receipt_messy.jpg",
         "title": "RECEIPT",
         "items": [
-            ("TEW10", 2),
-            ("TEW20", 4),
-            ("PEPW1", 6),
-            ("PEPW4", 3),
+            ("TEW10", 2, 1800),
+            ("TEW20", 4, 3200),
+            ("PEPW1", 6, 350),
+            ("PEPW4", 3, 1200),
         ],
         "style": {
             "bg_color": (215, 210, 200),
             "ink_color": (15, 12, 30),
-            "font_size": 38,
+            "font_size": 34,
             "jitter": 4,
             "rotation": 2.5,
             "line_spacing": 58,
             "smudges": 2,
             "coffee_stain": True,
             "texture_intensity": 6,
+            "size": (1000, 1200),
         },
     },
     {
         "name": "receipt_faded.jpg",
         "title": "STORE RECEIPT",
         "items": [
-            ("TEW1", 1),
-            ("TEW10", 3),
-            ("PEPW1", 2),
-            ("PEPW10", 4),
+            ("TEW1", 1, 250),
+            ("TEW10", 3, 1800),
+            ("PEPW1", 2, 350),
+            ("PEPW10", 4, 2600),
         ],
         "style": {
             "bg_color": (218, 213, 203),
             "ink_color": (40, 35, 55),
-            "font_size": 36,
+            "font_size": 33,
             "jitter": 2,
             "rotation": 1.2,
             "line_spacing": 52,
             "smudges": 1,
             "faded": True,
             "texture_intensity": 5,
+            "size": (1000, 1200),
         },
     },
     {
         "name": "receipt_dense.jpg",
         "title": "PAINT ORDER",
         "items": [
-            ("TEW1", 2),
-            ("TEW4", 5),
-            ("TEW10", 1),
-            ("TEW20", 3),
-            ("PEPW1", 4),
-            ("PEPW4", 2),
-            ("PEPW10", 6),
-            ("PEPW20", 1),
+            ("TEW1", 2, 250),
+            ("TEW4", 5, 850),
+            ("TEW10", 1, 1800),
+            ("TEW20", 3, 3200),
+            ("PEPW1", 4, 350),
+            ("PEPW4", 2, 1200),
+            ("PEPW10", 6, 2600),
+            ("PEPW20", 1, 4800),
         ],
         "style": {
             "bg_color": (210, 206, 196),
             "ink_color": (8, 5, 18),
-            "font_size": 38,
+            "font_size": 32,
             "jitter": 2,
             "rotation": 1.5,
-            "line_spacing": 54,
+            "line_spacing": 50,
             "smudges": 0,
             "texture_intensity": 4,
-            "size": (900, 1400),
+            "size": (1050, 1500),
         },
     },
     {
         "name": "receipt_dark_ink.jpg",
         "title": "RECEIPT",
         "items": [
-            ("PEPW20", 3),
-            ("TEW4", 7),
-            ("PEPW10", 2),
-            ("TEW1", 5),
-            ("PEPW4", 1),
+            ("PEPW20", 3, 4800),
+            ("TEW4", 7, 850),
+            ("PEPW10", 2, 2600),
+            ("TEW1", 5, 250),
+            ("PEPW4", 1, 1200),
         ],
         "style": {
             "bg_color": (212, 208, 198),
             "ink_color": (8, 5, 18),
             "header_ink": (5, 2, 12),
-            "font_size": 38,
+            "font_size": 34,
             "jitter": 2,
             "rotation": 1.5,
             "line_spacing": 55,
             "smudges": 1,
             "texture_intensity": 5,
+            "size": (1000, 1300),
         },
     },
 ]

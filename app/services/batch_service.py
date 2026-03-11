@@ -294,6 +294,14 @@ class BatchProcessingService:
 
         logger.info(f"Batch {batch.batch_id}: processing started ({batch.total_files} files)")
 
+        # Notify WebSocket subscribers that batch has started
+        await self._ws_broadcast(batch.batch_id, {
+            "type": "batch_started",
+            "batch_id": batch.batch_id,
+            "total_files": batch.total_files,
+            "status": batch.status.value,
+        })
+
         try:
             # Process files with bounded concurrency using semaphore
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCANS)
@@ -327,7 +335,16 @@ class BatchProcessingService:
             f"{batch.success_count}/{batch.total_files} succeeded, "
             f"{batch.error_count} errors, {total_ms}ms total"
         )
-
+        # Notify WebSocket subscribers that batch is done
+        await self._ws_broadcast(batch.batch_id, {
+            "type": "batch_completed",
+            "batch_id": batch.batch_id,
+            "status": batch.status.value,
+            "total_files": batch.total_files,
+            "succeeded": batch.success_count,
+            "failed": batch.error_count,
+            "total_time_ms": total_ms,
+        })
     async def _process_single_file(self, batch: BatchJob, index: int, file_path: str):
         """Process a single file within a batch (runs OCR in thread pool)."""
         file_result = batch.files[index]
@@ -377,6 +394,36 @@ class BatchProcessingService:
 
         file_result.processing_time_ms = int((time.time() - start) * 1000)
         batch.processed_count += 1
+
+        # Notify WebSocket subscribers of per-file progress
+        await self._ws_broadcast(batch.batch_id, {
+            "type": "file_completed",
+            "batch_id": batch.batch_id,
+            "index": index,
+            "filename": file_result.filename,
+            "status": file_result.status.value,
+            "processing_time_ms": file_result.processing_time_ms,
+            "error": file_result.error,
+            "processed": batch.processed_count,
+            "total_files": batch.total_files,
+            "progress_percent": round(
+                (batch.processed_count / batch.total_files * 100) if batch.total_files > 0 else 0,
+                1,
+            ),
+        })
+
+    # ─── WebSocket Notifications ──────────────────────────────────────────
+
+    async def _ws_broadcast(self, batch_id: str, message: Dict[str, Any]) -> None:
+        """Send a progress message to all WebSocket subscribers for a batch."""
+        try:
+            from app.websocket import get_ws_manager
+            manager = get_ws_manager()
+            if manager.has_subscribers(batch_id):
+                await manager.broadcast(batch_id, message)
+        except Exception as e:
+            # WebSocket errors must never break batch processing
+            logger.debug(f"WebSocket broadcast error for batch {batch_id}: {e}")
 
     # ─── Cleanup ──────────────────────────────────────────────────────────
 

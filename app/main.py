@@ -35,6 +35,11 @@ from app.middleware import (
 
 # ─── Logging Setup ────────────────────────────────────────────────────────────
 setup_logging()
+
+# ─── Structured JSON Logging (for Loki / ELK) ────────────────────────────────
+from app.json_logging import setup_json_logging
+setup_json_logging()
+
 logger = logging.getLogger(__name__)
 
 

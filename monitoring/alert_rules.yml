@@ -1,0 +1,242 @@
+# ─────────────────────────────────────────────────────────────
+# Prometheus Alert Rules for Receipt Scanner
+# ─────────────────────────────────────────────────────────────
+# These rules fire alerts when key operational metrics exceed
+# safe thresholds.  Prometheus evaluates them every 15s
+# (configured in prometheus.yml).
+#
+# Severity levels:
+#   critical — immediate attention required
+#   warning  — investigate soon
+#   info     — informational / trending
+
+groups:
+  # ───────────────────────────────────────────────────────────
+  # 1. Azure Budget Alerts
+  # ───────────────────────────────────────────────────────────
+  - name: azure_budget
+    rules:
+      - alert: AzureDailyPageLimitNear
+        expr: azure_pages_daily > 40
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Azure daily page usage is high"
+          description: >
+            Daily Azure pages consumed: {{ $value }}/50.
+            At this rate the daily limit will be reached soon.
+            Consider lowering LOCAL_CONFIDENCE_SKIP_THRESHOLD to route more scans locally.
+
+      - alert: AzureDailyPageLimitExceeded
+        expr: azure_pages_daily >= 50
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Azure daily page limit reached"
+          description: >
+            Daily Azure page limit (50) has been reached.
+            All scans are now falling back to local EasyOCR until midnight.
+
+      - alert: AzureMonthlyBudget80Percent
+        expr: azure_pages_monthly > 400
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Azure monthly usage at 80%+ of free tier"
+          description: >
+            Monthly Azure pages consumed: {{ $value }}/500.
+            Free tier limit will be reached soon.
+            Review pacing and consider reducing AZURE_DAILY_PAGE_LIMIT.
+
+      - alert: AzureMonthlyBudgetExceeded
+        expr: azure_pages_monthly >= 500
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Azure free tier limit reached"
+          description: >
+            Monthly Azure page limit (500) has been reached.
+            Further Azure API calls will be blocked until the billing cycle resets.
+            All scans now use local EasyOCR.
+
+  # ───────────────────────────────────────────────────────────
+  # 2. Error Rate Alerts
+  # ───────────────────────────────────────────────────────────
+  - name: error_rates
+    rules:
+      - alert: HighScanErrorRate
+        expr: >
+          (
+            sum(rate(ocr_scans_total{success="false"}[5m]))
+            /
+            sum(rate(ocr_scans_total[5m]))
+          ) > 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OCR scan error rate above 15%"
+          description: >
+            {{ $value | humanizePercentage }} of scans are failing over the
+            last 5 minutes.  Check logs for recurring errors (bad images,
+            Azure API failures, etc.).
+
+      - alert: CriticalScanErrorRate
+        expr: >
+          (
+            sum(rate(ocr_scans_total{success="false"}[5m]))
+            /
+            sum(rate(ocr_scans_total[5m]))
+          ) > 0.40
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OCR scan error rate above 40%"
+          description: >
+            {{ $value | humanizePercentage }} of scans are failing.
+            This likely indicates a systemic issue — Azure outage,
+            corrupt model files, or disk full.
+
+      - alert: HighHTTPErrorRate
+        expr: >
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HTTP 5xx error rate above 5%"
+          description: >
+            {{ $value | humanizePercentage }} of HTTP requests are returning
+            server errors.  Check application logs for exceptions.
+
+      - alert: AzureAPIErrors
+        expr: >
+          sum(rate(azure_api_calls_total{status="error"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Azure API errors detected"
+          description: >
+            Azure Document Intelligence API is returning errors at
+            {{ $value | humanize }}/sec.  Check Azure service health
+            and API credentials.
+
+  # ───────────────────────────────────────────────────────────
+  # 3. Latency Alerts
+  # ───────────────────────────────────────────────────────────
+  - name: latency
+    rules:
+      - alert: HighScanLatencyP99
+        expr: >
+          histogram_quantile(0.99,
+            sum(rate(receipt_scan_duration_seconds_bucket[5m])) by (le)
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P99 scan latency above 30s"
+          description: >
+            99th percentile scan latency is {{ $value | humanizeDuration }}.
+            This may indicate Azure API slowness, CPU saturation, or
+            very large images being processed.
+
+      - alert: CriticalScanLatencyP50
+        expr: >
+          histogram_quantile(0.50,
+            sum(rate(receipt_scan_duration_seconds_bucket[5m])) by (le)
+          ) > 15
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Median scan latency above 15s"
+          description: >
+            Median scan time is {{ $value | humanizeDuration }}.
+            More than half of all scans are extremely slow.
+            This is a critical performance degradation.
+
+      - alert: HighHTTPLatencyP99
+        expr: >
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HTTP P99 latency above 10s"
+          description: >
+            99th percentile HTTP request latency is {{ $value | humanizeDuration }}.
+            This affects user experience across all endpoints.
+
+  # ───────────────────────────────────────────────────────────
+  # 4. Infrastructure Alerts
+  # ───────────────────────────────────────────────────────────
+  - name: infrastructure
+    rules:
+      - alert: HighRateLimitRejections
+        expr: >
+          sum(rate(rate_limit_rejections_total[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rate limit rejections sustained"
+          description: >
+            Rate limiting is rejecting {{ $value | humanize }} req/sec.
+            Either a client is misbehaving or limits need adjustment.
+
+      - alert: LowCacheHitRate
+        expr: >
+          (
+            sum(rate(cache_hits_total[15m]))
+            /
+            (sum(rate(cache_hits_total[15m])) + sum(rate(cache_misses_total[15m])))
+          ) < 0.20
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "Image cache hit rate below 20%"
+          description: >
+            Cache hit rate is {{ $value | humanizePercentage }}.
+            Consider increasing IMAGE_CACHE_MAX_SIZE or IMAGE_CACHE_TTL
+            if many repeat scans are expected.
+
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Receipt Scanner is unreachable"
+          description: >
+            Prometheus cannot reach the receipt-scanner /metrics endpoint.
+            The application may have crashed or the container stopped.
+
+      - alert: LowOCRConfidence
+        expr: >
+          avg(rate(ocr_confidence_score_sum[5m]))
+          /
+          avg(rate(ocr_confidence_score_count[5m]))
+          < 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Average OCR confidence below 50%"
+          description: >
+            Average OCR confidence score is {{ $value | humanize }}.
+            This may indicate poor image quality or model degradation.
+            Check uploaded images and consider adjusting preprocessing.

@@ -49,8 +49,8 @@
 - **6-Layer Azure Cost Defense** — image quality gate, local-first skip, daily/monthly limits, budget pacing, image cache, model strategy selection
 - **Security Hardening** — CSP headers, rate limiting (10 scan / 30 general RPM), API key protection, magic-byte file validation, path traversal guards
 - **Database** — SQLite WAL with connection pooling, versioned schema migrations, daily auto-backups. Optional PostgreSQL drop-in swap.
-- **Observability** — Prometheus metrics (`/metrics`), **Grafana dashboards** (pre-built 20-panel operations dashboard), **OpenTelemetry distributed tracing** (Jaeger UI), rotating file + console logging, per-stage processing logs, dashboard with parallel DB queries
-- **Async Batch Processing** — Background job queue for scanning up to 20 receipts without blocking the API, semaphore-bounded concurrency (3 workers), status polling, cancellation support
+- **Observability** — Prometheus metrics (`/metrics`), **Grafana dashboards** (pre-built 20-panel operations dashboard), **OpenTelemetry distributed tracing** (Jaeger UI), **structured JSON logging** (Loki/ELK-ready), **15 Prometheus alert rules** (Alertmanager), rotating file + console logging, per-stage processing logs, dashboard with parallel DB queries
+- **Async Batch Processing** — Background job queue for scanning up to 20 receipts without blocking the API, semaphore-bounded concurrency (3 workers), **WebSocket real-time progress** (`/ws/batch/{id}`), status polling, cancellation support
 - **CI/CD** — GitHub Actions pipeline (lint + test matrix + Docker build), pre-commit hooks (ruff + formatting)
 - **Docker** — Multi-stage production image, non-root user, healthcheck, docker-compose with Prometheus + Grafana + Jaeger + named volumes
 
@@ -98,7 +98,7 @@
 ├── requirements.txt              # Pinned Python dependencies
 ├── pyproject.toml                # Modern packaging + ruff + pytest config
 ├── Dockerfile                    # Multi-stage production Docker image
-├── docker-compose.yml            # Full-stack with Prometheus + Grafana + Jaeger
+├── docker-compose.yml            # Full-stack with Prometheus + Grafana + Jaeger + Alertmanager + Loki
 ├── .pre-commit-config.yaml       # Code quality hooks (ruff, formatting)
 ├── .env.example                  # Environment variable template
 ├── .gitignore
@@ -110,12 +110,16 @@
 │
 ├── monitoring/                   # Observability stack configs
 │   ├── prometheus.yml            #   Prometheus scrape config
+│   ├── alert_rules.yml           #   15 Prometheus alerting rules (4 groups)
+│   ├── alertmanager.yml          #   Alertmanager routing + receivers
+│   ├── loki.yml                  #   Grafana Loki log aggregation config
+│   ├── promtail.yml              #   Log shipper → Loki pipeline
 │   └── grafana/
 │       ├── dashboards/
 │       │   └── receipt-scanner.json  # Pre-built 20-panel operations dashboard
 │       └── provisioning/
 │           ├── datasources/
-│           │   └── datasources.yml   # Auto-provisions Prometheus + Jaeger
+│           │   └── datasources.yml   # Auto-provisions Prometheus + Jaeger + Loki
 │           └── dashboards/
 │               └── dashboards.yml    # Dashboard auto-loading config
 │
@@ -127,6 +131,8 @@
 │   ├── database.py               #   SQLite backend, pool, migrations, backups
 │   ├── db_postgres.py            #   PostgreSQL backend (drop-in swap)
 │   ├── logging_config.py         #   Rotating file + console log setup
+│   ├── json_logging.py           #   Structured JSON logging (Loki / ELK ready)
+│   ├── websocket.py              #   WebSocket ConnectionManager for batch updates
 │   ├── metrics.py                #   Prometheus metrics (counters, gauges, histograms)
 │   ├── tracing.py                #   OpenTelemetry distributed tracing (auto/manual spans)
 │   │
@@ -157,6 +163,7 @@
 │
 ├── tests/                        # Test suite
 │   ├── test_app.py               #   Unit tests (pytest) — parser, Excel, DB
+│   ├── test_observability.py     #   WebSocket, JSON logging, alerting tests (32 tests)
 │   ├── test_db_production.py     #   Database infrastructure tests (46 tests)
 │   ├── test_codes.py             #   Fuzzy matching tests
 │   ├── api_check.py              #   API endpoint health checks
@@ -290,6 +297,8 @@ Interactive API documentation is available at **[http://localhost:8000/docs](htt
 | `GET` | `/api/batch` | List recent async batch jobs |
 | `GET` | `/api/batch/{id}` | Poll async batch status + results |
 | `DELETE` | `/api/batch/{id}` | Cancel an async batch job |
+| `WS` | `/ws/batch/{id}` | WebSocket real-time batch progress |
+| `POST` | `/api/webhooks/alerts` | Alertmanager webhook receiver |
 | `GET` | `/api/receipts` | List receipts (paginated: `?limit=10`) |
 | `GET` | `/api/receipts/{id}` | Get receipt details with line items |
 | `DELETE` | `/api/receipts/{id}` | Delete a receipt 🔒 |
@@ -431,6 +440,9 @@ On first initialization, the database is seeded with 10 paint-shop products:
 # Run core unit tests (parser, Excel, DB)
 python -m pytest tests/test_app.py -v
 
+# Observability tests (WebSocket, JSON logging, alerting configs)
+python -m pytest tests/test_observability.py -v
+
 # Database infrastructure tests (connection pool, migrations, backups)
 python tests/test_db_production.py
 ```
@@ -469,7 +481,7 @@ python scripts/generators/generate_edge_case_receipts.py
 
 ## Observability
 
-This project ships with a **triple observability stack**: Prometheus for aggregate metrics, pre-built **Grafana dashboards** for visualization, and OpenTelemetry for per-request distributed tracing. All three are zero-overhead when disabled.
+This project ships with a **full observability stack**: Prometheus metrics + **15 alert rules** (Alertmanager), pre-built **Grafana dashboards**, OpenTelemetry **distributed tracing** (Jaeger), and **structured JSON logging** (Loki). All components are zero-overhead when disabled.
 
 ### Grafana Dashboards (Visualization — "see everything at a glance")
 
@@ -500,6 +512,114 @@ docker-compose up -d
 #### Customization
 
 The dashboard JSON lives at `monitoring/grafana/dashboards/receipt-scanner.json`. Edit it in Grafana's UI and export updated JSON, or modify the file directly. Grafana will auto-reload on container restart.
+
+### WebSocket Batch Updates (Real-Time — "push progress, don't poll")
+
+Instead of polling `GET /api/batch/{id}`, connect a WebSocket to receive real-time push notifications as each file in a batch is processed.
+
+#### Connection
+
+```
+ws://localhost:8000/ws/batch/{batch_id}
+```
+
+#### Message Types
+
+| Type | When | Payload |
+|------|------|---------|
+| `connected` | On WebSocket open | `{ type, batch_id, status, total_files, progress_percent }` |
+| `batch_started` | Batch begins processing | `{ type, batch_id, total_files, status }` |
+| `file_completed` | Each file finishes | `{ type, batch_id, index, filename, status, processing_time_ms, processed, total_files, progress_percent }` |
+| `batch_completed` | All files done | `{ type, batch_id, status, total_files, succeeded, failed, total_time_ms }` |
+| `pong` | Keep-alive response | `{ type: "pong" }` |
+| `error` | Error occurred | `{ type, error }` |
+
+#### JavaScript Example
+
+```javascript
+const ws = new WebSocket(`ws://localhost:8000/ws/batch/${batchId}`);
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  switch (msg.type) {
+    case 'file_completed':
+      console.log(`[${msg.progress_percent}%] ${msg.filename}: ${msg.status}`);
+      updateProgressBar(msg.progress_percent);
+      break;
+    case 'batch_completed':
+      console.log(`Done! ${msg.succeeded}/${msg.total_files} succeeded`);
+      ws.close();
+      break;
+  }
+};
+
+// Keep-alive ping every 30s
+setInterval(() => ws.send(JSON.stringify({ type: 'ping' })), 30000);
+```
+
+### Structured JSON Logging (Machine-Parseable — "Loki / ELK ready")
+
+JSON-formatted logs are written alongside the existing text logs, designed for ingestion by Grafana Loki, ELK stack, or any log aggregation platform.
+
+#### Log Format
+
+```json
+{
+  "timestamp": "2025-01-15T14:30:00.123456+00:00",
+  "level": "INFO",
+  "logger": "app.services.receipt_service",
+  "message": "Receipt processed successfully",
+  "module": "receipt_service",
+  "function": "process_receipt",
+  "line": 142,
+  "extra": { "receipt_id": "REC-20250115-...", "items_found": 5 }
+}
+```
+
+#### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JSON_LOGGING_ENABLED` | `true` | Enable JSON log file output |
+| `JSON_LOGGING_STDOUT` | `false` | Also emit JSON to stdout (for Docker log drivers) |
+
+**Log file:** `logs/app.json.log` (rotating, same size/backup policy as text logs)
+
+#### Loki Integration
+
+JSON logs are automatically shipped to Loki via Promtail in docker-compose. Query them in Grafana:
+
+```logql
+{job="receipt-scanner-json"} | json | level="ERROR"
+{job="receipt-scanner-json"} | json | logger="app.ocr.hybrid_engine"
+```
+
+### Prometheus Alerting (Proactive — "get notified before things break")
+
+15 alert rules across 4 groups, routed through Alertmanager with webhook delivery.
+
+#### Alert Groups
+
+| Group | Rules | Key Alerts |
+|-------|-------|------------|
+| **azure_budget** | 4 | Daily page limit near/exceeded, monthly budget 80%/exceeded |
+| **error_rates** | 4 | Scan error rate >15%/40%, HTTP 5xx >5%, Azure API errors |
+| **latency** | 3 | Scan p99 >30s, scan p50 >15s, HTTP p99 >10s |
+| **infrastructure** | 4 | Rate limit spikes, low cache hit rate, target down, low OCR confidence |
+
+#### Alertmanager
+
+- **URL:** `http://localhost:9093`
+- **Default receiver:** webhook to `POST /api/webhooks/alerts`
+- **Routing:** Critical alerts repeat every 1h, warnings every 4h
+- **Inhibit:** Critical suppresses warning for the same alert name
+
+Customize receivers in `monitoring/alertmanager.yml` — commented-out Slack and email configs are included.
+
+#### Alert Rule Files
+
+- `monitoring/alert_rules.yml` — all 15 Prometheus rules
+- `monitoring/alertmanager.yml` — routing, receivers, inhibition
 
 ### Async Batch Processing (Background Jobs — "scan 20 receipts without blocking")
 
@@ -538,7 +658,7 @@ curl -X POST http://localhost:8000/api/batch \
   -F "files=@receipt3.jpg"
 
 # Response (202 Accepted):
-# { "batch_id": "a1b2c3d4e5f6", "total_files": 3, "status": "pending", "poll_url": "/api/batch/a1b2c3d4e5f6" }
+# { "batch_id": "a1b2c3d4e5f6", "total_files": 3, "status": "pending", "poll_url": "/api/batch/a1b2c3d4e5f6", "ws_url": "/ws/batch/a1b2c3d4e5f6" }
 
 # 2. Poll for status
 curl http://localhost:8000/api/batch/a1b2c3d4e5f6
@@ -723,6 +843,9 @@ The Docker setup provides:
 - **Prometheus** — metrics collection at `http://localhost:9090`
 - **Grafana** — pre-built dashboards at `http://localhost:3000` (admin/admin)
 - **Jaeger** — distributed tracing UI at `http://localhost:16686`
+- **Alertmanager** — alert routing at `http://localhost:9093`
+- **Loki** — log aggregation at `http://localhost:3100`
+- **Promtail** — log shipper (JSON + text logs → Loki)
 
 ### Prometheus Metrics
 
@@ -790,6 +913,8 @@ Hooks: trailing whitespace, EOF fixer, YAML/TOML check, large file guard, merge 
 - [ ] Review `LOG_LEVEL` (recommend `WARNING` for production)
 - [ ] Set up Prometheus scraping for `/metrics` endpoint
 - [ ] Configure Grafana alerts for Azure budget thresholds
+- [ ] Review Alertmanager receivers (`monitoring/alertmanager.yml`) — enable Slack/email
+- [ ] Set `JSON_LOGGING_ENABLED=true` for structured log ingestion
 - [ ] Use `docker-compose up -d` for containerized deployment
 - [ ] Enable GitHub Actions CI on your repository
 

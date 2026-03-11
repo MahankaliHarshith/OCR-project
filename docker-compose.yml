@@ -60,11 +60,14 @@ services:
       - "9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=30d"
       - "--web.enable-lifecycle"
+    depends_on:
+      - alertmanager
 
   # ─── Grafana — Observability Dashboards ───────────────
   # Pre-configured with Prometheus + Jaeger datasources
@@ -87,6 +90,49 @@ services:
     depends_on:
       - prometheus
       - jaeger
+      - loki
+
+  # ─── Alertmanager — Prometheus Alert Routing ────────────
+  # Receives alerts from Prometheus and routes to webhook/email/Slack
+  # Dashboard: http://localhost:9093
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+
+  # ─── Loki — Log Aggregation ────────────────────────────
+  # Receives structured JSON logs from Promtail
+  # API: http://localhost:3100
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+
+  # ─── Promtail — Log Shipper ────────────────────────────
+  # Tails JSON + text logs and pushes to Loki
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: promtail
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - scanner-logs:/var/log/receipt-scanner:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
 
 volumes:
   scanner-uploads:
@@ -97,3 +143,4 @@ volumes:
   scanner-models:
   prometheus-data:
   grafana-data:
+  loki-data:

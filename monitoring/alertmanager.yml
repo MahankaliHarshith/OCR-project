@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────
+# Prometheus Alertmanager Configuration for Receipt Scanner
+# ─────────────────────────────────────────────────────────────
+# Routes all alerts to a default receiver (webhook/email/Slack).
+# Adjust the receiver block below for your notification channel.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: "default"
+
+  routes:
+    # Critical alerts: shorter repeat interval
+    - match:
+        severity: critical
+      receiver: "default"
+      repeat_interval: 1h
+
+    # Warning alerts: standard repeat
+    - match:
+        severity: warning
+      receiver: "default"
+      repeat_interval: 4h
+
+receivers:
+  - name: "default"
+    # ── Webhook (default — works out of the box) ──────────
+    # Sends JSON POST to any webhook endpoint.
+    # Replace with your Slack, PagerDuty, or custom endpoint.
+    webhook_configs:
+      - url: "http://receipt-scanner:8000/api/webhooks/alerts"
+        send_resolved: true
+
+    # ── Slack (uncomment and configure) ───────────────────
+    # slack_configs:
+    #   - api_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+    #     channel: "#receipt-scanner-alerts"
+    #     title: '{{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #     send_resolved: true
+
+    # ── Email (uncomment and configure) ───────────────────
+    # email_configs:
+    #   - to: "ops@example.com"
+    #     from: "alertmanager@receipt-scanner.local"
+    #     smarthost: "smtp.example.com:587"
+    #     auth_username: "alertmanager@example.com"
+    #     auth_password: "your-password"
+
+# Inhibition rules: suppress lower-severity when critical fires
+inhibit_rules:
+  - source_match:
+      severity: "critical"
+    target_match:
+      severity: "warning"
+    equal: ["alertname"]

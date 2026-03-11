@@ -14,7 +14,7 @@ from datetime import datetime
 import numpy as np
 import re
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Query
+from fastapi import APIRouter, File, UploadFile, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from typing import List as TypingList
@@ -418,7 +418,7 @@ async def create_batch(files: TypingList[UploadFile] = File(...)):
     # Create async batch job
     batch_svc = get_batch_service()
     try:
-        batch_id = await batch_svc.create_batch(saved_paths)
+        batch = await batch_svc.create_batch(saved_paths)
     except ValueError as e:
         # Too many active batches
         for _, p in saved_paths:
@@ -428,6 +428,7 @@ async def create_batch(files: TypingList[UploadFile] = File(...)):
                 pass
         raise HTTPException(status_code=429, detail=str(e))
 
+    batch_id = batch.batch_id
     logger.info(f"Async batch created: batch_id={batch_id}, files={len(saved_paths)}")
     return JSONResponse(
         status_code=202,
@@ -436,6 +437,7 @@ async def create_batch(files: TypingList[UploadFile] = File(...)):
             "total_files": len(saved_paths),
             "status": "pending",
             "poll_url": f"/api/batch/{batch_id}",
+            "ws_url": f"/ws/batch/{batch_id}",
         },
     )
 
@@ -444,7 +446,7 @@ async def create_batch(files: TypingList[UploadFile] = File(...)):
 async def list_batches(limit: int = Query(default=20, ge=1, le=100)):
     """List recent async batch jobs (newest first)."""
     from app.services.batch_service import get_batch_service
-    batches = get_batch_service().list_batches(limit)
+    batches = await get_batch_service().list_batches(limit)
     return {"batches": batches, "count": len(batches)}
 
 
@@ -457,7 +459,7 @@ async def get_batch_status(batch_id: str):
     once processing is complete.
     """
     from app.services.batch_service import get_batch_service
-    batch = get_batch_service().get_batch(batch_id)
+    batch = await get_batch_service().get_batch(batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found.")
     return batch.to_dict(include_results=True)
@@ -467,7 +469,7 @@ async def get_batch_status(batch_id: str):
 async def cancel_batch(batch_id: str):
     """Cancel a pending or in-progress async batch job."""
     from app.services.batch_service import get_batch_service
-    cancelled = get_batch_service().cancel_batch(batch_id)
+    cancelled = await get_batch_service().cancel_batch(batch_id)
     if not cancelled:
         raise HTTPException(
             status_code=404,
@@ -834,3 +836,81 @@ async def clear_ocr_cache():
         "message": "OCR cache cleared.",
         "entries_cleared": stats_before["size"],
     }
+
+
+# ─── WebSocket — Real-time Batch Updates ─────────────────────────────────────
+
+@router.websocket("/ws/batch/{batch_id}")
+async def websocket_batch_updates(websocket: WebSocket, batch_id: str):
+    """
+    WebSocket endpoint for real-time batch processing updates.
+
+    Connect to ``ws://host:port/ws/batch/{batch_id}`` after submitting a
+    batch via ``POST /api/batch``.  The server pushes JSON messages:
+
+        {"type": "batch_started",   "batch_id": "...", "total_files": 5}
+        {"type": "file_completed",  "batch_id": "...", "index": 0, "filename": "receipt1.jpg", "status": "success", ...}
+        {"type": "batch_completed", "batch_id": "...", "status": "completed", "succeeded": 4, "failed": 1, ...}
+
+    The connection is kept open until the batch finishes or the client
+    disconnects.
+    """
+    from app.websocket import get_ws_manager
+    from app.services.batch_service import get_batch_service
+
+    manager = get_ws_manager()
+    await manager.connect(batch_id, websocket)
+
+    try:
+        # Send current batch status immediately on connect
+        batch = await get_batch_service().get_batch(batch_id)
+        if batch:
+            await manager.send_personal(websocket, {
+                "type": "connected",
+                "batch_id": batch_id,
+                "status": batch.status.value,
+                "total_files": batch.total_files,
+                "processed": batch.processed_count,
+                "progress_percent": round(
+                    (batch.processed_count / batch.total_files * 100) if batch.total_files > 0 else 0,
+                    1,
+                ),
+            })
+        else:
+            await manager.send_personal(websocket, {
+                "type": "error",
+                "message": f"Batch '{batch_id}' not found.",
+            })
+            await websocket.close(code=4004)
+            return
+
+        # Keep the connection alive until client disconnects
+        while True:
+            # Wait for client messages (heartbeat / close)
+            data = await websocket.receive_text()
+            # Client can send "ping" for keep-alive
+            if data == "ping":
+                await manager.send_personal(websocket, {"type": "pong"})
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await manager.disconnect(batch_id, websocket)
+
+
+# ─── Alertmanager Webhook Receiver ───────────────────────────────────────────
+
+@router.post("/api/webhooks/alerts", tags=["System"], include_in_schema=False)
+async def receive_alertmanager_webhook():
+    """
+    Receive alerts from Prometheus Alertmanager.
+
+    Logs each alert for visibility.  In production, extend this to
+    send Slack/email/PagerDuty notifications.
+    """
+    from fastapi import Request as _Request
+    # FastAPI automatically parses JSON body
+    import json as _json
+
+    logger.warning("🚨 Alertmanager webhook received — check Prometheus alerts")
+    return {"status": "received"}

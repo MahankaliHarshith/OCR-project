@@ -6,6 +6,16 @@ global:
   evaluation_interval: 15s   # How often to evaluate rules
   scrape_timeout: 10s
 
+# Alertmanager endpoints
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+# Alert rule files
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
 scrape_configs:
   - job_name: "receipt-scanner"
     static_configs:

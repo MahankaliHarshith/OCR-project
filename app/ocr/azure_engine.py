@@ -18,6 +18,12 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+try:
+    from app.metrics import record_azure_call as _record_azure_call
+except Exception:
+    def _record_azure_call(model="", success=True):
+        pass
+
 # ── Lazy imports — only loaded when Azure is actually used ──────────────────
 _azure_available = None  # None = not checked yet
 
@@ -176,12 +182,14 @@ class AzureOCREngine:
             logger.error(f"Azure Receipt extraction failed: {e}")
             # Track failed call too (Azure still bills for some errors)
             get_usage_tracker().record_call("prebuilt-receipt", pages=1, success=False)
+            _record_azure_call(model="prebuilt-receipt", success=False)
             raise
 
         elapsed_ms = int((time.time() - start) * 1000)
 
         # Track usage
         get_usage_tracker().record_call("prebuilt-receipt", pages=1, success=success)
+        _record_azure_call(model="prebuilt-receipt", success=success)
 
         # Parse Azure receipt result into our format
         parsed = self._parse_receipt_result(result)
@@ -231,12 +239,14 @@ class AzureOCREngine:
         except Exception as e:
             logger.error(f"Azure Read extraction failed: {e}")
             get_usage_tracker().record_call("prebuilt-read", pages=1, success=False)
+            _record_azure_call(model="prebuilt-read", success=False)
             raise
 
         elapsed_ms = int((time.time() - start) * 1000)
 
         # Track usage
         get_usage_tracker().record_call("prebuilt-read", pages=1, success=success)
+        _record_azure_call(model="prebuilt-read", success=success)
 
         # Convert Azure Read result to EasyOCR-compatible format
         detections = self._convert_read_to_detections(result)
@@ -275,12 +285,14 @@ class AzureOCREngine:
         except Exception as e:
             logger.error(f"Azure extraction from bytes failed: {e}")
             get_usage_tracker().record_call(model, pages=1, success=False)
+            _record_azure_call(model=model, success=False)
             raise
 
         elapsed_ms = int((time.time() - start) * 1000)
 
         # Track usage (was previously missing — silent page consumption)
         get_usage_tracker().record_call(model, pages=1, success=success)
+        _record_azure_call(model=model, success=success)
 
         detections = self._convert_read_to_detections(result)
 

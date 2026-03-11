@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  receipt-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: receipt-scanner
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Persist uploaded images, exports, and database across restarts
+      - scanner-uploads:/app/uploads
+      - scanner-exports:/app/exports
+      - scanner-logs:/app/logs
+      - scanner-data:/app/data
+      - scanner-backups:/app/backups
+      # Persist EasyOCR models (avoids ~500MB re-download)
+      - scanner-models:/app/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+
+volumes:
+  scanner-uploads:
+  scanner-exports:
+  scanner-logs:
+  scanner-data:
+  scanner-backups:
+  scanner-models:

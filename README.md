@@ -48,7 +48,9 @@
 - **6-Layer Azure Cost Defense** — image quality gate, local-first skip, daily/monthly limits, budget pacing, image cache, model strategy selection
 - **Security Hardening** — CSP headers, rate limiting (10 scan / 30 general RPM), API key protection, magic-byte file validation, path traversal guards
 - **Database** — SQLite WAL with connection pooling, versioned schema migrations, daily auto-backups. Optional PostgreSQL drop-in swap.
-- **Observability** — Rotating file + console logging, per-stage processing logs, dashboard with parallel DB queries
+- **Observability** — Prometheus metrics (`/metrics`), rotating file + console logging, per-stage processing logs, dashboard with parallel DB queries
+- **CI/CD** — GitHub Actions pipeline (lint + test matrix + Docker build), pre-commit hooks (ruff + formatting)
+- **Docker** — Multi-stage production image, non-root user, healthcheck, docker-compose with named volumes
 
 ---
 
@@ -92,8 +94,17 @@
 ```
 ├── run.py                        # Application entry point
 ├── requirements.txt              # Pinned Python dependencies
+├── pyproject.toml                # Modern packaging + ruff + pytest config
+├── Dockerfile                    # Multi-stage production Docker image
+├── docker-compose.yml            # Full-stack with named volumes
+├── .pre-commit-config.yaml       # Code quality hooks (ruff, formatting)
 ├── .env.example                  # Environment variable template
 ├── .gitignore
+├── LICENSE                       # MIT License
+│
+├── .github/
+│   └── workflows/
+│       └── ci.yml                # GitHub Actions: lint + test + docker
 │
 ├── app/                          # Application source code
 │   ├── __init__.py               #   Package metadata (version, author)
@@ -103,6 +114,7 @@
 │   ├── database.py               #   SQLite backend, pool, migrations, backups
 │   ├── db_postgres.py            #   PostgreSQL backend (drop-in swap)
 │   ├── logging_config.py         #   Rotating file + console log setup
+│   ├── metrics.py                #   Prometheus metrics (counters, gauges, histograms)
 │   │
 │   ├── api/
 │   │   └── routes.py             #   REST endpoint definitions
@@ -444,7 +456,7 @@ python scripts/generators/generate_edge_case_receipts.py
 API_DEBUG=true LOG_LEVEL=DEBUG python run.py
 ```
 
-### Production
+### Production (Direct)
 
 ```bash
 # Standard start
@@ -453,6 +465,83 @@ python run.py
 # Or via uvicorn directly
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+### Docker
+
+```bash
+# Build the production image
+docker build -t receipt-scanner .
+
+# Run with docker-compose (recommended — mounts persistent volumes)
+docker-compose up -d
+
+# View logs
+docker-compose logs -f receipt-scanner
+
+# Stop
+docker-compose down
+```
+
+The Docker setup provides:
+- **Multi-stage build** — slim Python 3.12 image (~350 MB vs ~1.2 GB full)
+- **Non-root user** — runs as `appuser` (UID 1000)
+- **Healthcheck** — auto-restarts if `/api/health` fails
+- **6 named volumes** — uploads, exports, logs, data, backups, models persist across restarts
+
+### Prometheus Metrics
+
+When the app is running, Prometheus metrics are exposed at **`/metrics`**. Scrape this endpoint with your Prometheus server.
+
+**Available metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `http_requests_total` | Counter | Auto-instrumented HTTP requests (method, status, path) |
+| `http_request_duration_seconds` | Histogram | Request latency |
+| `ocr_scans_total` | Counter | Scans by strategy and success/failure |
+| `ocr_scan_duration_seconds` | Histogram | OCR processing time |
+| `ocr_items_detected` | Histogram | Items found per scan |
+| `ocr_confidence_score` | Histogram | Average OCR confidence |
+| `azure_api_calls_total` | Counter | Azure API calls by model and status |
+| `azure_pages_daily` | Gauge | Pages consumed today |
+| `azure_pages_monthly` | Gauge | Pages consumed this month |
+| `cache_hits_total` / `cache_misses_total` | Counter | Image cache effectiveness |
+| `db_connections_active` | Gauge | Active database connections |
+| `rate_limit_rejections_total` | Counter | 429 responses by endpoint type |
+
+**Prometheus scrape config:**
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: receipt-scanner
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:8000']
+```
+
+### CI/CD Pipeline
+
+GitHub Actions runs automatically on every push and pull request:
+
+1. **Lint** — `ruff check` + `ruff format --check` on all source files
+2. **Test** — `pytest` on Python 3.11 and 3.12 matrix
+3. **Docker** — Builds the image and verifies the healthcheck passes
+
+### Pre-commit Hooks
+
+```bash
+# Install pre-commit
+pip install pre-commit
+
+# Set up hooks (run once after cloning)
+pre-commit install
+
+# Run manually on all files
+pre-commit run --all-files
+```
+
+Hooks: trailing whitespace, EOF fixer, YAML/TOML check, large file guard, merge conflict check, debug statement detection, ruff lint + format.
 
 ### Production Checklist
 
@@ -463,6 +552,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - [ ] Configure Azure credentials if using hybrid OCR
 - [ ] Set `DB_BACKUP_KEEP_DAYS` for backup retention policy
 - [ ] Review `LOG_LEVEL` (recommend `WARNING` for production)
+- [ ] Set up Prometheus scraping for `/metrics` endpoint
+- [ ] Use `docker-compose up -d` for containerized deployment
+- [ ] Enable GitHub Actions CI on your repository
 
 ---
 

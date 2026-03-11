@@ -26,6 +26,9 @@ python-multipart==0.0.22
 Pillow==12.1.1
 python-dotenv==1.2.1
 
+# ─── Observability ───────────────────────────────────────
+prometheus-fastapi-instrumentator==7.0.2
+
 # ─── Testing (dev) ───────────────────────────────────────
 pytest==9.0.2
 httpx==0.28.1

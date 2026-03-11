@@ -142,6 +142,18 @@ app.add_middleware(RateLimitMiddleware,           # Per-IP rate limiting
 app.add_middleware(APIKeyMiddleware,              # Protect destructive endpoints
                    api_key=API_SECRET_KEY)
 
+# ─── Prometheus Metrics ────────────────────────────────────────────────────
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    Instrumentator(
+        should_group_status_codes=True,
+        should_ignore_untemplated=True,
+        excluded_handlers=["/metrics", "/static/.*"],
+    ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+    logger.info("   📊 Prometheus metrics enabled at /metrics")
+except ImportError:
+    logger.debug("   prometheus-fastapi-instrumentator not installed — metrics disabled")
+
 # ─── Request Logging Middleware ────────────────────────────────────────────
 @app.middleware("http")
 async def log_requests(request: Request, call_next):

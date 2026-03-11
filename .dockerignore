@@ -1,0 +1,51 @@
+# ─── Version Control ─────────────────────────────
+.git
+.gitignore
+
+# ─── Virtual Environment ────────────────────────
+.venv/
+venv/
+ENV/
+
+# ─── IDE ─────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ─── Runtime Data (rebuild on container start) ───
+uploads/
+exports/
+logs/
+data/
+backups/
+*.db
+*.db-wal
+*.db-shm
+
+# ─── EasyOCR Models (mount as volume instead) ───
+models/
+
+# ─── Tests & Scripts (not needed in prod image) ──
+tests/
+scripts/
+docs/
+*.md
+!README.md
+LICENSE
+
+# ─── Environment ────────────────────────────────
+.env
+.env.example
+
+# ─── CI / Config ────────────────────────────────
+.github/
+.pre-commit-config.yaml
+pyproject.toml
+Dockerfile
+docker-compose.yml
+
+# ─── OS Files ───────────────────────────────────
+Thumbs.db
+.DS_Store
+__pycache__/
+*.pyc

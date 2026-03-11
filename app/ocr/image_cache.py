@@ -21,6 +21,14 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    from app.metrics import record_cache_hit as _record_cache_hit, record_cache_miss as _record_cache_miss
+except Exception:
+    def _record_cache_hit():
+        pass
+    def _record_cache_miss():
+        pass
+
 
 class ImageCache:
     """
@@ -83,6 +91,7 @@ class ImageCache:
                     # Cache hit — move to end (most recently used)
                     self._cache.move_to_end(image_hash)
                     self.hits += 1
+                    _record_cache_hit()
 
                     logger.info(
                         f"[Cache] HIT: hash={image_hash[:12]}..., "
@@ -95,6 +104,7 @@ class ImageCache:
                     logger.debug(f"[Cache] EXPIRED: hash={image_hash[:12]}..., age={age:.0f}s")
 
             self.misses += 1
+            _record_cache_miss()
             return None
 
     def put(self, image_hash: str, result: Dict) -> None:

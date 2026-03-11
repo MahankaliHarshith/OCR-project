@@ -31,6 +31,12 @@ from app.config import DATABASE_PATH, DB_BACKUP_DIR, DB_BACKUP_KEEP_DAYS
 
 logger = logging.getLogger(__name__)
 
+try:
+    from app.metrics import set_db_connections as _set_db_connections
+except Exception:
+    def _set_db_connections(count):
+        pass
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 1. Thread-Local Connection Pool
@@ -75,6 +81,7 @@ class ConnectionPool:
 
         with self._lock:
             self._all_connections.append(conn)
+            _set_db_connections(len(self._all_connections))
 
         logger.debug(
             "Pooled connection created (thread=%s, total=%d)",
@@ -93,6 +100,7 @@ class ConnectionPool:
                     pass
             closed = len(self._all_connections)
             self._all_connections.clear()
+            _set_db_connections(0)
         self._local.conn = None
         logger.info("Connection pool closed (%d connections)", closed)
 
@@ -104,6 +112,7 @@ class ConnectionPool:
                 self._all_connections.remove(conn)
             except ValueError:
                 pass
+            _set_db_connections(len(self._all_connections))
         try:
             conn.close()
         except Exception:

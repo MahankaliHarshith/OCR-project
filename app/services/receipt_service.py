@@ -22,6 +22,12 @@ from app.services.product_service import product_service
 
 logger = logging.getLogger(__name__)
 
+try:
+    from app.metrics import record_scan as _record_scan
+except Exception:
+    def _record_scan(*a, **kw):
+        pass
+
 
 class ReceiptService:
     """
@@ -412,9 +418,22 @@ class ReceiptService:
             result["receipt_data"] = receipt_data
             result["success"] = False
 
-        return result
+        # ─── Record Prometheus metrics ──────────────────────────────────────────
+        try:
+            elapsed = time.time() - total_start
+            strategy = result.get("metadata", {}).get("ocr_strategy", "unknown")
+            rd = result.get("receipt_data") or {}
+            _record_scan(
+                strategy=strategy,
+                success=result["success"],
+                duration=elapsed,
+                items_count=rd.get("total_items", 0),
+                avg_confidence=rd.get("avg_confidence", 0),
+            )
+        except Exception:
+            pass
 
-    def get_receipt(self, receipt_id: int) -> Optional[Dict]:
+        return result
         """Get a receipt by ID with all items."""
         return self.db.get_receipt(receipt_id)
 

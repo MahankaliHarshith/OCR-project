@@ -18,6 +18,12 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+try:
+    from app.metrics import record_rate_limit as _record_rate_limit
+except Exception:
+    def _record_rate_limit(endpoint_type: str = "general") -> None:
+        pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -142,6 +148,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if not allowed:
             logger.warning(f"Rate limit exceeded: {client_ip} on {path}")
+            _record_rate_limit("scan" if path == "/api/receipts/scan" else "general")
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too many requests. Please wait a moment and try again."},

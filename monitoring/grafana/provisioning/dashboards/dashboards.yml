@@ -1,0 +1,15 @@
+# Auto-provision dashboards from JSON files
+apiVersion: 1
+
+providers:
+  - name: "Receipt Scanner"
+    orgId: 1
+    folder: "Receipt Scanner"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

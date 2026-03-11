@@ -107,9 +107,17 @@ async def lifespan(app: FastAPI):
     from app.tracing import setup_tracing, shutdown_tracing
     setup_tracing(app)
 
+    # ── Async Batch Processing Service ──
+    from app.services.batch_service import get_batch_service
+    _batch_svc = get_batch_service()
+    await _batch_svc.start()
+    logger.info("   ✅ Batch processing service ready")
+
     yield  # ← app runs here
 
     # ── SHUTDOWN ──
+    await get_batch_service().shutdown()
+    logger.info("   🛑 Batch processing service stopped")
     shutdown_tracing()
     from app.database import db
     db.shutdown()

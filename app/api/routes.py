@@ -327,6 +327,155 @@ async def scan_receipts_batch(files: TypingList[UploadFile] = File(...)):
     })
 
 
+# ─── Async Batch Processing Endpoints ─────────────────────────────────────────
+
+@router.post("/api/batch", tags=["Batch Processing"])
+async def create_batch(files: TypingList[UploadFile] = File(...)):
+    """
+    Submit multiple receipt images for **asynchronous** background processing.
+
+    Unlike `/api/receipts/scan-batch` (which blocks until all files are done),
+    this endpoint returns immediately with a `batch_id` that you can poll via
+    `GET /api/batch/{batch_id}`.
+
+    - Max 20 files per batch, max 5 active batches at a time.
+    - Each file is validated (extension, size, magic bytes) before queuing.
+    """
+    from app.services.batch_service import get_batch_service
+
+    MAX_BATCH_FILES = 20
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files. Maximum {MAX_BATCH_FILES} images per async batch.",
+        )
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    import uuid as _uuid
+
+    saved_paths: list[tuple[str, str]] = []  # (original_filename, disk_path)
+
+    for file in files:
+        ext = Path(file.filename or "").suffix.lower()
+        if ext not in ALLOWED_IMAGE_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type '{ext}' in file '{file.filename}'. "
+                       f"Allowed: {', '.join(ALLOWED_IMAGE_EXTENSIONS)}",
+            )
+
+        max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+        contents = bytearray()
+        chunk_size = 1024 * 1024
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            contents.extend(chunk)
+            if len(contents) > max_bytes:
+                # Clean up already-saved files
+                for _, p in saved_paths:
+                    try:
+                        Path(p).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File '{file.filename}' too large (>{MAX_FILE_SIZE_MB}MB).",
+                )
+        contents = bytes(contents)
+
+        # Validate magic bytes
+        _MAGIC = {
+            b'\xff\xd8\xff': '.jpg',
+            b'\x89PNG': '.png',
+            b'BM': '.bmp',
+            b'II\x2a\x00': '.tiff',
+            b'MM\x00\x2a': '.tiff',
+            b'RIFF': '.webp',
+        }
+        if not any(contents[:len(sig)] == sig for sig in _MAGIC):
+            for _, p in saved_paths:
+                try:
+                    Path(p).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise HTTPException(
+                status_code=400,
+                detail=f"File '{file.filename}' content does not match a valid image format.",
+            )
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        unique = _uuid.uuid4().hex[:6]
+        disk_name = f"upload_{timestamp}_{unique}{ext}"
+        upload_path = UPLOAD_DIR / disk_name
+        with open(upload_path, "wb") as f:
+            f.write(contents)
+
+        saved_paths.append((file.filename or disk_name, str(upload_path)))
+
+    # Create async batch job
+    batch_svc = get_batch_service()
+    try:
+        batch_id = await batch_svc.create_batch(saved_paths)
+    except ValueError as e:
+        # Too many active batches
+        for _, p in saved_paths:
+            try:
+                Path(p).unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise HTTPException(status_code=429, detail=str(e))
+
+    logger.info(f"Async batch created: batch_id={batch_id}, files={len(saved_paths)}")
+    return JSONResponse(
+        status_code=202,
+        content={
+            "batch_id": batch_id,
+            "total_files": len(saved_paths),
+            "status": "pending",
+            "poll_url": f"/api/batch/{batch_id}",
+        },
+    )
+
+
+@router.get("/api/batch", tags=["Batch Processing"])
+async def list_batches(limit: int = Query(default=20, ge=1, le=100)):
+    """List recent async batch jobs (newest first)."""
+    from app.services.batch_service import get_batch_service
+    batches = get_batch_service().list_batches(limit)
+    return {"batches": batches, "count": len(batches)}
+
+
+@router.get("/api/batch/{batch_id}", tags=["Batch Processing"])
+async def get_batch_status(batch_id: str):
+    """
+    Poll the status of an async batch job.
+
+    Returns the batch status, progress percentage, and per-file results
+    once processing is complete.
+    """
+    from app.services.batch_service import get_batch_service
+    batch = get_batch_service().get_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+    return batch.to_dict(include_results=True)
+
+
+@router.delete("/api/batch/{batch_id}", tags=["Batch Processing"])
+async def cancel_batch(batch_id: str):
+    """Cancel a pending or in-progress async batch job."""
+    from app.services.batch_service import get_batch_service
+    cancelled = get_batch_service().cancel_batch(batch_id)
+    if not cancelled:
+        raise HTTPException(
+            status_code=404,
+            detail="Batch not found or already completed/cancelled.",
+        )
+    return {"message": "Batch cancelled.", "batch_id": batch_id}
+
+
 @router.get("/api/receipts", tags=["Receipts"])
 async def get_recent_receipts(
     limit: int = Query(default=20, ge=1, le=100),

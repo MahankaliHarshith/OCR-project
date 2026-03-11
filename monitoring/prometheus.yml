@@ -1,0 +1,18 @@
+# Prometheus Configuration for Receipt Scanner
+# Scrapes the FastAPI /metrics endpoint
+
+global:
+  scrape_interval: 15s       # How often to scrape targets
+  evaluation_interval: 15s   # How often to evaluate rules
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: "receipt-scanner"
+    static_configs:
+      - targets: ["receipt-scanner:8000"]
+        labels:
+          environment: "production"
+          service: "receipt-scanner"
+    # Only scrape the /metrics endpoint
+    metrics_path: /metrics
+    scheme: http

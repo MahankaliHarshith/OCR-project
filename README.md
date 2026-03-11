@@ -49,9 +49,10 @@
 - **6-Layer Azure Cost Defense** — image quality gate, local-first skip, daily/monthly limits, budget pacing, image cache, model strategy selection
 - **Security Hardening** — CSP headers, rate limiting (10 scan / 30 general RPM), API key protection, magic-byte file validation, path traversal guards
 - **Database** — SQLite WAL with connection pooling, versioned schema migrations, daily auto-backups. Optional PostgreSQL drop-in swap.
-- **Observability** — Prometheus metrics (`/metrics`), **OpenTelemetry distributed tracing** (Jaeger UI), rotating file + console logging, per-stage processing logs, dashboard with parallel DB queries
+- **Observability** — Prometheus metrics (`/metrics`), **Grafana dashboards** (pre-built 20-panel operations dashboard), **OpenTelemetry distributed tracing** (Jaeger UI), rotating file + console logging, per-stage processing logs, dashboard with parallel DB queries
+- **Async Batch Processing** — Background job queue for scanning up to 20 receipts without blocking the API, semaphore-bounded concurrency (3 workers), status polling, cancellation support
 - **CI/CD** — GitHub Actions pipeline (lint + test matrix + Docker build), pre-commit hooks (ruff + formatting)
-- **Docker** — Multi-stage production image, non-root user, healthcheck, docker-compose with named volumes
+- **Docker** — Multi-stage production image, non-root user, healthcheck, docker-compose with Prometheus + Grafana + Jaeger + named volumes
 
 ---
 
@@ -97,7 +98,7 @@
 ├── requirements.txt              # Pinned Python dependencies
 ├── pyproject.toml                # Modern packaging + ruff + pytest config
 ├── Dockerfile                    # Multi-stage production Docker image
-├── docker-compose.yml            # Full-stack with named volumes
+├── docker-compose.yml            # Full-stack with Prometheus + Grafana + Jaeger
 ├── .pre-commit-config.yaml       # Code quality hooks (ruff, formatting)
 ├── .env.example                  # Environment variable template
 ├── .gitignore
@@ -106,6 +107,17 @@
 ├── .github/
 │   └── workflows/
 │       └── ci.yml                # GitHub Actions: lint + test + docker
+│
+├── monitoring/                   # Observability stack configs
+│   ├── prometheus.yml            #   Prometheus scrape config
+│   └── grafana/
+│       ├── dashboards/
+│       │   └── receipt-scanner.json  # Pre-built 20-panel operations dashboard
+│       └── provisioning/
+│           ├── datasources/
+│           │   └── datasources.yml   # Auto-provisions Prometheus + Jaeger
+│           └── dashboards/
+│               └── dashboards.yml    # Dashboard auto-loading config
 │
 ├── app/                          # Application source code
 │   ├── __init__.py               #   Package metadata (version, author)
@@ -134,7 +146,8 @@
 │   ├── services/
 │   │   ├── receipt_service.py    #   Scan orchestration pipeline
 │   │   ├── product_service.py    #   Product CRUD + CSV import/export
-│   │   └── excel_service.py      #   Styled Excel report generation
+│   │   ├── excel_service.py      #   Styled Excel report generation
+│   │   └── batch_service.py      #   Async background batch processing
 │   │
 │   └── static/                   # Frontend assets
 │       ├── index.html            #   3-tab SPA (Scan | Receipts | Catalog)
@@ -272,6 +285,11 @@ Interactive API documentation is available at **[http://localhost:8000/docs](htt
 |--------|----------|-------------|
 | `GET` | `/api/health` | Health check + engine status |
 | `POST` | `/api/receipts/scan` | Upload and scan a receipt image |
+| `POST` | `/api/receipts/scan-batch` | Scan up to 10 receipts (synchronous) |
+| `POST` | `/api/batch` | Submit up to 20 receipts for async processing |
+| `GET` | `/api/batch` | List recent async batch jobs |
+| `GET` | `/api/batch/{id}` | Poll async batch status + results |
+| `DELETE` | `/api/batch/{id}` | Cancel an async batch job |
 | `GET` | `/api/receipts` | List receipts (paginated: `?limit=10`) |
 | `GET` | `/api/receipts/{id}` | Get receipt details with line items |
 | `DELETE` | `/api/receipts/{id}` | Delete a receipt 🔒 |
@@ -451,7 +469,102 @@ python scripts/generators/generate_edge_case_receipts.py
 
 ## Observability
 
-This project ships with a **dual observability stack**: Prometheus for aggregate metrics and OpenTelemetry for per-request distributed tracing. Both are zero-overhead when disabled.
+This project ships with a **triple observability stack**: Prometheus for aggregate metrics, pre-built **Grafana dashboards** for visualization, and OpenTelemetry for per-request distributed tracing. All three are zero-overhead when disabled.
+
+### Grafana Dashboards (Visualization — "see everything at a glance")
+
+A pre-built **20-panel operations dashboard** is auto-provisioned when you run `docker-compose up`. No manual setup needed.
+
+#### Dashboard Panels
+
+| Row | Panels |
+|-----|--------|
+| **📊 Overview** | Total Scans · Failed Scans · Avg Latency · Azure Pages Monthly · Azure Pages Daily · Cache Hit Rate |
+| **📈 Throughput & Latency** | Scan rate/min (success vs error) · Latency percentiles (p50/p90/p99) |
+| **🔍 OCR Engine & Quality** | Scans by OCR strategy (stacked bars) · Avg items detected · Avg OCR confidence (threshold line at 0.7) |
+| **☁️ Azure Usage & Cost** | API call rates by model · Daily pages (red at 22/day) · Monthly pages (red at 500/month) |
+| **🌐 HTTP & Infrastructure** | HTTP request rate · HTTP latency percentiles · Cache + rate limits · DB connections · Success rate · Rate limit rejections |
+
+#### Quick Start
+
+```bash
+# Start the full observability stack
+docker-compose up -d
+
+# Open Grafana
+# → http://localhost:3000
+# → Login: admin / admin (configurable via GRAFANA_USER / GRAFANA_PASSWORD env vars)
+# → Dashboard is auto-loaded: "Receipt Scanner — Operations"
+```
+
+#### Customization
+
+The dashboard JSON lives at `monitoring/grafana/dashboards/receipt-scanner.json`. Edit it in Grafana's UI and export updated JSON, or modify the file directly. Grafana will auto-reload on container restart.
+
+### Async Batch Processing (Background Jobs — "scan 20 receipts without blocking")
+
+The async batch API processes multiple receipts in the background using `asyncio` + `ThreadPoolExecutor`. Unlike the synchronous `/api/receipts/scan-batch` endpoint, it returns immediately with a `batch_id` for polling.
+
+#### Architecture
+
+```
+POST /api/batch (20 files)
+    │
+    ▼
+[Validate & Save Files] ──► Return 202 { batch_id }
+    │                            immediately
+    ▼
+[Background asyncio.Task]
+    ├── Semaphore (3 concurrent)
+    ├── File 1 ─── ThreadPoolExecutor ──► receipt_service.process_receipt()
+    ├── File 2 ─── ThreadPoolExecutor ──► receipt_service.process_receipt()
+    ├── File 3 ─── ThreadPoolExecutor ──► receipt_service.process_receipt()
+    │   ... (queued until semaphore releases)
+    └── File 20 ─── ThreadPoolExecutor ──► receipt_service.process_receipt()
+         │
+         ▼
+    [BatchJob.status = COMPLETED]
+         │
+GET /api/batch/{id} ──► { status, progress_percent, results[] }
+```
+
+#### API Usage
+
+```bash
+# 1. Submit a batch (returns immediately)
+curl -X POST http://localhost:8000/api/batch \
+  -F "files=@receipt1.jpg" \
+  -F "files=@receipt2.jpg" \
+  -F "files=@receipt3.jpg"
+
+# Response (202 Accepted):
+# { "batch_id": "a1b2c3d4e5f6", "total_files": 3, "status": "pending", "poll_url": "/api/batch/a1b2c3d4e5f6" }
+
+# 2. Poll for status
+curl http://localhost:8000/api/batch/a1b2c3d4e5f6
+
+# Response (in-progress):
+# { "status": "processing", "progress_percent": 66.7, "processed": 2, "total_files": 3, ... }
+
+# Response (complete):
+# { "status": "completed", "progress_percent": 100, "success_count": 3, "files": [...] }
+
+# 3. List all batches
+curl http://localhost:8000/api/batch
+
+# 4. Cancel a batch
+curl -X DELETE http://localhost:8000/api/batch/a1b2c3d4e5f6
+```
+
+#### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `MAX_BATCH_SIZE` | `20` | Max files per batch |
+| `MAX_CONCURRENT_SCANS` | `3` | Parallel OCR workers (semaphore) |
+| `MAX_ACTIVE_BATCHES` | `5` | Max batches processing simultaneously |
+| `BATCH_RESULT_TTL` | `3600s` | How long completed results are kept |
+| `MAX_STORED_BATCHES` | `50` | Max batches in memory before eviction |
 
 ### Prometheus Metrics (Aggregates — "how much, how fast?")
 
@@ -607,6 +720,9 @@ The Docker setup provides:
 - **Non-root user** — runs as `appuser` (UID 1000)
 - **Healthcheck** — auto-restarts if `/api/health` fails
 - **6 named volumes** — uploads, exports, logs, data, backups, models persist across restarts
+- **Prometheus** — metrics collection at `http://localhost:9090`
+- **Grafana** — pre-built dashboards at `http://localhost:3000` (admin/admin)
+- **Jaeger** — distributed tracing UI at `http://localhost:16686`
 
 ### Prometheus Metrics
 
@@ -673,6 +789,7 @@ Hooks: trailing whitespace, EOF fixer, YAML/TOML check, large file guard, merge 
 - [ ] Set `DB_BACKUP_KEEP_DAYS` for backup retention policy
 - [ ] Review `LOG_LEVEL` (recommend `WARNING` for production)
 - [ ] Set up Prometheus scraping for `/metrics` endpoint
+- [ ] Configure Grafana alerts for Azure budget thresholds
 - [ ] Use `docker-compose up -d` for containerized deployment
 - [ ] Enable GitHub Actions CI on your repository
 

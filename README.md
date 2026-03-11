@@ -20,6 +20,7 @@
 - [API Reference](#api-reference)
 - [OCR Pipeline](#ocr-pipeline)
 - [Database](#database)
+- [Observability](#observability)
 - [Testing](#testing)
 - [Deployment](#deployment)
 - [Contributing](#contributing)
@@ -48,7 +49,7 @@
 - **6-Layer Azure Cost Defense** — image quality gate, local-first skip, daily/monthly limits, budget pacing, image cache, model strategy selection
 - **Security Hardening** — CSP headers, rate limiting (10 scan / 30 general RPM), API key protection, magic-byte file validation, path traversal guards
 - **Database** — SQLite WAL with connection pooling, versioned schema migrations, daily auto-backups. Optional PostgreSQL drop-in swap.
-- **Observability** — Prometheus metrics (`/metrics`), rotating file + console logging, per-stage processing logs, dashboard with parallel DB queries
+- **Observability** — Prometheus metrics (`/metrics`), **OpenTelemetry distributed tracing** (Jaeger UI), rotating file + console logging, per-stage processing logs, dashboard with parallel DB queries
 - **CI/CD** — GitHub Actions pipeline (lint + test matrix + Docker build), pre-commit hooks (ruff + formatting)
 - **Docker** — Multi-stage production image, non-root user, healthcheck, docker-compose with named volumes
 
@@ -115,6 +116,7 @@
 │   ├── db_postgres.py            #   PostgreSQL backend (drop-in swap)
 │   ├── logging_config.py         #   Rotating file + console log setup
 │   ├── metrics.py                #   Prometheus metrics (counters, gauges, histograms)
+│   ├── tracing.py                #   OpenTelemetry distributed tracing (auto/manual spans)
 │   │
 │   ├── api/
 │   │   └── routes.py             #   REST endpoint definitions
@@ -443,6 +445,124 @@ python tests/e2e/run_deep_test.py
 ```bash
 python scripts/generators/generate_test_receipts.py
 python scripts/generators/generate_edge_case_receipts.py
+```
+
+---
+
+## Observability
+
+This project ships with a **dual observability stack**: Prometheus for aggregate metrics and OpenTelemetry for per-request distributed tracing. Both are zero-overhead when disabled.
+
+### Prometheus Metrics (Aggregates — "how much, how fast?")
+
+Exposed at **`/metrics`**. See the [Deployment → Prometheus Metrics](#prometheus-metrics) section below for the full metric table and Prometheus scrape config.
+
+### OpenTelemetry Tracing (Per-Request — "why was THIS scan slow?")
+
+Distributed tracing instruments every stage of the OCR pipeline with spans, letting you drill into individual scans.
+
+#### Span Hierarchy
+
+```
+process_receipt                           ← root span (receipt_service)
+├── preprocess_image                      ← image enhancement (preprocessor)
+│   └── image_preprocessing               ← detailed stages (resize, denoise, etc.)
+├── hybrid_engine.route                   ← engine selection (hybrid_engine)
+│   └── azure_api_call                    ← Azure strategy execution
+│       ├── azure.optimize_image          ← image compression
+│       └── azure.analyze_document        ← actual Azure API call
+├── parse_receipt                         ← text → structured data (parser)
+│   └── receipt_parsing                   ← line grouping, pattern matching
+└── database_save                         ← SQLite/PostgreSQL write
+```
+
+Each span records attributes like `ocr.engine_used`, `ocr.detections`, `parse.items_found`, `azure.model`, `azure.pages_consumed`, and timing data.
+
+#### Quick Start (Docker — Recommended)
+
+```bash
+# Start the scanner + Jaeger in one command
+docker-compose up -d
+
+# Open Jaeger UI
+# → http://localhost:16686
+# → Select service "receipt-scanner" → Find Traces
+```
+
+Tracing is **enabled by default** in docker-compose. Jaeger collects spans via OTLP gRPC on port 4317.
+
+#### Quick Start (Local Development)
+
+```bash
+# 1. Start Jaeger (Docker required for Jaeger only)
+docker run -d --name jaeger \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  -e COLLECTOR_OTLP_ENABLED=true \
+  jaegertracing/all-in-one:1.62
+
+# 2. Enable tracing and start the app
+$env:OTEL_TRACING_ENABLED = "true"          # PowerShell
+# export OTEL_TRACING_ENABLED=true           # Linux/macOS
+python run.py
+
+# 3. Scan a receipt, then open Jaeger UI
+# → http://localhost:16686
+```
+
+#### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OTEL_TRACING_ENABLED` | `false` | Master switch — `true` to activate tracing |
+| `OTEL_EXPORTER_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint (Jaeger, Tempo, etc.) |
+| `OTEL_SERVICE_NAME` | `receipt-scanner` | Service name shown in Jaeger UI |
+
+#### How to Read a Trace
+
+1. **Open Jaeger UI** at `http://localhost:16686`
+2. Select **Service** → `receipt-scanner`
+3. Click **Find Traces** — you'll see one trace per receipt scan
+4. Click a trace to expand the waterfall view:
+   - **Wide bars** = slow stages (look for Azure API calls, preprocessing)
+   - **Red bars** = errors (exceptions are recorded on the span)
+   - Click any span to see **attributes** (engine used, detections count, confidence, timing)
+
+#### Trace Example — Slow Scan Debug
+
+```
+Trace: 3a2b1c... (1240ms total)
+├── process_receipt ───────────────────────────── 1240ms
+│   ├── preprocess_image ─────── 85ms   ← fast ✓
+│   ├── hybrid_engine.route ──── 920ms  ← bottleneck!
+│   │   └── azure_api_call ──── 890ms
+│   │       ├── azure.optimize_image ── 12ms
+│   │       └── azure.analyze_document ── 875ms  ← Azure API latency
+│   ├── parse_receipt ────────── 45ms   ← fast ✓
+│   └── database_save ───────── 8ms    ← fast ✓
+```
+
+**Diagnosis:** Azure API took 875ms (71% of total). Consider: caching more aggressively, switching to `read-only` strategy, or checking Azure region latency.
+
+#### Prometheus vs OpenTelemetry — When to Use Which
+
+| Question | Tool | Example |
+|----------|------|---------|
+| "What's our 99th percentile scan time?" | Prometheus | `histogram_quantile(0.99, ocr_scan_duration_seconds)` |
+| "How many Azure pages did we consume today?" | Prometheus | `azure_pages_daily` gauge |
+| "Why was scan #abc123 slow?" | OpenTelemetry | Jaeger: find trace, inspect span durations |
+| "Which OCR engine was used for a specific receipt?" | OpenTelemetry | Span attribute: `ocr.engine_used` |
+| "Are we hitting rate limits?" | Prometheus | `rate_limit_rejections_total` counter |
+| "What exact error did Azure return for this scan?" | OpenTelemetry | Span: `azure.analyze_document` → exception event |
+
+#### Disabling Tracing
+
+Tracing is **off by default** and has **zero performance overhead** when disabled. All span calls become no-ops.
+
+```bash
+# Disable tracing (default)
+OTEL_TRACING_ENABLED=false python run.py
+# or simply don't set the variable
 ```
 
 ---

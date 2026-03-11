@@ -103,9 +103,14 @@ async def lifespan(app: FastAPI):
 
     logger.info("   ✅ Hybrid OCR engine ready")
 
+    # ── OpenTelemetry Tracing ──
+    from app.tracing import setup_tracing, shutdown_tracing
+    setup_tracing(app)
+
     yield  # ← app runs here
 
     # ── SHUTDOWN ──
+    shutdown_tracing()
     from app.database import db
     db.shutdown()
     logger.info(f"🛑 {APP_TITLE} shutting down...")

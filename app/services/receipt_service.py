@@ -28,6 +28,9 @@ except Exception:
     def _record_scan(*a, **kw):
         pass
 
+from app.tracing import get_tracer, optional_span
+_tracer = get_tracer(__name__)
+
 
 class ReceiptService:
     """
@@ -90,6 +93,20 @@ class ReceiptService:
             "errors": [],
         }
 
+        # Start a root span for the entire pipeline
+        _pipeline_span = None
+        try:
+            from opentelemetry import trace as _otrace
+            _pipeline_span = _tracer.start_span(
+                "process_receipt",
+                attributes={"receipt.image_path": str(image_path)},
+            )
+            _ctx = _otrace.context_api.set_span_in_context(_pipeline_span)
+            _token = _otrace.context_api.attach(_ctx)
+        except Exception:
+            _pipeline_span = None
+            _token = None
+
         # ─── Step 0: Early cache check (skip preprocessing on cache hits) ──────
         # Compute hash of the raw upload BEFORE any heavy OpenCV work.
         # If it's a cache hit, we bypass Steps 2+3 entirely (~200-400ms saved).
@@ -135,8 +152,10 @@ class ReceiptService:
             try:
                 logger.debug("[Step 2/5] Preprocessing image...")
                 step_start = time.time()
-                processed_image, preprocess_meta = self.preprocessor.preprocess(saved_path)
-                preprocess_ms = int((time.time() - step_start) * 1000)
+                with optional_span(_tracer, "preprocess_image") as _pp_span:
+                    processed_image, preprocess_meta = self.preprocessor.preprocess(saved_path)
+                    preprocess_ms = int((time.time() - step_start) * 1000)
+                    _pp_span.set_attribute("preprocess.duration_ms", preprocess_ms)
                 logger.debug(f"[Step 2/5] Preprocessing done in {preprocess_ms}ms")
 
                 # Save processed image
@@ -179,12 +198,16 @@ class ReceiptService:
                 logger.debug(f"[Step 3/5] Running hybrid OCR engine (mode={self.hybrid_engine.mode})...")
 
                 # Pass the already-loaded color image to avoid reloading from disk
-                hybrid_result = self.hybrid_engine.process_image(
-                    image_path=saved_path,
-                    processed_image=processed_image,
-                    is_structured=is_structured,
-                    original_color=_color_img,
-                )
+                with optional_span(_tracer, "hybrid_ocr_engine", {"ocr.mode": self.hybrid_engine.mode}) as _ocr_span:
+                    hybrid_result = self.hybrid_engine.process_image(
+                        image_path=saved_path,
+                        processed_image=processed_image,
+                        is_structured=is_structured,
+                        original_color=_color_img,
+                    )
+                    _ocr_span.set_attribute("ocr.engine_used", hybrid_result.get("engine_used", "unknown"))
+                    _ocr_span.set_attribute("ocr.detections", len(hybrid_result.get("ocr_detections", [])))
+                    _ocr_span.set_attribute("ocr.time_ms", hybrid_result.get("ocr_time_ms", 0))
 
             engine_used = hybrid_result["engine_used"]
             ocr_results = hybrid_result["ocr_detections"]
@@ -234,19 +257,24 @@ class ReceiptService:
             step_start = time.time()
 
             # ── If Azure receipt model returned structured items, use them directly ──
-            if azure_structured and azure_structured.get("items"):
-                receipt_data = self._parse_azure_structured(
-                    azure_structured, ocr_results, is_structured
-                )
-                logger.info(
-                    f"[Step 4/5] Azure structured parse: "
-                    f"{receipt_data['total_items']} items"
-                )
-            else:
-                # ── Standard parse: OCR detections → parser (works for both Azure Read & EasyOCR) ──
-                receipt_data = self.parser.parse(ocr_results, is_structured=is_structured)
+            with optional_span(_tracer, "parse_receipt") as _parse_span:
+                if azure_structured and azure_structured.get("items"):
+                    receipt_data = self._parse_azure_structured(
+                        azure_structured, ocr_results, is_structured
+                    )
+                    _parse_span.set_attribute("parse.source", "azure_structured")
+                    logger.info(
+                        f"[Step 4/5] Azure structured parse: "
+                        f"{receipt_data['total_items']} items"
+                    )
+                else:
+                    # ── Standard parse: OCR detections → parser (works for both Azure Read & EasyOCR) ──
+                    receipt_data = self.parser.parse(ocr_results, is_structured=is_structured)
+                    _parse_span.set_attribute("parse.source", "ocr_detections")
 
-            parse_ms = int((time.time() - step_start) * 1000)
+                parse_ms = int((time.time() - step_start) * 1000)
+                _parse_span.set_attribute("parse.duration_ms", parse_ms)
+                _parse_span.set_attribute("parse.items_found", receipt_data.get("total_items", 0))
             logger.debug(
                 f"[Step 4/5] Parse done in {parse_ms}ms → "
                 f"{receipt_data['total_items']} items, status={receipt_data['processing_status']}"
@@ -375,11 +403,12 @@ class ReceiptService:
         # ─── Step 5: Save to database ────────────────────────────────────
         try:
             logger.debug("[Step 5/5] Saving to database...")
-            receipt_id = self.db.create_receipt(
-                receipt_number=receipt_data["receipt_id"],
-                image_path=saved_path,
-                processed_image_path=processed_path,
-            )
+            with optional_span(_tracer, "database_save") as _db_span:
+                receipt_id = self.db.create_receipt(
+                    receipt_number=receipt_data["receipt_id"],
+                    image_path=saved_path,
+                    processed_image_path=processed_path,
+                )
 
             # Add product unit info to items (reuse catalog_full from Step 4c if available)
             if not catalog_full:
@@ -430,6 +459,20 @@ class ReceiptService:
                 items_count=rd.get("total_items", 0),
                 avg_confidence=rd.get("avg_confidence", 0),
             )
+        except Exception:
+            pass
+
+        # ── End pipeline tracing span ──
+        try:
+            if _pipeline_span is not None:
+                _pipeline_span.set_attribute("receipt.success", result["success"])
+                _pipeline_span.set_attribute("receipt.total_ms", int((time.time() - total_start) * 1000))
+                rd = result.get("receipt_data") or {}
+                _pipeline_span.set_attribute("receipt.items_count", rd.get("total_items", 0))
+                _pipeline_span.end()
+            if _token is not None:
+                from opentelemetry import trace as _otrace2
+                _otrace2.context_api.detach(_token)
         except Exception:
             pass
 

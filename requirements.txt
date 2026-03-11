@@ -29,6 +29,16 @@ python-dotenv==1.2.1
 # ─── Observability ───────────────────────────────────────
 prometheus-fastapi-instrumentator==7.0.2
 
+# ─── Distributed Tracing (OpenTelemetry) ─────────────────
+# Enable with: OTEL_TRACING_ENABLED=true
+# Zero overhead when disabled (default).
+opentelemetry-api==1.29.0
+opentelemetry-sdk==1.29.0
+opentelemetry-exporter-otlp-proto-grpc==1.29.0
+opentelemetry-instrumentation-fastapi==0.50b0
+opentelemetry-instrumentation-requests==0.50b0
+opentelemetry-instrumentation-sqlite3==0.50b0
+
 # ─── Testing (dev) ───────────────────────────────────────
 pytest==9.0.2
 httpx==0.28.1

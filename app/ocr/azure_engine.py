@@ -24,6 +24,9 @@ except Exception:
     def _record_azure_call(model="", success=True):
         pass
 
+from app.tracing import get_tracer, optional_span
+_tracer = get_tracer(__name__)
+
 # ── Lazy imports — only loaded when Azure is actually used ──────────────────
 _azure_available = None  # None = not checked yet
 
@@ -167,23 +170,29 @@ class AzureOCREngine:
         logger.info(f"Azure Receipt extraction starting: {image_path}")
 
         # Optimize image before upload (saves bandwidth + time)
-        image_data = self._optimize_image_for_upload(image_path)
+        with optional_span(_tracer, "azure.optimize_image") as _opt_span:
+            image_data = self._optimize_image_for_upload(image_path)
+            _opt_span.set_attribute("image.size_bytes", len(image_data))
 
         success = False
-        try:
-            poller = self.client.begin_analyze_document(
-                model_id="prebuilt-receipt",
-                body=image_data,
-                content_type="application/octet-stream",
-            )
-            result = poller.result()
-            success = True
-        except Exception as e:
-            logger.error(f"Azure Receipt extraction failed: {e}")
-            # Track failed call too (Azure still bills for some errors)
-            get_usage_tracker().record_call("prebuilt-receipt", pages=1, success=False)
-            _record_azure_call(model="prebuilt-receipt", success=False)
-            raise
+        with optional_span(_tracer, "azure.analyze_document", {"azure.model": "prebuilt-receipt"}) as _api_span:
+            try:
+                poller = self.client.begin_analyze_document(
+                    model_id="prebuilt-receipt",
+                    body=image_data,
+                    content_type="application/octet-stream",
+                )
+                result = poller.result()
+                success = True
+                _api_span.set_attribute("azure.success", True)
+            except Exception as e:
+                _api_span.set_attribute("azure.success", False)
+                _api_span.record_exception(e)
+                logger.error(f"Azure Receipt extraction failed: {e}")
+                # Track failed call too (Azure still bills for some errors)
+                get_usage_tracker().record_call("prebuilt-receipt", pages=1, success=False)
+                _record_azure_call(model="prebuilt-receipt", success=False)
+                raise
 
         elapsed_ms = int((time.time() - start) * 1000)
 
@@ -225,22 +234,28 @@ class AzureOCREngine:
         logger.info(f"Azure Read extraction starting: {image_path}")
 
         # Optimize image before upload
-        image_data = self._optimize_image_for_upload(image_path)
+        with optional_span(_tracer, "azure.optimize_image") as _opt_span:
+            image_data = self._optimize_image_for_upload(image_path)
+            _opt_span.set_attribute("image.size_bytes", len(image_data))
 
         success = False
-        try:
-            poller = self.client.begin_analyze_document(
-                model_id="prebuilt-read",
-                body=image_data,
-                content_type="application/octet-stream",
-            )
-            result = poller.result()
-            success = True
-        except Exception as e:
-            logger.error(f"Azure Read extraction failed: {e}")
-            get_usage_tracker().record_call("prebuilt-read", pages=1, success=False)
-            _record_azure_call(model="prebuilt-read", success=False)
-            raise
+        with optional_span(_tracer, "azure.analyze_document", {"azure.model": "prebuilt-read"}) as _api_span:
+            try:
+                poller = self.client.begin_analyze_document(
+                    model_id="prebuilt-read",
+                    body=image_data,
+                    content_type="application/octet-stream",
+                )
+                result = poller.result()
+                success = True
+                _api_span.set_attribute("azure.success", True)
+            except Exception as e:
+                _api_span.set_attribute("azure.success", False)
+                _api_span.record_exception(e)
+                logger.error(f"Azure Read extraction failed: {e}")
+                get_usage_tracker().record_call("prebuilt-read", pages=1, success=False)
+                _record_azure_call(model="prebuilt-read", success=False)
+                raise
 
         elapsed_ms = int((time.time() - start) * 1000)
 
@@ -274,19 +289,24 @@ class AzureOCREngine:
         start = time.time()
         success = False
 
-        try:
-            poller = self.client.begin_analyze_document(
-                model_id=model,
-                body=image_bytes,
-                content_type="application/octet-stream",
-            )
-            result = poller.result()
-            success = True
-        except Exception as e:
-            logger.error(f"Azure extraction from bytes failed: {e}")
-            get_usage_tracker().record_call(model, pages=1, success=False)
-            _record_azure_call(model=model, success=False)
-            raise
+        with optional_span(_tracer, "azure.analyze_document", {"azure.model": model}) as _api_span:
+            try:
+                poller = self.client.begin_analyze_document(
+                    model_id=model,
+                    body=image_bytes,
+                    content_type="application/octet-stream",
+                )
+                result = poller.result()
+                success = True
+                _api_span.set_attribute("azure.success", True)
+                _api_span.set_attribute("azure.input_bytes", len(image_bytes))
+            except Exception as e:
+                _api_span.set_attribute("azure.success", False)
+                _api_span.record_exception(e)
+                logger.error(f"Azure extraction from bytes failed: {e}")
+                get_usage_tracker().record_call(model, pages=1, success=False)
+                _record_azure_call(model=model, success=False)
+                raise
 
         elapsed_ms = int((time.time() - start) * 1000)
 

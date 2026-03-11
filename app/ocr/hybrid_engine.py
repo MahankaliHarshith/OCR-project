@@ -38,7 +38,10 @@ import time
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
+from app.tracing import get_tracer, optional_span
+
 logger = logging.getLogger(__name__)
+_tracer = get_tracer(__name__)
 
 
 class HybridOCREngine:
@@ -168,12 +171,16 @@ class HybridOCREngine:
         """
         total_start = time.time()
 
-        if self.mode == "local":
-            return self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color)
-        elif self.mode == "azure":
-            return self._run_azure_pipeline(image_path, processed_image, is_structured)
-        else:  # "auto" — recommended
-            return self._run_auto_pipeline(image_path, processed_image, is_structured, original_color=original_color)
+        with optional_span(_tracer, "hybrid_engine.route", {"ocr.mode": self.mode}) as span:
+            if self.mode == "local":
+                result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color)
+            elif self.mode == "azure":
+                result = self._run_azure_pipeline(image_path, processed_image, is_structured)
+            else:  # "auto" — recommended
+                result = self._run_auto_pipeline(image_path, processed_image, is_structured, original_color=original_color)
+            span.set_attribute("ocr.engine_used", result.get("engine_used", "unknown"))
+            span.set_attribute("ocr.detections", len(result.get("ocr_detections", [])))
+            return result
 
     def _run_auto_pipeline(
         self,
@@ -342,50 +349,55 @@ class HybridOCREngine:
             try:
                 attempt_start = time.time()
 
-                if AZURE_MODEL_STRATEGY == "receipt-only":
-                    # Use receipt model (more expensive but structured output)
-                    logger.info("[Hybrid] Azure: Using receipt model (receipt-only strategy)")
-                    azure_result = self.azure_engine.extract_receipt_structured(image_path)
-                    azure_items = azure_result.get("items", [])
-                    azure_detections = azure_result.get("ocr_detections", [])
-                    model_used = "azure-receipt"
-                    metadata["azure_pages_used"] = 1
+                with optional_span(_tracer, "azure_api_call", {"azure.strategy": AZURE_MODEL_STRATEGY}) as _az_span:
+                    if AZURE_MODEL_STRATEGY == "receipt-only":
+                        # Use receipt model (more expensive but structured output)
+                        logger.info("[Hybrid] Azure: Using receipt model (receipt-only strategy)")
+                        azure_result = self.azure_engine.extract_receipt_structured(image_path)
+                        azure_items = azure_result.get("items", [])
+                        azure_detections = azure_result.get("ocr_detections", [])
+                        model_used = "azure-receipt"
+                        metadata["azure_pages_used"] = 1
 
-                elif AZURE_MODEL_STRATEGY == "receipt-then-read":
-                    # Legacy: try receipt, fall back to read (CAN BURN 2 PAGES!)
-                    logger.info("[Hybrid] Azure: receipt-then-read strategy (may use 2 pages!)")
-                    azure_result = self.azure_engine.extract_receipt_structured(image_path)
-                    azure_items = azure_result.get("items", [])
-                    azure_detections = azure_result.get("ocr_detections", [])
-                    model_used = "azure-receipt"
-                    metadata["azure_pages_used"] = 1
+                    elif AZURE_MODEL_STRATEGY == "receipt-then-read":
+                        # Legacy: try receipt, fall back to read (CAN BURN 2 PAGES!)
+                        logger.info("[Hybrid] Azure: receipt-then-read strategy (may use 2 pages!)")
+                        azure_result = self.azure_engine.extract_receipt_structured(image_path)
+                        azure_items = azure_result.get("items", [])
+                        azure_detections = azure_result.get("ocr_detections", [])
+                        model_used = "azure-receipt"
+                        metadata["azure_pages_used"] = 1
 
-                    # If receipt model found too few items, try read model (2nd page!)
-                    if len(azure_items) < AZURE_RECEIPT_MIN_ITEMS:
-                        can_call_read = True
-                        try:
-                            usage_check_2 = self.usage_tracker.can_call_azure()
-                            can_call_read = usage_check_2.get("allowed", False) if isinstance(usage_check_2, dict) else usage_check_2
-                        except Exception:
-                            pass
+                        # If receipt model found too few items, try read model (2nd page!)
+                        if len(azure_items) < AZURE_RECEIPT_MIN_ITEMS:
+                            can_call_read = True
+                            try:
+                                usage_check_2 = self.usage_tracker.can_call_azure()
+                                can_call_read = usage_check_2.get("allowed", False) if isinstance(usage_check_2, dict) else usage_check_2
+                            except Exception:
+                                pass
 
-                        if can_call_read:
-                            read_detections = self.azure_engine.extract_text_read(image_path)
-                            if read_detections:
-                                azure_detections = read_detections
-                                model_used = "azure-read"
-                                metadata["azure_pages_used"] = 2
-                                logger.warning("[Hybrid] ⚠ Used 2 Azure pages (receipt+read)")
+                            if can_call_read:
+                                read_detections = self.azure_engine.extract_text_read(image_path)
+                                if read_detections:
+                                    azure_detections = read_detections
+                                    model_used = "azure-read"
+                                    metadata["azure_pages_used"] = 2
+                                    logger.warning("[Hybrid] ⚠ Used 2 Azure pages (receipt+read)")
 
-                else:
-                    # DEFAULT: read-only — cheapest, best for handwritten ($0.0015/page)
-                    logger.info("[Hybrid] Azure: Using read model (read-only strategy — most efficient)")
-                    read_detections = self.azure_engine.extract_text_read(image_path)
-                    azure_result = {"items": [], "ocr_detections": read_detections}
-                    azure_items = []
-                    azure_detections = read_detections
-                    model_used = "azure-read"
-                    metadata["azure_pages_used"] = 1
+                    else:
+                        # DEFAULT: read-only — cheapest, best for handwritten ($0.0015/page)
+                        logger.info("[Hybrid] Azure: Using read model (read-only strategy — most efficient)")
+                        read_detections = self.azure_engine.extract_text_read(image_path)
+                        azure_result = {"items": [], "ocr_detections": read_detections}
+                        azure_items = []
+                        azure_detections = read_detections
+                        model_used = "azure-read"
+                        metadata["azure_pages_used"] = 1
+
+                    _az_span.set_attribute("azure.model_used", model_used)
+                    _az_span.set_attribute("azure.pages_consumed", metadata["azure_pages_used"])
+                    _az_span.set_attribute("azure.detections", len(azure_detections))
 
                 attempt_ms = int((time.time() - attempt_start) * 1000)
 

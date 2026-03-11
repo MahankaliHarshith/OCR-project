@@ -22,8 +22,10 @@ from app.config import (
     IMAGE_MIN_WIDTH,
     IMAGE_MIN_HEIGHT,
 )
+from app.tracing import get_tracer, optional_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer(__name__)
 
 
 class ImagePreprocessor:
@@ -57,6 +59,17 @@ class ImagePreprocessor:
         metadata = {"stages": [], "warnings": []}
 
         logger.debug(f"Starting preprocessing pipeline for: {image_path}")
+
+        # Wrap entire pipeline in a span
+        _preprocess_span = None
+        try:
+            from opentelemetry import trace as _otrace
+            _preprocess_span = _tracer.start_span(
+                "image_preprocessing",
+                attributes={"image.path": str(image_path)},
+            )
+        except Exception:
+            pass
 
         # 1. Load image
         img = self._load_image(image_path)
@@ -214,6 +227,16 @@ class ImagePreprocessor:
         elapsed_ms = int((time.time() - start_time) * 1000)
         metadata["processing_time_ms"] = elapsed_ms
         metadata["processed_size"] = (enhanced.shape[1], enhanced.shape[0])
+
+        # End preprocessing span
+        try:
+            if _preprocess_span is not None:
+                _preprocess_span.set_attribute("preprocess.duration_ms", elapsed_ms)
+                _preprocess_span.set_attribute("preprocess.stages", len(metadata["stages"]))
+                _preprocess_span.set_attribute("preprocess.quality_score", quality["score"])
+                _preprocess_span.end()
+        except Exception:
+            pass
 
         logger.info(
             f"Image preprocessed in {elapsed_ms}ms | "

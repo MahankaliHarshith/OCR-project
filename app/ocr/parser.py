@@ -11,8 +11,10 @@ from difflib import get_close_matches
 from datetime import datetime
 
 from app.config import FUZZY_MATCH_CUTOFF, FUZZY_MAX_RESULTS
+from app.tracing import get_tracer, optional_span
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer(__name__)
 
 
 class ReceiptParser:
@@ -191,6 +193,16 @@ class ReceiptParser:
         Returns:
             Structured receipt data dictionary.
         """
+        # Start tracing span for receipt parsing
+        _parse_span = None
+        try:
+            _parse_span = _tracer.start_span("receipt_parsing", attributes={
+                "parse.detections_in": len(ocr_results),
+                "parse.is_structured": is_structured,
+            })
+        except Exception:
+            pass
+
         items = []
         unparsed_lines = []
         total_line_text = None       # captured total line (for bill verification)
@@ -692,6 +704,18 @@ class ReceiptParser:
                     f"  ⚠️ TOTAL MISMATCH: OCR={total_qty_ocr}, computed={computed_total}, "
                     f"diff={abs(total_qty_ocr - computed_total)}"
                 )
+
+        # End parsing span with result attributes
+        try:
+            if _parse_span is not None:
+                _parse_span.set_attribute("parse.items_found", len(items))
+                _parse_span.set_attribute("parse.unparsed_lines", len(unparsed_lines))
+                _parse_span.set_attribute("parse.avg_confidence", round(avg_confidence, 4))
+                _parse_span.set_attribute("parse.needs_review", needs_review)
+                _parse_span.set_attribute("parse.has_total_verification", total_qty_ocr is not None)
+                _parse_span.end()
+        except Exception:
+            pass
 
         return {
             "receipt_id": receipt_number,

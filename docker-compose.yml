@@ -13,6 +13,12 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
+      - OTEL_TRACING_ENABLED=${OTEL_TRACING_ENABLED:-true}
+      - OTEL_EXPORTER_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=receipt-scanner
+    depends_on:
+      jaeger:
+        condition: service_started
     volumes:
       # Persist uploaded images, exports, and database across restarts
       - scanner-uploads:/app/uploads
@@ -28,6 +34,20 @@ services:
       timeout: 10s
       start_period: 90s
       retries: 3
+
+  # ─── Jaeger — Distributed Tracing UI ──────────────────
+  # Collects OpenTelemetry spans and provides a rich query UI
+  # Dashboard: http://localhost:16686
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    container_name: jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC receiver
+      - "4318:4318"     # OTLP HTTP receiver
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
 
 volumes:
   scanner-uploads:

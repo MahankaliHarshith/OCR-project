@@ -1,7 +1,15 @@
 """
 Image Preprocessing Module using OpenCV.
-Handles image enhancement, perspective correction, and quality validation
-to optimize receipt images for OCR processing.
+Handles document scanning, image enhancement, perspective correction,
+and quality validation to optimize receipt images for OCR processing.
+
+Document Scanner Pipeline (inspired by CamScanner / Adobe Scan):
+    1. Edge Detection → Contour Detection → Document Isolation
+    2. Perspective Transform (4-point warp to flat, top-down view)
+    3. Adaptive enhancement for crisp, OCR-ready output
+
+This dramatically improves OCR speed (fewer pixels, no background noise)
+and accuracy (undistorted text, clean black-on-white input).
 """
 
 import cv2
@@ -9,7 +17,7 @@ import numpy as np
 import logging
 import time
 from pathlib import Path
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, List
 from PIL import Image, ExifTags
 
 from app.config import (
@@ -27,14 +35,28 @@ from app.tracing import get_tracer, optional_span
 logger = logging.getLogger(__name__)
 _tracer = get_tracer(__name__)
 
+# ─── Document Scanner Constants ──────────────────────────────────────────────
+SCAN_DETECT_SIZE = 500       # Downscale to this height for fast contour detection
+SCAN_MIN_AREA_RATIO = 0.15  # Contour must cover ≥15% of image area
+SCAN_APPROX_EPSILON = 0.02  # Contour approximation epsilon (2% of perimeter)
+SCAN_ASPECT_RATIO_MAX = 0.40  # Max allowed aspect ratio change from perspective warp
+SCAN_MIN_RESULT_DIM = 250   # Minimum output dimension after perspective warp (px)
+
 
 class ImagePreprocessor:
     """
     Preprocesses receipt images for optimal OCR accuracy.
 
-    Pipeline:
-        Raw Image → Grayscale → Gaussian Blur → Adaptive Threshold
-        → Edge Detection → Perspective Transform → CLAHE → Enhanced Image
+    Document Scanner Pipeline (like mobile scanning apps):
+        Raw Image → Document Detection (edge + contour) → Perspective
+        Transform → Grayscale → Deskew → Enhancement → CLAHE → Output
+
+    Key improvements over basic preprocessing:
+        - Automatic document/receipt boundary detection
+        - Perspective correction to flatten camera-angled photos
+        - Background removal (crops to just the receipt)
+        - Adaptive thresholding for scan-like crisp output
+        - Downscaled contour detection for speed (500px processing)
     """
 
     def __init__(self):
@@ -48,6 +70,13 @@ class ImagePreprocessor:
         Complete preprocessing pipeline for a receipt image.
         Optimized for HANDWRITTEN text on paper — avoids aggressive
         binarization that destroys ink strokes.
+
+        Document Scanner Pipeline (NEW):
+            1. Load + EXIF correction
+            2. Document Detection + Perspective Correction (EARLY — before enhancement)
+            3. Grayscale + Deskew
+            4. Quality assessment
+            5. Gentle enhancement (denoise → sharpen → CLAHE → shadow fix)
 
         Args:
             image_path: Path to the input image file.
@@ -74,18 +103,43 @@ class ImagePreprocessor:
         # 1. Load image
         img = self._load_image(image_path)
         metadata["original_size"] = (img.shape[1], img.shape[0])
-        logger.debug(f"  [1/6] Image loaded: {img.shape[1]}x{img.shape[0]}, channels={img.shape[2] if len(img.shape) > 2 else 1}")
+        logger.debug(f"  [1/7] Image loaded: {img.shape[1]}x{img.shape[0]}, channels={img.shape[2] if len(img.shape) > 2 else 1}")
 
         # 2. Resize if too large
         img = self._resize_if_needed(img)
         metadata["stages"].append("resize")
+        logger.debug(f"  [2/7] Resized to: {img.shape[1]}x{img.shape[0]}")
+
+        # ═══════════════════════════════════════════════════════════════════
+        # 2a. DOCUMENT SCANNER — Detect receipt edges & perspective-correct
+        # ═══════════════════════════════════════════════════════════════════
+        # This is the KEY technique from mobile scanner apps (CamScanner,
+        # Adobe Scan, etc.). By detecting the document boundary and warping
+        # to a flat top-down view BEFORE any enhancement, we:
+        #   • Remove background noise → fewer false OCR detections
+        #   • Correct perspective distortion → undistorted characters
+        #   • Crop to just the receipt → fewer pixels → faster OCR
+        scan_start = time.time()
+        scanned = self._scan_document(img)
+        scan_ms = int((time.time() - scan_start) * 1000)
+
+        if scanned is not None:
+            img = scanned
+            metadata["stages"].append("document_scan")
+            metadata["scanned_size"] = (img.shape[1], img.shape[0])
+            logger.debug(
+                f"  [2a/7] ✓ Document scanned: perspective corrected to "
+                f"{img.shape[1]}x{img.shape[0]} ({scan_ms}ms)"
+            )
+        else:
+            logger.debug(f"  [2a/7] Document scan skipped — no clear boundary found ({scan_ms}ms)")
+
         metadata["_color_image"] = img.copy()   # keep resized color for OCR color pass
-        logger.debug(f"  [2/6] Resized to: {img.shape[1]}x{img.shape[0]}")
 
         # 3. Convert to grayscale
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         metadata["stages"].append("grayscale")
-        logger.debug("  [3/6] Converted to grayscale")
+        logger.debug("  [3/7] Converted to grayscale")
 
         # 3a. Deskew: detect and correct small rotation (<15°)
         # For same-type receipts: only deskew if angle is significant (> 1.5°)
@@ -96,15 +150,15 @@ class ImagePreprocessor:
             # Also rotate the color image so perspective correction uses aligned version
             img = self._rotate_image(img, -skew_angle)
             metadata["stages"].append("deskew")
-            logger.debug(f"  [3a/6] Deskewed by {skew_angle:.1f}°")
+            logger.debug(f"  [3a/7] Deskewed by {skew_angle:.1f}°")
         elif abs(skew_angle) > 0.5:
-            logger.debug(f"  [3a/6] Minor skew {skew_angle:.1f}° detected but below correction threshold")
+            logger.debug(f"  [3a/7] Minor skew {skew_angle:.1f}° detected but below correction threshold")
 
         # 4. Quality assessment
         quality = self._assess_quality(gray)
         metadata["quality"] = quality
         logger.debug(
-            f"  [4/6] Quality: score={quality['score']:.1f}, "
+            f"  [4/7] Quality: score={quality['score']:.1f}, "
             f"blurry={quality['is_blurry']}, brightness={quality['mean_brightness']:.0f}, "
             f"contrast={quality['contrast']:.1f}"
         )
@@ -116,20 +170,20 @@ class ImagePreprocessor:
         # a) Light Gaussian blur to reduce camera noise only
         denoised = cv2.GaussianBlur(gray, GAUSSIAN_BLUR_KERNEL, 0)
         metadata["stages"].append("light_denoise")
-        logger.debug(f"  [5/6] Light Gaussian blur (kernel={GAUSSIAN_BLUR_KERNEL})")
+        logger.debug(f"  [5/7] Light Gaussian blur (kernel={GAUSSIAN_BLUR_KERNEL})")
 
         # b) If image is blurry, apply sharpening to recover ink edges
         if quality["is_blurry"]:
             denoised = self._sharpen(denoised)
             metadata["stages"].append("sharpening")
-            logger.debug("  [5a/6] Sharpening applied (blurry image)")
+            logger.debug("  [5a/7] Sharpening applied (blurry image)")
 
         # c) Bilateral filter to reduce noise while preserving ink edges
         #    Only on noisy images (low quality score + not already blurry-sharpened)
         if quality["score"] < 40 and not quality["is_blurry"]:
             denoised = cv2.bilateralFilter(denoised, 9, 75, 75)
             metadata["stages"].append("bilateral_filter")
-            logger.debug("  [5a/6] Bilateral filter applied (noisy image)")
+            logger.debug("  [5b/7] Bilateral filter applied (noisy image)")
 
         # d) Morphological closing — only for BLURRY images with broken ink
         # Clear handwriting should NOT be morphed: closing merges adjacent chars
@@ -138,9 +192,9 @@ class ImagePreprocessor:
             morph_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
             denoised = cv2.morphologyEx(denoised, cv2.MORPH_CLOSE, morph_kernel)
             metadata["stages"].append("morph_close")
-            logger.debug("  [5c/6] Morphological closing (broken ink strokes — blurry image)")
+            logger.debug("  [5c/7] Morphological closing (broken ink strokes — blurry image)")
         else:
-            logger.debug("  [5c/6] Morphological closing SKIPPED (clear image — preserving char separation)")
+            logger.debug("  [5c/7] Morphological closing SKIPPED (clear image — preserving char separation)")
 
         # e) CLAHE contrast enhancement — makes ink stand out from paper
         # Use stronger CLAHE for dark images to better separate ink from paper
@@ -149,11 +203,11 @@ class ImagePreprocessor:
             dark_clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT * 1.5, tileGridSize=CLAHE_TILE_GRID_SIZE)
             enhanced = dark_clahe.apply(denoised)
             metadata["stages"].append("clahe_enhancement_strong")
-            logger.debug(f"  [5e/6] Strong CLAHE for dark image (clip={CLAHE_CLIP_LIMIT * 1.5:.1f})")
+            logger.debug(f"  [5e/7] Strong CLAHE for dark image (clip={CLAHE_CLIP_LIMIT * 1.5:.1f})")
         else:
             enhanced = self.clahe.apply(denoised)
             metadata["stages"].append("clahe_enhancement")
-            logger.debug("  [5e/6] CLAHE contrast enhancement applied")
+            logger.debug("  [5e/7] CLAHE contrast enhancement applied")
 
         # f) Shadow / gradient illumination normalization
         # Divides by a heavily-blurred background estimate to flatten uneven
@@ -169,13 +223,13 @@ class ImagePreprocessor:
                 if _norm.std() >= enhanced.std():
                     enhanced = _norm
                     metadata["stages"].append("shadow_normalize")
-                    logger.debug(f"  [5f/6] Shadow normalization applied (bg_std={_bg_std:.1f})")
+                    logger.debug(f"  [5f/7] Shadow normalization applied (bg_std={_bg_std:.1f})")
                 else:
-                    logger.debug(f"  [5f/6] Shadow normalization skipped (no std-dev gain, bg_std={_bg_std:.1f})")
+                    logger.debug(f"  [5f/7] Shadow normalization skipped (no std-dev gain, bg_std={_bg_std:.1f})")
             else:
-                logger.debug(f"  [5f/6] Shadow normalization skipped (uniform illumination, bg_std={_bg_std:.1f})")
+                logger.debug(f"  [5f/7] Shadow normalization skipped (uniform illumination, bg_std={_bg_std:.1f})")
         except Exception as _sn_err:
-            logger.debug(f"  [5f/6] Shadow normalization error (skipped): {_sn_err}")
+            logger.debug(f"  [5f/7] Shadow normalization error (skipped): {_sn_err}")
 
         # g) Brightness normalization — handle shadows / uneven lighting
         mean_val = np.mean(enhanced)
@@ -186,21 +240,21 @@ class ImagePreprocessor:
             beta = 60
             enhanced = cv2.convertScaleAbs(enhanced, alpha=alpha, beta=beta)
             metadata["stages"].append("brightness_correction_strong")
-            logger.debug(f"  [5g/6] Strong brightness correction (very dark image, mean={mean_val:.0f})")
+            logger.debug(f"  [5g/7] Strong brightness correction (very dark image, mean={mean_val:.0f})")
         elif mean_val < 120:
             # Moderately dark — standard brighten
             alpha = 1.4  # Contrast
             beta = 40    # Brightness
             enhanced = cv2.convertScaleAbs(enhanced, alpha=alpha, beta=beta)
             metadata["stages"].append("brightness_correction")
-            logger.debug(f"  [5g/6] Brightness correction (dark image, mean={mean_val:.0f})")
+            logger.debug(f"  [5g/7] Brightness correction (dark image, mean={mean_val:.0f})")
         elif mean_val > 200:
             # Image is washed out — increase contrast
             alpha = 1.6
             beta = -30
             enhanced = cv2.convertScaleAbs(enhanced, alpha=alpha, beta=beta)
             metadata["stages"].append("contrast_correction")
-            logger.debug(f"  [5g/6] Contrast correction (bright image, mean={mean_val:.0f})")
+            logger.debug(f"  [5g/7] Contrast correction (bright image, mean={mean_val:.0f})")
 
         # g2) Low-contrast boost: if ink and paper have similar intensity,
         # stretch the histogram to separate them for better OCR recognition.
@@ -213,16 +267,36 @@ class ImagePreprocessor:
                     0, 255
                 ).astype(np.uint8)
                 metadata["stages"].append("contrast_stretch")
-                logger.debug(f"  [5g2/6] Contrast stretch applied (contrast={contrast_val:.1f})")
+                logger.debug(f"  [5g2/7] Contrast stretch applied (contrast={contrast_val:.1f})")
 
-        # 6. Try perspective correction (optional, often skipped)
-        corrected = self._perspective_correct(enhanced, img)
-        if corrected is not None:
-            enhanced = corrected
-            metadata["stages"].append("perspective_correction")
-            logger.debug("  [6/6] Perspective correction applied")
+        # 6. Adaptive thresholding (scan-like output) — OPTIONAL
+        # Applied only when the image is already well-lit and has good contrast.
+        # For printed receipts this creates crisp black-on-white like scanner apps.
+        # SKIPPED for blurry/dark images where it would destroy handwriting detail.
+        if (not quality["is_blurry"]
+                and not quality.get("is_too_dark", False)
+                and quality.get("contrast", 0) >= 40
+                and "document_scan" in metadata["stages"]):
+            # Only apply after successful document scan (flat, well-cropped image)
+            adaptive = cv2.adaptiveThreshold(
+                enhanced, 255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                ADAPTIVE_THRESH_BLOCK_SIZE, ADAPTIVE_THRESH_C
+            )
+            # Verify adaptive didn't destroy too much content
+            # (white ratio > 95% means it killed the text)
+            white_ratio = np.mean(adaptive > 200) * 100
+            if 10 < white_ratio < 95:
+                enhanced = adaptive
+                metadata["stages"].append("adaptive_threshold")
+                logger.debug(f"  [6/7] Adaptive threshold applied (scan-like output, white={white_ratio:.0f}%)")
+            else:
+                logger.debug(f"  [6/7] Adaptive threshold rejected (white={white_ratio:.0f}%, would destroy content)")
         else:
-            logger.debug("  [6/6] Perspective correction skipped")
+            logger.debug("  [6/7] Adaptive threshold skipped (conditions not met)")
+
+        # 7. Final summary
 
         elapsed_ms = int((time.time() - start_time) * 1000)
         metadata["processing_time_ms"] = elapsed_ms
@@ -426,6 +500,157 @@ class ImagePreprocessor:
             "contrast": round(contrast, 1),
             "is_low_contrast": is_low_contrast,
         }
+
+    def _scan_document(self, color_img: np.ndarray) -> Optional[np.ndarray]:
+        """
+        Document scanner — detects receipt/document boundaries and applies
+        perspective transform to produce a flat, top-down view.
+
+        This is the core technique used by CamScanner, Adobe Scan, etc:
+            1. Downscale to ~500px for fast processing
+            2. Morphological close to merge text into solid blocks
+            3. Edge detection (Canny) on the morphed image
+            4. Find largest 4-sided contour (the document)
+            5. Perspective warp to flat rectangle
+
+        Speed: Detection runs on 500px image (~5ms), warp on full-res.
+        Accuracy: Removes background, corrects perspective distortion.
+
+        Args:
+            color_img: Original BGR color image.
+
+        Returns:
+            Perspective-corrected color image, or None if no document found.
+        """
+        try:
+            h, w = color_img.shape[:2]
+            img_area = h * w
+
+            # ── Step 1: Downscale for fast contour detection ──
+            # Scanner apps process at 500px, multiply points back to full-res
+            ratio = 1.0
+            if max(h, w) > SCAN_DETECT_SIZE:
+                ratio = max(h, w) / SCAN_DETECT_SIZE
+                small = cv2.resize(
+                    color_img,
+                    (int(w / ratio), int(h / ratio)),
+                    interpolation=cv2.INTER_AREA
+                )
+            else:
+                small = color_img.copy()
+
+            # ── Step 2: Grayscale + Gaussian blur ──
+            small_gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            small_blur = cv2.GaussianBlur(small_gray, (5, 5), 0)
+
+            # ── Step 3: Morphological close to remove text, leaving document outline ──
+            # This is the KEY trick from scanner apps: closing merges text into
+            # solid blocks so the document boundary becomes the dominant contour
+            morph_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+            morphed = cv2.morphologyEx(small_blur, cv2.MORPH_CLOSE, morph_kernel, iterations=3)
+
+            # ── Step 4: Edge detection (Canny) ──
+            edges = cv2.Canny(morphed, 30, 200, apertureSize=3)
+
+            # Dilate edges slightly to close small gaps
+            dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            edges = cv2.dilate(edges, dilate_kernel, iterations=1)
+
+            # ── Step 5: Find contours, look for largest quadrilateral ──
+            contours, _ = cv2.findContours(
+                edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            if not contours:
+                return None
+
+            # Sort by area (largest first)
+            contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+            small_h, small_w = small.shape[:2]
+            small_area = small_h * small_w
+            min_contour_area = small_area * SCAN_MIN_AREA_RATIO
+
+            doc_contour = None
+            for contour in contours[:10]:  # Check top 10 largest
+                area = cv2.contourArea(contour)
+                if area < min_contour_area:
+                    continue
+
+                peri = cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(
+                    contour, SCAN_APPROX_EPSILON * peri, True
+                )
+
+                if len(approx) == 4:
+                    doc_contour = approx
+                    logger.debug(
+                        f"  Document contour found: area={area:.0f} "
+                        f"({area / small_area * 100:.0f}% of frame)"
+                    )
+                    break
+
+            if doc_contour is None:
+                return None
+
+            # ── Step 6: Scale contour points back to full resolution ──
+            pts = doc_contour.reshape(4, 2).astype(np.float32)
+            pts *= ratio  # Scale back to original image coordinates
+
+            # ── Step 7: Order points and apply perspective transform ──
+            rect = self._order_points(pts)
+
+            # Calculate output dimensions (preserve document aspect ratio)
+            width = max(
+                np.linalg.norm(rect[0] - rect[1]),
+                np.linalg.norm(rect[2] - rect[3]),
+            )
+            height = max(
+                np.linalg.norm(rect[0] - rect[3]),
+                np.linalg.norm(rect[1] - rect[2]),
+            )
+
+            # Safety: result must be large enough for OCR
+            if width < SCAN_MIN_RESULT_DIM or height < SCAN_MIN_RESULT_DIM:
+                logger.debug(
+                    f"  Document scan rejected: result too small "
+                    f"({int(width)}x{int(height)})"
+                )
+                return None
+
+            # Safety: reject warps that drastically change aspect ratio
+            orig_ratio = w / h
+            new_ratio = width / height
+            ratio_change = abs(new_ratio - orig_ratio) / orig_ratio
+            if ratio_change > SCAN_ASPECT_RATIO_MAX:
+                logger.debug(
+                    f"  Document scan rejected: aspect ratio change too large "
+                    f"({orig_ratio:.2f} → {new_ratio:.2f}, {ratio_change:.0%} change)"
+                )
+                return None
+
+            dst = np.array(
+                [
+                    [0, 0],
+                    [width - 1, 0],
+                    [width - 1, height - 1],
+                    [0, height - 1],
+                ],
+                dtype=np.float32,
+            )
+
+            matrix = cv2.getPerspectiveTransform(rect, dst)
+            warped = cv2.warpPerspective(
+                color_img, matrix, (int(width), int(height)),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE
+            )
+
+            return warped
+
+        except Exception as e:
+            logger.warning(f"Document scan failed: {e}")
+            return None
 
     def _perspective_correct(
         self, gray: np.ndarray, original: np.ndarray

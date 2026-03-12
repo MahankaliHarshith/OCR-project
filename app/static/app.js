@@ -622,6 +622,142 @@ function compressImage(file, maxDim = 1800, quality = 0.88) {
     });
 }
 
+/**
+ * Client-side image enhancement for OCR — applies scanner-app-style filters
+ * using Canvas before uploading to the server. This reduces server load and
+ * improves OCR accuracy by sending a cleaner image.
+ *
+ * Filters applied:
+ *   1. Auto-levels (contrast stretch) — like scanner apps' "vibrant" filter
+ *   2. Sharpening via unsharp mask — crisper text edges
+ *   3. Slight brightness boost for dark images
+ *
+ * @param {File|Blob} file - Image file to enhance
+ * @param {Object} options - Enhancement options
+ * @returns {Promise<File>} Enhanced image file
+ */
+function enhanceImageForOCR(file, options = {}) {
+    const {
+        sharpen = true,
+        autoLevels = true,
+        maxDim = 1800,
+    } = options;
+
+    return new Promise((resolve) => {
+        if (!file.type.startsWith('image/')) {
+            resolve(file);
+            return;
+        }
+
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+
+            let { width, height } = img;
+
+            // Downscale if needed
+            if (width > maxDim || height > maxDim) {
+                const ratio = Math.min(maxDim / width, maxDim / height);
+                width = Math.round(width * ratio);
+                height = Math.round(height * ratio);
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Get pixel data for processing
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const data = imageData.data;
+
+            if (autoLevels) {
+                // ── Auto-levels (contrast stretch) ──
+                // This is the "vibrant" filter from scanner apps
+                // Find the 1st and 99th percentile of luminance
+                const luminances = new Uint8Array(width * height);
+                for (let i = 0; i < data.length; i += 4) {
+                    luminances[i / 4] = Math.round(
+                        data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
+                    );
+                }
+
+                // Sort a sample (every 4th pixel) for percentile calculation
+                const sample = [];
+                for (let i = 0; i < luminances.length; i += 4) {
+                    sample.push(luminances[i]);
+                }
+                sample.sort((a, b) => a - b);
+
+                const pLow = sample[Math.floor(sample.length * 0.01)];
+                const pHigh = sample[Math.floor(sample.length * 0.99)];
+                const range = pHigh - pLow;
+
+                if (range > 20 && range < 240) {
+                    const scale = 255 / range;
+                    for (let i = 0; i < data.length; i += 4) {
+                        data[i] = Math.min(255, Math.max(0, (data[i] - pLow) * scale));
+                        data[i + 1] = Math.min(255, Math.max(0, (data[i + 1] - pLow) * scale));
+                        data[i + 2] = Math.min(255, Math.max(0, (data[i + 2] - pLow) * scale));
+                    }
+                }
+            }
+
+            if (sharpen) {
+                // ── Unsharp mask (sharpen) ──
+                // Apply a lightweight sharpening to make text edges crisper
+                ctx.putImageData(imageData, 0, 0);
+
+                // Create a blurred version
+                const blurCanvas = document.createElement('canvas');
+                blurCanvas.width = width;
+                blurCanvas.height = height;
+                const blurCtx = blurCanvas.getContext('2d');
+                blurCtx.filter = 'blur(1px)';
+                blurCtx.drawImage(canvas, 0, 0);
+
+                const blurData = blurCtx.getImageData(0, 0, width, height).data;
+                const sharpData = ctx.getImageData(0, 0, width, height);
+                const sd = sharpData.data;
+
+                // Unsharp mask: original + (original - blurred) * amount
+                const amount = 0.5;
+                for (let i = 0; i < sd.length; i += 4) {
+                    sd[i] = Math.min(255, Math.max(0, sd[i] + (sd[i] - blurData[i]) * amount));
+                    sd[i + 1] = Math.min(255, Math.max(0, sd[i + 1] + (sd[i + 1] - blurData[i + 1]) * amount));
+                    sd[i + 2] = Math.min(255, Math.max(0, sd[i + 2] + (sd[i + 2] - blurData[i + 2]) * amount));
+                }
+
+                ctx.putImageData(sharpData, 0, 0);
+            } else {
+                ctx.putImageData(imageData, 0, 0);
+            }
+
+            canvas.toBlob((blob) => {
+                if (blob) {
+                    const enhanced = new File([blob], file.name || 'enhanced.jpg', { type: 'image/jpeg' });
+                    resolve(enhanced);
+                } else {
+                    resolve(file);
+                }
+            }, 'image/jpeg', 0.92);
+        };
+
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(file);
+        };
+
+        img.src = url;
+    });
+}
+
 async function processFile(file) {
     // Prevent double upload
     if (state.isProcessing) {
@@ -650,7 +786,14 @@ async function processFile(file) {
     simulateProgress();
 
     // Compress image client-side for faster upload & processing
-    const optimizedFile = await compressImage(file);
+    let optimizedFile = await compressImage(file);
+
+    // Apply scanner-style enhancement (auto-levels + sharpen) before server upload
+    try {
+        optimizedFile = await enhanceImageForOCR(optimizedFile);
+    } catch (e) {
+        console.warn('Client-side enhancement skipped:', e);
+    }
 
     // Upload
     const formData = new FormData();
@@ -2543,7 +2686,7 @@ function closeCamera() {
     cameraState.flashOn = false;
 }
 
-// Capture photo from video stream
+// Capture photo from video stream — applies scanner-style enhancement
 function capturePhoto() {
     const video = $('#cameraVideo');
     const canvas = $('#cameraCanvas');
@@ -2557,6 +2700,31 @@ function capturePhoto() {
 
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, vw, vh);
+
+    // ── Apply scanner-style enhancement on capture ──
+    // Auto-levels + sharpen for crisp, vibrant result (like CamScanner)
+    const imageData = ctx.getImageData(0, 0, vw, vh);
+    const data = imageData.data;
+
+    // Quick auto-levels (contrast stretch)
+    const sample = [];
+    for (let i = 0; i < data.length; i += 16) {  // Sample every 4th pixel
+        sample.push(Math.round(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114));
+    }
+    sample.sort((a, b) => a - b);
+    const pLow = sample[Math.floor(sample.length * 0.02)];
+    const pHigh = sample[Math.floor(sample.length * 0.98)];
+    const range = pHigh - pLow;
+
+    if (range > 20 && range < 240) {
+        const scale = 255 / range;
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = Math.min(255, Math.max(0, (data[i] - pLow) * scale));
+            data[i + 1] = Math.min(255, Math.max(0, (data[i + 1] - pLow) * scale));
+            data[i + 2] = Math.min(255, Math.max(0, (data[i + 2] - pLow) * scale));
+        }
+    }
+    ctx.putImageData(imageData, 0, 0);
 
     // Show preview
     const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
@@ -2574,18 +2742,25 @@ function capturePhoto() {
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
-// Use the captured photo — convert to File and process
+// Use the captured photo — enhance, convert to File and process
 function useCapturedPhoto() {
     const canvas = $('#cameraCanvas');
     if (!canvas) return;
 
-    canvas.toBlob((blob) => {
+    canvas.toBlob(async (blob) => {
         if (!blob) {
             showToast('Failed to process captured image.', 'error');
             return;
         }
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const file = new File([blob], `receipt_scan_${timestamp}.jpg`, { type: 'image/jpeg' });
+        let file = new File([blob], `receipt_scan_${timestamp}.jpg`, { type: 'image/jpeg' });
+
+        // Apply scanner-style enhancement before server upload
+        try {
+            file = await enhanceImageForOCR(file);
+        } catch (e) {
+            console.warn('Client-side enhancement failed, using original:', e);
+        }
 
         // Close camera and process the file
         closeCamera();

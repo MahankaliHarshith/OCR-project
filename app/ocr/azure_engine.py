@@ -319,6 +319,58 @@ class AzureOCREngine:
         logger.info(f"Azure bytes extraction done in {elapsed_ms}ms: {len(detections)} elements")
         return detections
 
+    @staticmethod
+    def _get_field_value(field):
+        """
+        Extract the value from a DocumentField using the correct typed property.
+
+        Azure SDK v1.0+ replaced the generic `.value` with type-specific
+        properties: value_string, value_number, value_currency, etc.
+        This helper inspects `field.type` and returns the appropriate value.
+
+        For currency fields, returns the `.amount` (float) directly.
+        """
+        if field is None:
+            return None
+
+        field_type = str(field.type).lower() if field.type else ""
+
+        # Map each DocumentFieldType to its typed property
+        if "string" in field_type:
+            return field.value_string
+        elif "currency" in field_type:
+            # CurrencyValue has .amount and .currency_code
+            return field.value_currency.amount if field.value_currency else None
+        elif "number" in field_type:
+            return field.value_number
+        elif "integer" in field_type:
+            return field.value_integer
+        elif "date" in field_type:
+            return field.value_date
+        elif "time" in field_type:
+            return field.value_time
+        elif "array" in field_type:
+            return field.value_array
+        elif "object" in field_type:
+            return field.value_object
+        elif "boolean" in field_type:
+            return field.value_boolean
+        elif "address" in field_type:
+            return field.value_address
+        elif "phone" in field_type:
+            return field.value_phone_number
+        elif "selection" in field_type and "mark" in field_type:
+            return field.value_selection_mark
+        elif "selection" in field_type and "group" in field_type:
+            return field.value_selection_group
+        elif "signature" in field_type:
+            return field.value_signature
+        elif "country" in field_type:
+            return field.value_country_region
+        else:
+            # Fallback: try content (raw text), always available
+            return field.content
+
     def _parse_receipt_result(self, result) -> Dict:
         """
         Parse Azure prebuilt-receipt result into our application format.
@@ -346,23 +398,30 @@ class AzureOCREngine:
         fields = doc.fields if doc.fields else {}
 
         # ── Extract merchant info ──
-        if "MerchantName" in fields and fields["MerchantName"].value:
-            parsed["merchant"] = fields["MerchantName"].value
+        merchant_val = self._get_field_value(fields.get("MerchantName"))
+        if merchant_val:
+            parsed["merchant"] = merchant_val
 
         # ── Extract date ──
-        if "TransactionDate" in fields and fields["TransactionDate"].value:
-            parsed["transaction_date"] = str(fields["TransactionDate"].value)
+        date_val = self._get_field_value(fields.get("TransactionDate"))
+        if date_val:
+            parsed["transaction_date"] = str(date_val)
 
         # ── Extract totals ──
         for total_field in ["Total", "Subtotal", "TotalTax"]:
-            if total_field in fields and fields[total_field].value:
+            total_val = self._get_field_value(fields.get(total_field))
+            if total_val is not None:
                 key = total_field.lower()
-                parsed[key] = float(fields[total_field].value)
+                try:
+                    parsed[key] = float(total_val)
+                except (ValueError, TypeError):
+                    pass
 
         # ── Extract line items ──
-        if "Items" in fields and fields["Items"].value:
-            for idx, item_field in enumerate(fields["Items"].value):
-                item_data = item_field.value if item_field.value else {}
+        items_list = self._get_field_value(fields.get("Items"))
+        if items_list:
+            for idx, item_field in enumerate(items_list):
+                item_data = self._get_field_value(item_field) or {}
 
                 description = ""
                 quantity = 1.0
@@ -370,24 +429,28 @@ class AzureOCREngine:
                 total_price = None
                 confidence = item_field.confidence if item_field.confidence else 0.0
 
-                if "Description" in item_data and item_data["Description"].value:
-                    description = str(item_data["Description"].value).strip()
+                desc_val = self._get_field_value(item_data.get("Description"))
+                if desc_val:
+                    description = str(desc_val).strip()
 
-                if "Quantity" in item_data and item_data["Quantity"].value:
+                qty_val = self._get_field_value(item_data.get("Quantity"))
+                if qty_val is not None:
                     try:
-                        quantity = float(item_data["Quantity"].value)
+                        quantity = float(qty_val)
                     except (ValueError, TypeError):
                         quantity = 1.0
 
-                if "Price" in item_data and item_data["Price"].value:
+                price_val = self._get_field_value(item_data.get("Price"))
+                if price_val is not None:
                     try:
-                        price = float(item_data["Price"].value)
+                        price = float(price_val)
                     except (ValueError, TypeError):
                         pass
 
-                if "TotalPrice" in item_data and item_data["TotalPrice"].value:
+                tp_val = self._get_field_value(item_data.get("TotalPrice"))
+                if tp_val is not None:
                     try:
-                        total_price = float(item_data["TotalPrice"].value)
+                        total_price = float(tp_val)
                     except (ValueError, TypeError):
                         pass
 

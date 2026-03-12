@@ -481,6 +481,8 @@ class ReceiptService:
             pass
 
         return result
+
+    def get_receipt(self, receipt_id: int) -> Optional[Dict]:
         """Get a receipt by ID with all items."""
         return self.db.get_receipt(receipt_id)
 

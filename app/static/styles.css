@@ -52,6 +52,82 @@
     --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1);
     --duration:      0.2s;
     --duration-md:   0.3s;
+
+    /* Aliases for consistency */
+    --text-primary:  var(--text);
+    --glass-bg:      rgba(255, 255, 255, 0.6);
+}
+
+/* ─── Dark Mode ────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --primary:       #6B82F8;
+        --primary-dark:  #8B9DF9;
+        --primary-light: #5068E0;
+        --primary-wash:  rgba(107, 130, 248, 0.10);
+        --primary-glow:  rgba(107, 130, 248, 0.18);
+
+        --accent:        #34D399;
+        --accent-dark:   #10B981;
+        --warning:       #FBBF24;
+        --warning-bg:    #422006;
+        --warning-border:#854D0E;
+        --danger:        #F87171;
+        --danger-bg:     #450A0A;
+
+        --bg:            #0F172A;
+        --surface:       #1E293B;
+        --surface-raised:#334155;
+        --text:          #F1F5F9;
+        --text-secondary:#94A3B8;
+        --text-muted:    #64748B;
+        --border:        #334155;
+        --border-light:  #1E293B;
+
+        --shadow-xs:     0 1px 2px rgba(0,0,0,0.2);
+        --shadow-sm:     0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+        --shadow-md:     0 4px 12px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.2);
+        --shadow-lg:     0 10px 30px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2);
+        --shadow-xl:     0 20px 50px rgba(0,0,0,0.5);
+
+        --text-primary:  var(--text);
+        --glass-bg:      rgba(30, 41, 59, 0.8);
+    }
+}
+
+/* ─── Manual dark toggle override ─────────────────────────────────────── */
+[data-theme="dark"] {
+    --primary:       #6B82F8;
+    --primary-dark:  #8B9DF9;
+    --primary-light: #5068E0;
+    --primary-wash:  rgba(107, 130, 248, 0.10);
+    --primary-glow:  rgba(107, 130, 248, 0.18);
+
+    --accent:        #34D399;
+    --accent-dark:   #10B981;
+    --warning:       #FBBF24;
+    --warning-bg:    #422006;
+    --warning-border:#854D0E;
+    --danger:        #F87171;
+    --danger-bg:     #450A0A;
+
+    --bg:            #0F172A;
+    --surface:       #1E293B;
+    --surface-raised:#334155;
+    --text:          #F1F5F9;
+    --text-secondary:#94A3B8;
+    --text-muted:    #64748B;
+    --border:        #334155;
+    --border-light:  #1E293B;
+
+    --shadow-xs:     0 1px 2px rgba(0,0,0,0.2);
+    --shadow-sm:     0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+    --shadow-md:     0 4px 12px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.2);
+    --shadow-lg:     0 10px 30px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2);
+    --shadow-xl:     0 20px 50px rgba(0,0,0,0.5);
+
+    --text-primary:  var(--text);
+    --glass-bg:      rgba(30, 41, 59, 0.8);
 }
 
 /* ─── Reset ────────────────────────────────────────────────────────────── */
@@ -3203,4 +3279,94 @@ button:disabled, .btn:disabled {
     .train-params-grid {
         grid-template-columns: 1fr;
     }
+}
+
+/* ─── Dark Mode Toggle Button ──────────────────────────────────────────── */
+.theme-toggle {
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-md);
+    z-index: 900;
+    transition: all var(--duration) var(--ease);
+}
+.theme-toggle:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+    transform: scale(1.1);
+}
+
+/* ─── Keyboard Shortcuts Help ──────────────────────────────────────────── */
+.shortcuts-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+}
+.shortcuts-modal.visible { display: flex; }
+.shortcuts-content {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    max-width: 420px;
+    width: 90%;
+    box-shadow: var(--shadow-xl);
+    max-height: 80vh;
+    overflow-y: auto;
+}
+.shortcuts-content h3 {
+    font-size: 1rem;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.shortcut-group {
+    margin-bottom: 0.75rem;
+}
+.shortcut-group-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.35rem;
+}
+.shortcut-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.3rem 0;
+    font-size: 0.8rem;
+}
+.shortcut-row span:first-child { color: var(--text-secondary); }
+kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 22px;
+    padding: 0 6px;
+    background: var(--border-light);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text);
+    box-shadow: 0 1px 0 var(--border);
 }

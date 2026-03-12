@@ -179,8 +179,21 @@ CLAHE_TILE_GRID_SIZE = (8, 8)
 
 
 # ─── Fuzzy Matching ──────────────────────────────────────────────────────────
-FUZZY_MATCH_CUTOFF = 0.72  # Tighter: prevents phantom codes while still catching real OCR errors
+FUZZY_MATCH_CUTOFF = 0.72  # Default cutoff (overridden by adaptive logic for short codes)
 FUZZY_MAX_RESULTS = 5  # More candidates (was 3)
+
+def get_adaptive_fuzzy_cutoff(code_length: int) -> float:
+    """Length-adaptive fuzzy match cutoff.
+    Short codes need stricter matching to avoid false positives.
+    Long codes can tolerate more OCR errors."""
+    if code_length <= 3:
+        return 0.85  # Very strict for 3-char codes (e.g. ABC)
+    elif code_length <= 4:
+        return 0.78  # Moderate for 4-char codes
+    elif code_length <= 6:
+        return 0.72  # Default for medium codes
+    else:
+        return 0.65  # Lenient for long codes (more chars = more OCR noise)
 
 
 # ─── Excel Generation ────────────────────────────────────────────────────────

@@ -1591,7 +1591,8 @@ class ReceiptParser:
                                 "raw_text": text,
                             }
                         # Also try fuzzy match
-                        matches = get_close_matches(variant, self.product_catalog.keys(), n=1, cutoff=FUZZY_MATCH_CUTOFF)
+                        from app.config import get_adaptive_fuzzy_cutoff as _gafc
+                        matches = get_close_matches(variant, self.product_catalog.keys(), n=1, cutoff=_gafc(len(variant)))
                         if matches:
                             best = matches[0]
                             if abs(len(variant) - len(best)) <= 1 and (variant[0] == best[0] or variant[-1] == best[-1]):
@@ -1650,12 +1651,14 @@ class ReceiptParser:
                         "raw_text": text,
                     }
 
-                # Try fuzzy match on the variant
+                # Try fuzzy match on the variant (length-adaptive cutoff)
+                from app.config import get_adaptive_fuzzy_cutoff
+                _adaptive_cutoff = get_adaptive_fuzzy_cutoff(len(variant))
                 matches = get_close_matches(
                     variant,
                     self.product_catalog.keys(),
                     n=1,
-                    cutoff=FUZZY_MATCH_CUTOFF,
+                    cutoff=_adaptive_cutoff,
                 )
                 if matches:
                     best = matches[0]
@@ -2110,11 +2113,12 @@ class ReceiptParser:
         best_fuzzy_ratio = 0.0
         best_fuzzy_variant = None
         for variant in variants:
+            from app.config import get_adaptive_fuzzy_cutoff as _gafc2
             matches = get_close_matches(
                 variant,
                 self.product_catalog.keys(),
                 n=FUZZY_MAX_RESULTS,
-                cutoff=FUZZY_MATCH_CUTOFF,
+                cutoff=_gafc2(len(variant)),
             )
             for match in matches:
                 ratio = _SM(None, variant, match).ratio()

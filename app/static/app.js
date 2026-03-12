@@ -385,6 +385,25 @@ document.addEventListener('keydown', (e) => {
     // Don't fire shortcuts behind modals or camera overlay
     if ($('#modalOverlay')?.style.display === 'flex') return;
     if ($('#cameraOverlay')?.style.display === 'flex') return;
+    // Close shortcuts modal on Escape
+    if (e.key === 'Escape' && $('#shortcutsModal')?.classList.contains('visible')) {
+        $('#shortcutsModal').classList.remove('visible');
+        return;
+    }
+
+    // ? = Show shortcuts help
+    if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        $('#shortcutsModal')?.classList.toggle('visible');
+        return;
+    }
+
+    // D = Toggle dark mode
+    if ((e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        toggleTheme();
+        return;
+    }
 
     // Ctrl/Cmd+V is handled by paste event above
     // Tab navigation: 1, 2, 3
@@ -936,6 +955,33 @@ async function processFile(file) {
         if (!res.ok) {
             throw new Error(data.detail || 'Processing failed.');
         }
+
+        // ── Auto-retry on poor results ──
+        // If OCR returned zero items and this is the first attempt, retry with
+        // the original (unenhanced) file — client-side enhancement can sometimes
+        // degrade handwriting that EasyOCR handles better in raw form.
+        const itemCount = data.receipt_data?.items?.length || 0;
+        const avgConf = data.receipt_data?.avg_confidence || 0;
+        if (itemCount === 0 && !state._retryAttempted) {
+            state._retryAttempted = true;
+            showToast('No items found — retrying with original image...', 'info');
+            // Retry with original file (no client-side enhancement)
+            const retryForm = new FormData();
+            retryForm.append('file', file);
+            try {
+                const retryRes = await fetch('/api/receipts/scan', { method: 'POST', body: retryForm });
+                const retryData = await retryRes.json();
+                if (retryRes.ok && (retryData.receipt_data?.items?.length || 0) > itemCount) {
+                    showToast('Retry succeeded with original image!', 'success');
+                    displayResults(retryData, file);
+                    state._retryAttempted = false;
+                    return;
+                }
+            } catch (retryErr) {
+                console.warn('Auto-retry failed:', retryErr);
+            }
+        }
+        state._retryAttempted = false;
 
         // Show results
         displayResults(data, file);
@@ -2742,6 +2788,58 @@ async function safeJson(res) {
         return {};
     }
 }
+
+// ─── Dark Mode Toggle ───────────────────────────────────────────────────────
+function toggleTheme() {
+    const html = document.documentElement;
+    const current = html.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    // Update toggle icon
+    const icon = document.querySelector('#themeToggle i');
+    if (icon) {
+        icon.setAttribute('data-lucide', next === 'dark' ? 'sun' : 'moon');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+}
+// Apply saved theme on load
+(function() {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+    } else if (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // Follow system preference if no manual override
+        document.documentElement.setAttribute('data-theme', 'dark');
+    }
+    // Update icon after DOM ready
+    document.addEventListener('DOMContentLoaded', () => {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const icon = document.querySelector('#themeToggle i');
+        if (icon) {
+            icon.setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+        document.getElementById('themeToggle')?.addEventListener('click', toggleTheme);
+    });
+})();
+
+// ─── Global Error Boundary ──────────────────────────────────────────────────
+window.addEventListener('error', (e) => {
+    console.error('Uncaught error:', e.error);
+    if (typeof showToast === 'function') {
+        showToast('Something went wrong. Please try again.', 'error');
+    }
+});
+window.addEventListener('unhandledrejection', (e) => {
+    console.error('Unhandled promise rejection:', e.reason);
+    if (typeof showToast === 'function') {
+        // Don't toast on AbortError (user-initiated cancel)
+        if (e.reason?.name === 'AbortError') return;
+        showToast('A background operation failed. Please retry.', 'error');
+    }
+});
+
 // ─── Image Zoom ──────────────────────────────────────────────────────────────
 document.addEventListener('click', (e) => {
     const frame = e.target.closest('.image-frame');

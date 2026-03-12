@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -150,6 +151,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# ─── Compression ──────────────────────────────────────────────────────────
+app.add_middleware(GZipMiddleware, minimum_size=500)  # Compress responses >500B (~60% savings on JSON/HTML)
+
 # ─── Security Middleware ───────────────────────────────────────────────────
 # Order matters: outermost (first added) wraps all inner layers.
 app.add_middleware(DevTunnelCORSMiddleware)      # Dynamic CORS for VS Code tunnels

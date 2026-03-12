@@ -2578,6 +2578,9 @@ const cameraState = {
     stream: null,
     facingMode: 'environment',  // 'environment' = back camera, 'user' = front
     flashOn: false,
+    flashMode: 'off',           // 'off' | 'on' | 'auto'
+    autoFlashInterval: null,    // interval ID for auto-flash brightness polling
+    torchSupported: false,      // whether device supports torch
     track: null,
     hasCamera: false,
 };
@@ -2651,8 +2654,17 @@ async function openCamera() {
         overlay.style.display = 'flex';
         document.body.style.overflow = 'hidden';
 
-        // Check flash capability
+        // Detect torch capability
+        try {
+            const caps = cameraState.track.getCapabilities();
+            cameraState.torchSupported = !!(caps && caps.torch);
+        } catch (_) {
+            cameraState.torchSupported = false;
+        }
+
+        // Check flash capability & apply flash mode
         updateFlashUI();
+        applyFlashMode();
 
         // Re-init icons
         if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -2674,6 +2686,12 @@ function closeCamera() {
     const overlay = $('#cameraOverlay');
     const video = $('#cameraVideo');
 
+    // Stop auto-flash polling
+    if (cameraState.autoFlashInterval) {
+        clearInterval(cameraState.autoFlashInterval);
+        cameraState.autoFlashInterval = null;
+    }
+
     if (cameraState.stream) {
         cameraState.stream.getTracks().forEach(t => t.stop());
         cameraState.stream = null;
@@ -2684,13 +2702,64 @@ function closeCamera() {
     if (overlay) overlay.style.display = 'none';
     document.body.style.overflow = '';
     cameraState.flashOn = false;
+    cameraState.torchSupported = false;
+}
+
+// Measure ambient brightness from a video element (0-255 scale)
+function measureBrightness(videoEl) {
+    const c = document.createElement('canvas');
+    const sz = 64; // tiny sample for speed
+    c.width = sz;
+    c.height = sz;
+    const cx = c.getContext('2d');
+    cx.drawImage(videoEl, 0, 0, sz, sz);
+    const d = cx.getImageData(0, 0, sz, sz).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 16) { // sample every 4th pixel
+        sum += d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+    }
+    return sum / (d.length / 16);
+}
+
+// Screen flash animation overlay
+function showScreenFlash() {
+    const overlay = $('#cameraOverlay');
+    if (!overlay) return;
+    let flash = overlay.querySelector('.screen-flash');
+    if (!flash) {
+        flash = document.createElement('div');
+        flash.className = 'screen-flash';
+        overlay.appendChild(flash);
+    }
+    flash.classList.remove('flash-animate');
+    // Force reflow
+    void flash.offsetWidth;
+    flash.classList.add('flash-animate');
+    setTimeout(() => flash.classList.remove('flash-animate'), 400);
 }
 
 // Capture photo from video stream — applies scanner-style enhancement
-function capturePhoto() {
+async function capturePhoto() {
     const video = $('#cameraVideo');
     const canvas = $('#cameraCanvas');
     if (!video || !canvas) return;
+
+    // Flash-on-capture: if auto mode, briefly turn on torch for capture
+    let flashFiredForCapture = false;
+    if (cameraState.flashMode === 'auto' && cameraState.torchSupported && !cameraState.flashOn) {
+        const brightness = measureBrightness(video);
+        if (brightness < 80) {
+            try {
+                await cameraState.track.applyConstraints({ advanced: [{ torch: true }] });
+                flashFiredForCapture = true;
+                // Wait briefly for torch to stabilize and illuminate scene
+                await new Promise(r => setTimeout(r, 300));
+            } catch (_) {}
+        }
+    }
+
+    // Screen flash effect for visual feedback
+    showScreenFlash();
 
     // Set canvas to video's native resolution for maximum quality
     const vw = video.videoWidth;
@@ -2700,6 +2769,13 @@ function capturePhoto() {
 
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, vw, vh);
+
+    // Turn off capture flash if we fired it
+    if (flashFiredForCapture) {
+        try {
+            await cameraState.track.applyConstraints({ advanced: [{ torch: false }] });
+        } catch (_) {}
+    }
 
     // ── Apply scanner-style enhancement on capture ──
     // Auto-levels + sharpen for crisp, vibrant result (like CamScanner)
@@ -2773,25 +2849,86 @@ function retakePhoto() {
     $('#cameraPreview').style.display = 'none';
 }
 
-// Toggle flash/torch
+// Toggle flash mode: off → on → auto (3-state cycle like CamScanner)
 async function toggleFlash() {
     if (!cameraState.track) return;
 
-    try {
-        const capabilities = cameraState.track.getCapabilities();
-        if (!capabilities.torch) {
-            showToast('Flash is not available on this camera.', 'info');
-            return;
-        }
-
-        cameraState.flashOn = !cameraState.flashOn;
-        await cameraState.track.applyConstraints({
-            advanced: [{ torch: cameraState.flashOn }],
-        });
-        updateFlashUI();
-    } catch (err) {
-        showToast('Could not toggle flash.', 'warning');
+    if (!cameraState.torchSupported) {
+        showToast('Flash is not available on this camera.', 'info');
+        return;
     }
+
+    // Cycle: off → on → auto → off
+    const modes = ['off', 'on', 'auto'];
+    const idx = modes.indexOf(cameraState.flashMode);
+    cameraState.flashMode = modes[(idx + 1) % modes.length];
+
+    await applyFlashMode();
+    updateFlashUI();
+
+    // Show toast for mode change
+    const labels = { off: '⚡ Flash Off', on: '⚡ Flash On', auto: '⚡ Auto Flash' };
+    showToast(labels[cameraState.flashMode], 'info');
+}
+
+// Apply the current flash mode — turn torch on/off or start auto-polling
+async function applyFlashMode() {
+    // Clear any existing auto-flash polling
+    if (cameraState.autoFlashInterval) {
+        clearInterval(cameraState.autoFlashInterval);
+        cameraState.autoFlashInterval = null;
+    }
+
+    if (!cameraState.track || !cameraState.torchSupported) return;
+
+    try {
+        if (cameraState.flashMode === 'on') {
+            cameraState.flashOn = true;
+            await cameraState.track.applyConstraints({ advanced: [{ torch: true }] });
+        } else if (cameraState.flashMode === 'off') {
+            cameraState.flashOn = false;
+            await cameraState.track.applyConstraints({ advanced: [{ torch: false }] });
+        } else if (cameraState.flashMode === 'auto') {
+            // Auto-flash: poll brightness and toggle torch based on ambient light
+            startAutoFlashPolling();
+        }
+    } catch (err) {
+        console.warn('Flash mode apply error:', err);
+    }
+
+    updateFlashUI();
+}
+
+// Auto-flash: periodically check video brightness and toggle torch
+function startAutoFlashPolling() {
+    const video = $('#cameraVideo');
+    if (!video) return;
+
+    const DARK_THRESHOLD = 70;   // below this → turn torch ON
+    const BRIGHT_THRESHOLD = 100; // above this → turn torch OFF (hysteresis)
+
+    const poll = async () => {
+        if (!cameraState.track || cameraState.flashMode !== 'auto') return;
+        try {
+            const brightness = measureBrightness(video);
+            const shouldBeOn = brightness < DARK_THRESHOLD;
+            const shouldBeOff = brightness > BRIGHT_THRESHOLD;
+
+            if (shouldBeOn && !cameraState.flashOn) {
+                cameraState.flashOn = true;
+                await cameraState.track.applyConstraints({ advanced: [{ torch: true }] });
+                updateFlashUI();
+            } else if (shouldBeOff && cameraState.flashOn) {
+                cameraState.flashOn = false;
+                await cameraState.track.applyConstraints({ advanced: [{ torch: false }] });
+                updateFlashUI();
+            }
+        } catch (_) {}
+    };
+
+    // Poll every 1.5 seconds — not too aggressive
+    poll();
+    cameraState.autoFlashInterval = setInterval(poll, 1500);
 }
 
 function updateFlashUI() {
@@ -2799,19 +2936,40 @@ function updateFlashUI() {
     const flashIcon = $('#flashIcon');
     if (!flashBtn || !flashIcon) return;
 
-    if (cameraState.flashOn) {
+    // Remove all flash state classes
+    flashBtn.classList.remove('flash-on', 'flash-auto');
+
+    if (cameraState.flashMode === 'on') {
         flashBtn.classList.add('flash-on');
         flashIcon.setAttribute('data-lucide', 'zap');
+    } else if (cameraState.flashMode === 'auto') {
+        flashBtn.classList.add('flash-auto');
+        flashIcon.setAttribute('data-lucide', 'zap');
     } else {
-        flashBtn.classList.remove('flash-on');
         flashIcon.setAttribute('data-lucide', 'zap-off');
     }
+
+    // Update label badge
+    let badge = flashBtn.querySelector('.flash-mode-label');
+    if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'flash-mode-label';
+        flashBtn.appendChild(badge);
+    }
+    badge.textContent = cameraState.flashMode === 'auto' ? 'A' : '';
+    badge.style.display = cameraState.flashMode === 'auto' ? 'flex' : 'none';
+
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 // Switch between front and back camera
 async function switchCamera() {
     cameraState.facingMode = cameraState.facingMode === 'environment' ? 'user' : 'environment';
+    // Stop auto-flash polling
+    if (cameraState.autoFlashInterval) {
+        clearInterval(cameraState.autoFlashInterval);
+        cameraState.autoFlashInterval = null;
+    }
     // Close current stream and reopen
     if (cameraState.stream) {
         cameraState.stream.getTracks().forEach(t => t.stop());
@@ -2819,6 +2977,7 @@ async function switchCamera() {
         cameraState.track = null;
     }
     cameraState.flashOn = false;
+    // Keep flash mode preference across camera switch
     await openCamera();
 }
 
@@ -3724,6 +3883,9 @@ const trainCameraState = {
     track: null,
     facingMode: 'environment',
     flashOn: false,
+    flashMode: 'off',           // 'off' | 'on' | 'auto'
+    autoFlashInterval: null,
+    torchSupported: false,
 };
 
 async function openTrainCamera() {
@@ -3753,7 +3915,16 @@ async function openTrainCamera() {
         overlay.style.display = 'flex';
         document.body.style.overflow = 'hidden';
 
+        // Detect torch capability
+        try {
+            const caps = trainCameraState.track.getCapabilities();
+            trainCameraState.torchSupported = !!(caps && caps.torch);
+        } catch (_) {
+            trainCameraState.torchSupported = false;
+        }
+
         updateTrainFlashUI();
+        applyTrainFlashMode();
         if (typeof lucide !== 'undefined') lucide.createIcons();
 
     } catch (err) {
@@ -3772,6 +3943,12 @@ function closeTrainCamera() {
     const overlay = $('#trainCameraOverlay');
     const video = $('#trainCameraVideo');
 
+    // Stop auto-flash polling
+    if (trainCameraState.autoFlashInterval) {
+        clearInterval(trainCameraState.autoFlashInterval);
+        trainCameraState.autoFlashInterval = null;
+    }
+
     if (trainCameraState.stream) {
         trainCameraState.stream.getTracks().forEach(t => t.stop());
         trainCameraState.stream = null;
@@ -3782,6 +3959,7 @@ function closeTrainCamera() {
     if (overlay) overlay.style.display = 'none';
     document.body.style.overflow = '';
     trainCameraState.flashOn = false;
+    trainCameraState.torchSupported = false;
 }
 
 function captureTrainPhoto() {
@@ -3834,20 +4012,77 @@ function retakeTrainPhoto() {
 
 async function toggleTrainFlash() {
     if (!trainCameraState.track) return;
-    try {
-        const capabilities = trainCameraState.track.getCapabilities();
-        if (!capabilities.torch) {
-            showToast('Flash is not available on this camera.', 'info');
-            return;
-        }
-        trainCameraState.flashOn = !trainCameraState.flashOn;
-        await trainCameraState.track.applyConstraints({
-            advanced: [{ torch: trainCameraState.flashOn }],
-        });
-        updateTrainFlashUI();
-    } catch (err) {
-        showToast('Could not toggle flash.', 'warning');
+
+    if (!trainCameraState.torchSupported) {
+        showToast('Flash is not available on this camera.', 'info');
+        return;
     }
+
+    // Cycle: off → on → auto → off
+    const modes = ['off', 'on', 'auto'];
+    const idx = modes.indexOf(trainCameraState.flashMode);
+    trainCameraState.flashMode = modes[(idx + 1) % modes.length];
+
+    await applyTrainFlashMode();
+    updateTrainFlashUI();
+
+    const labels = { off: '⚡ Flash Off', on: '⚡ Flash On', auto: '⚡ Auto Flash' };
+    showToast(labels[trainCameraState.flashMode], 'info');
+}
+
+async function applyTrainFlashMode() {
+    if (trainCameraState.autoFlashInterval) {
+        clearInterval(trainCameraState.autoFlashInterval);
+        trainCameraState.autoFlashInterval = null;
+    }
+
+    if (!trainCameraState.track || !trainCameraState.torchSupported) return;
+
+    try {
+        if (trainCameraState.flashMode === 'on') {
+            trainCameraState.flashOn = true;
+            await trainCameraState.track.applyConstraints({ advanced: [{ torch: true }] });
+        } else if (trainCameraState.flashMode === 'off') {
+            trainCameraState.flashOn = false;
+            await trainCameraState.track.applyConstraints({ advanced: [{ torch: false }] });
+        } else if (trainCameraState.flashMode === 'auto') {
+            startTrainAutoFlashPolling();
+        }
+    } catch (err) {
+        console.warn('Train flash mode apply error:', err);
+    }
+
+    updateTrainFlashUI();
+}
+
+function startTrainAutoFlashPolling() {
+    const video = $('#trainCameraVideo');
+    if (!video) return;
+
+    const DARK_THRESHOLD = 70;
+    const BRIGHT_THRESHOLD = 100;
+
+    const poll = async () => {
+        if (!trainCameraState.track || trainCameraState.flashMode !== 'auto') return;
+        try {
+            const brightness = measureBrightness(video);
+            const shouldBeOn = brightness < DARK_THRESHOLD;
+            const shouldBeOff = brightness > BRIGHT_THRESHOLD;
+
+            if (shouldBeOn && !trainCameraState.flashOn) {
+                trainCameraState.flashOn = true;
+                await trainCameraState.track.applyConstraints({ advanced: [{ torch: true }] });
+                updateTrainFlashUI();
+            } else if (shouldBeOff && trainCameraState.flashOn) {
+                trainCameraState.flashOn = false;
+                await trainCameraState.track.applyConstraints({ advanced: [{ torch: false }] });
+                updateTrainFlashUI();
+            }
+        } catch (_) {}
+    };
+
+    poll();
+    trainCameraState.autoFlashInterval = setInterval(poll, 1500);
 }
 
 function updateTrainFlashUI() {
@@ -3855,18 +4090,36 @@ function updateTrainFlashUI() {
     const flashIcon = $('#trainFlashIcon');
     if (!flashBtn || !flashIcon) return;
 
-    if (trainCameraState.flashOn) {
+    flashBtn.classList.remove('flash-on', 'flash-auto');
+
+    if (trainCameraState.flashMode === 'on') {
         flashBtn.classList.add('flash-on');
         flashIcon.setAttribute('data-lucide', 'zap');
+    } else if (trainCameraState.flashMode === 'auto') {
+        flashBtn.classList.add('flash-auto');
+        flashIcon.setAttribute('data-lucide', 'zap');
     } else {
-        flashBtn.classList.remove('flash-on');
         flashIcon.setAttribute('data-lucide', 'zap-off');
     }
+
+    let badge = flashBtn.querySelector('.flash-mode-label');
+    if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'flash-mode-label';
+        flashBtn.appendChild(badge);
+    }
+    badge.textContent = trainCameraState.flashMode === 'auto' ? 'A' : '';
+    badge.style.display = trainCameraState.flashMode === 'auto' ? 'flex' : 'none';
+
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 async function switchTrainCamera() {
     trainCameraState.facingMode = trainCameraState.facingMode === 'environment' ? 'user' : 'environment';
+    if (trainCameraState.autoFlashInterval) {
+        clearInterval(trainCameraState.autoFlashInterval);
+        trainCameraState.autoFlashInterval = null;
+    }
     if (trainCameraState.stream) {
         trainCameraState.stream.getTracks().forEach(t => t.stop());
         trainCameraState.stream = null;

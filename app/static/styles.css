@@ -2054,6 +2054,57 @@ button:disabled, .btn:disabled {
     color: #FCD34D;
 }
 
+.camera-flash-btn.flash-auto {
+    background: rgba(59, 130, 246, 0.3);
+    color: #93C5FD;
+}
+
+.camera-flash-btn.flash-auto.flash-on {
+    background: rgba(245, 158, 11, 0.25);
+    color: #FCD34D;
+}
+
+/* Flash mode label badge (shows "A" for auto) */
+.flash-mode-label {
+    position: absolute;
+    bottom: -2px;
+    right: -2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #3B82F6;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.camera-flash-btn {
+    position: relative;
+}
+
+/* Screen flash effect on capture */
+.screen-flash {
+    position: absolute;
+    inset: 0;
+    background: white;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 100;
+}
+
+.screen-flash.flash-animate {
+    animation: screenFlash 0.4s ease-out forwards;
+}
+
+@keyframes screenFlash {
+    0%   { opacity: 0.85; }
+    100% { opacity: 0; }
+}
+
 /* ─── Camera Viewfinder ──────────────────────────────────────────────── */
 .camera-viewfinder {
     flex: 1;

@@ -2626,24 +2626,47 @@ button:disabled, .btn:disabled {
     gap: 0.5rem;
 }
 
+.train-upload-ring {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: rgba(79, 107, 246, 0.06);
+    margin-bottom: 0.25rem;
+    transition: all var(--duration) var(--ease);
+}
+
+.train-upload-area:hover .train-upload-ring {
+    background: rgba(79, 107, 246, 0.1);
+    transform: scale(1.05);
+}
+
 .train-upload-text {
     font-size: 0.88rem;
     color: var(--text-secondary);
     margin: 0;
-}
-
-.train-browse-link {
-    color: var(--primary);
-    font-weight: 600;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
+    font-weight: 500;
 }
 
 .train-upload-hint {
     font-size: 0.72rem;
     color: var(--text-muted);
     margin: 0;
+}
+
+.train-upload-btn-group {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.train-upload-btn-group .btn {
+    position: relative;
+    z-index: 2;
 }
 
 /* ─── Ground Truth Form ────────────────────────────────────────────────── */

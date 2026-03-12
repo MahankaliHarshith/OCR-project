@@ -2841,10 +2841,21 @@ function initTrainingUpload() {
         handleTrainingFiles(Array.from(e.dataTransfer.files));
     });
 
-    // Click to browse
+    // Click to browse — skip if clicking camera/browse buttons
     dropZone.addEventListener('click', (e) => {
-        if (e.target.closest('.train-browse-link')) return; // label handles it
+        if (e.target.closest('.train-browse-link')) return;
+        if (e.target.closest('#trainCameraBtn')) return;
+        if (e.target.closest('#trainBrowseBtn')) return;
         fileInput.click();
+    });
+
+    // Prevent buttons from bubbling to dropZone click
+    $('#trainCameraBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openTrainCamera();
+    });
+    $('#trainBrowseBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
     });
 
     fileInput.addEventListener('change', () => {
@@ -3531,6 +3542,176 @@ async function learnReceiptTemplate() {
     }
 }
 
+// ─── Training Camera ─────────────────────────────────────────────────────────
+
+const trainCameraState = {
+    stream: null,
+    track: null,
+    facingMode: 'environment',
+    flashOn: false,
+};
+
+async function openTrainCamera() {
+    const overlay = $('#trainCameraOverlay');
+    const video = $('#trainCameraVideo');
+    if (!overlay || !video) return;
+
+    // Reset preview
+    $('#trainCameraPreview').style.display = 'none';
+
+    try {
+        const constraints = {
+            video: {
+                facingMode: trainCameraState.facingMode,
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+                focusMode: { ideal: 'continuous' },
+            },
+            audio: false,
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        trainCameraState.stream = stream;
+        trainCameraState.track = stream.getVideoTracks()[0];
+        video.srcObject = stream;
+
+        overlay.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+
+        updateTrainFlashUI();
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+
+    } catch (err) {
+        if (err.name === 'NotAllowedError') {
+            showToast('Camera access denied. Please allow camera permissions.', 'error');
+        } else if (err.name === 'NotFoundError') {
+            showToast('No camera found on this device.', 'error');
+        } else {
+            showToast('Could not open camera. Try uploading an image instead.', 'error');
+        }
+        console.warn('Train camera error:', err);
+    }
+}
+
+function closeTrainCamera() {
+    const overlay = $('#trainCameraOverlay');
+    const video = $('#trainCameraVideo');
+
+    if (trainCameraState.stream) {
+        trainCameraState.stream.getTracks().forEach(t => t.stop());
+        trainCameraState.stream = null;
+        trainCameraState.track = null;
+    }
+
+    if (video) video.srcObject = null;
+    if (overlay) overlay.style.display = 'none';
+    document.body.style.overflow = '';
+    trainCameraState.flashOn = false;
+}
+
+function captureTrainPhoto() {
+    const video = $('#trainCameraVideo');
+    const canvas = $('#trainCameraCanvas');
+    if (!video || !canvas) return;
+
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    canvas.width = vw;
+    canvas.height = vh;
+
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, vw, vh);
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    $('#trainCapturedImage').src = dataUrl;
+    $('#trainCameraPreview').style.display = 'flex';
+
+    const captureBtn = $('#trainCameraCaptureBtn');
+    if (captureBtn) {
+        captureBtn.classList.add('capturing');
+        setTimeout(() => captureBtn.classList.remove('capturing'), 350);
+    }
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function useTrainCapturedPhoto() {
+    const canvas = $('#trainCameraCanvas');
+    if (!canvas) return;
+
+    canvas.toBlob((blob) => {
+        if (!blob) {
+            showToast('Failed to process captured image.', 'error');
+            return;
+        }
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const file = new File([blob], `train_receipt_${timestamp}.jpg`, { type: 'image/jpeg' });
+
+        closeTrainCamera();
+        // Route captured photo to the ground truth form instead of scan
+        handleTrainingFiles([file]);
+    }, 'image/jpeg', 0.92);
+}
+
+function retakeTrainPhoto() {
+    $('#trainCameraPreview').style.display = 'none';
+}
+
+async function toggleTrainFlash() {
+    if (!trainCameraState.track) return;
+    try {
+        const capabilities = trainCameraState.track.getCapabilities();
+        if (!capabilities.torch) {
+            showToast('Flash is not available on this camera.', 'info');
+            return;
+        }
+        trainCameraState.flashOn = !trainCameraState.flashOn;
+        await trainCameraState.track.applyConstraints({
+            advanced: [{ torch: trainCameraState.flashOn }],
+        });
+        updateTrainFlashUI();
+    } catch (err) {
+        showToast('Could not toggle flash.', 'warning');
+    }
+}
+
+function updateTrainFlashUI() {
+    const flashBtn = $('#trainCameraFlashBtn');
+    const flashIcon = $('#trainFlashIcon');
+    if (!flashBtn || !flashIcon) return;
+
+    if (trainCameraState.flashOn) {
+        flashBtn.classList.add('flash-on');
+        flashIcon.setAttribute('data-lucide', 'zap');
+    } else {
+        flashBtn.classList.remove('flash-on');
+        flashIcon.setAttribute('data-lucide', 'zap-off');
+    }
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+async function switchTrainCamera() {
+    trainCameraState.facingMode = trainCameraState.facingMode === 'environment' ? 'user' : 'environment';
+    if (trainCameraState.stream) {
+        trainCameraState.stream.getTracks().forEach(t => t.stop());
+        trainCameraState.stream = null;
+        trainCameraState.track = null;
+    }
+    trainCameraState.flashOn = false;
+    await openTrainCamera();
+}
+
+// Close training camera on Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('#trainCameraOverlay')?.style.display === 'flex') {
+        if ($('#trainCameraPreview')?.style.display !== 'none') {
+            retakeTrainPhoto();
+        } else {
+            closeTrainCamera();
+        }
+    }
+});
+
 // ─── Training Event Listeners ────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -3551,4 +3732,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Template learning
     $('#learnTemplateBtn')?.addEventListener('click', learnReceiptTemplate);
+
+    // Training camera buttons
+    $('#trainCameraCloseBtn')?.addEventListener('click', closeTrainCamera);
+    $('#trainCameraCaptureBtn')?.addEventListener('click', captureTrainPhoto);
+    $('#trainUseCaptureBtn')?.addEventListener('click', useTrainCapturedPhoto);
+    $('#trainRetakeBtn')?.addEventListener('click', retakeTrainPhoto);
+    $('#trainCameraFlashBtn')?.addEventListener('click', toggleTrainFlash);
+    $('#trainCameraSwitchBtn')?.addEventListener('click', switchTrainCamera);
+    $('#trainCameraGalleryBtn')?.addEventListener('click', () => {
+        closeTrainCamera();
+        $('#trainFileInput')?.click();
+    });
 });

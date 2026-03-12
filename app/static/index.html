@@ -620,10 +620,34 @@
                     </div>
                     <div class="train-upload-area" id="trainDropZone">
                         <div class="train-upload-inner">
-                            <i data-lucide="image-plus" style="width:36px;height:36px;color:var(--primary)"></i>
-                            <p class="train-upload-text">Drop receipt image here or <label for="trainFileInput" class="train-browse-link">browse</label></p>
-                            <p class="train-upload-hint">JPG, PNG, BMP, TIFF, WebP — Max 20MB</p>
+                            <div class="train-upload-ring">
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary)">
+                                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                    <circle cx="12" cy="13" r="4"/>
+                                </svg>
+                            </div>
+                            <p class="train-upload-text">Capture or upload receipt for training</p>
+                            <p class="train-upload-hint">Add ground truth labels after capture</p>
                             <input type="file" id="trainFileInput" accept="image/*" style="display:none" multiple>
+                            <div class="train-upload-btn-group">
+                                <button class="btn btn-primary btn-sm" id="trainCameraBtn">
+                                    <i data-lucide="camera" style="width:16px;height:16px"></i>
+                                    Scan with Camera
+                                </button>
+                                <label for="trainFileInput" class="btn btn-ghost btn-sm" id="trainBrowseBtn">
+                                    <i data-lucide="image-plus" style="width:16px;height:16px"></i>
+                                    Choose from Gallery
+                                </label>
+                            </div>
+                            <div class="upload-formats" style="margin-top:0.5rem">
+                                <span class="format-tag">JPG</span>
+                                <span class="format-tag">PNG</span>
+                                <span class="format-tag">BMP</span>
+                                <span class="format-tag">TIFF</span>
+                                <span class="format-tag">WebP</span>
+                                <span class="format-sep">·</span>
+                                <span class="format-limit">Max 20 MB</span>
+                            </div>
                         </div>
                     </div>
 
@@ -675,6 +699,54 @@
                             <p class="train-batch-status" id="trainBatchStatus">0 / 0</p>
                         </div>
                     </div>
+                </div>
+
+                <!-- ─── Training Camera Overlay ─────────────────────── -->
+                <div class="camera-overlay" id="trainCameraOverlay" style="display:none">
+                    <div class="camera-topbar">
+                        <button class="camera-btn camera-close-btn" id="trainCameraCloseBtn" title="Close camera">
+                            <i data-lucide="x" style="width:22px;height:22px"></i>
+                        </button>
+                        <span class="camera-title">Capture Training Receipt</span>
+                        <button class="camera-btn camera-flash-btn" id="trainCameraFlashBtn" title="Toggle flash">
+                            <i data-lucide="zap-off" style="width:20px;height:20px" id="trainFlashIcon"></i>
+                        </button>
+                    </div>
+                    <div class="camera-viewfinder">
+                        <video id="trainCameraVideo" autoplay playsinline muted></video>
+                        <div class="camera-guide">
+                            <div class="guide-corner guide-tl"></div>
+                            <div class="guide-corner guide-tr"></div>
+                            <div class="guide-corner guide-bl"></div>
+                            <div class="guide-corner guide-br"></div>
+                        </div>
+                        <p class="camera-hint">Align receipt within the frame</p>
+                    </div>
+                    <div class="camera-bottombar">
+                        <button class="camera-btn camera-gallery-btn" id="trainCameraGalleryBtn" title="Choose from gallery">
+                            <i data-lucide="image" style="width:22px;height:22px"></i>
+                        </button>
+                        <button class="camera-capture-btn" id="trainCameraCaptureBtn" title="Take photo">
+                            <span class="capture-ring"></span>
+                        </button>
+                        <button class="camera-btn camera-switch-btn" id="trainCameraSwitchBtn" title="Switch camera">
+                            <i data-lucide="switch-camera" style="width:22px;height:22px"></i>
+                        </button>
+                    </div>
+                    <div class="camera-preview" id="trainCameraPreview" style="display:none">
+                        <img id="trainCapturedImage" src="" alt="Captured receipt">
+                        <div class="preview-actions">
+                            <button class="btn btn-ghost btn-lg" id="trainRetakeBtn">
+                                <i data-lucide="refresh-cw" style="width:18px;height:18px"></i>
+                                Retake
+                            </button>
+                            <button class="btn btn-accent btn-lg" id="trainUseCaptureBtn">
+                                <i data-lucide="check" style="width:18px;height:18px"></i>
+                                Use Photo
+                            </button>
+                        </div>
+                    </div>
+                    <canvas id="trainCameraCanvas" style="display:none"></canvas>
                 </div>
 
                 <!-- Training Samples List -->

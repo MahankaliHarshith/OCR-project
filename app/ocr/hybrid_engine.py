@@ -213,6 +213,7 @@ class HybridOCREngine:
             HYBRID_CROSS_VERIFY,
             LOCAL_CONFIDENCE_SKIP_THRESHOLD,
             LOCAL_MIN_DETECTIONS_SKIP,
+            LOCAL_CATALOG_MATCH_SKIP_THRESHOLD,
             IMAGE_QUALITY_GATE_ENABLED,
             IMAGE_QUALITY_MIN_SHARPNESS,
             IMAGE_QUALITY_MIN_BRIGHTNESS,
@@ -272,17 +273,44 @@ class HybridOCREngine:
                 local_conf = local_result.get("confidence_avg", 0)
                 local_items = len(local_result.get("ocr_detections", []))
 
+                # ── Calibrated confidence: adjusts for EasyOCR's inflated scores ──
+                # EasyOCR often reports 0.70-0.90 on garbled handwritten text.
+                # Calibration penalizes short/noisy/repetitive detections.
+                from app.ocr.engine import OCREngine
+                local_dets = local_result.get("ocr_detections", [])
+                calibrated_conf = self._calibrated_avg_confidence(local_dets)
+
+                # ── Catalog match rate: what % of detections match known products ──
+                # High raw confidence on garbage text means nothing if the words
+                # don't match any product codes in the catalog.
+                catalog_match_rate = self._catalog_match_rate(local_dets)
+
                 metadata["attempts"].append({
                     "engine": "local-first",
                     "detections": local_items,
                     "confidence": round(local_conf, 4),
+                    "calibrated_confidence": round(calibrated_conf, 4),
+                    "catalog_match_rate": round(catalog_match_rate, 4),
                 })
 
-                # Smart skip: if local OCR is good enough, DON'T call Azure
-                # Two conditions must BOTH be met to skip:
-                #   1. Confidence >= threshold (local read the text well)
+                # Smart skip: THREE conditions must ALL be met to skip Azure:
+                #   1. Calibrated confidence >= threshold (genuinely well-read text)
                 #   2. Enough detections found (it actually found content)
-                if local_conf >= LOCAL_CONFIDENCE_SKIP_THRESHOLD and local_items >= LOCAL_MIN_DETECTIONS_SKIP:
+                #   3. Catalog match rate >= threshold (detected text matches known products)
+                # For handwritten receipts, also require higher confidence since
+                # EasyOCR is weaker on handwriting than on printed text.
+                effective_threshold = LOCAL_CONFIDENCE_SKIP_THRESHOLD
+                if not is_structured:
+                    # Handwritten: require even higher confidence to skip Azure
+                    effective_threshold = max(effective_threshold, 0.88)
+
+                skip_azure = (
+                    calibrated_conf >= effective_threshold
+                    and local_items >= LOCAL_MIN_DETECTIONS_SKIP
+                    and catalog_match_rate >= LOCAL_CATALOG_MATCH_SKIP_THRESHOLD
+                )
+
+                if skip_azure:
                     total_ms = int((time.time() - total_start) * 1000)
                     local_result["ocr_time_ms"] = total_ms
                     local_result["metadata"] = {
@@ -290,20 +318,23 @@ class HybridOCREngine:
                         "strategy": "auto-local-skip",
                         "azure_pages_used": 0,
                         "reason": (
-                            f"Local confidence {local_conf:.3f} >= {LOCAL_CONFIDENCE_SKIP_THRESHOLD} "
-                            f"AND {local_items} detections >= {LOCAL_MIN_DETECTIONS_SKIP}"
+                            f"Calibrated confidence {calibrated_conf:.3f} >= {effective_threshold} "
+                            f"AND {local_items} detections >= {LOCAL_MIN_DETECTIONS_SKIP} "
+                            f"AND catalog match {catalog_match_rate:.1%} >= {LOCAL_CATALOG_MATCH_SKIP_THRESHOLD:.0%}"
                         ),
                     }
                     logger.info(
                         f"[Hybrid] ✅ Local OCR GOOD ENOUGH "
-                        f"(conf={local_conf:.3f}, items={local_items}), "
+                        f"(cal_conf={calibrated_conf:.3f}, raw_conf={local_conf:.3f}, "
+                        f"items={local_items}, catalog={catalog_match_rate:.1%}), "
                         f"Azure page SAVED ({total_ms}ms)"
                     )
                     return local_result
                 else:
                     logger.info(
                         f"[Hybrid] Local OCR insufficient "
-                        f"(conf={local_conf:.3f}, items={local_items}), "
+                        f"(cal_conf={calibrated_conf:.3f}, raw_conf={local_conf:.3f}, "
+                        f"items={local_items}, catalog={catalog_match_rate:.1%}), "
                         f"proceeding to Azure..."
                     )
             except Exception as e:
@@ -1130,6 +1161,72 @@ class HybridOCREngine:
             return 0.0
         confs = [d.get("confidence", 0) for d in detections]
         return sum(confs) / len(confs)
+
+    def _calibrated_avg_confidence(self, detections: List[Dict]) -> float:
+        """Calculate average CALIBRATED confidence across detections.
+
+        Uses OCREngine.calibrate_confidence() to adjust each detection's
+        raw EasyOCR score for text quality indicators (length, noise chars,
+        repetition). This produces a more realistic confidence that the
+        routing logic can trust for skip/Azure decisions.
+        """
+        if not detections:
+            return 0.0
+        from app.ocr.engine import OCREngine
+        cal_confs = [
+            OCREngine.calibrate_confidence(d.get("text", ""), d.get("confidence", 0))
+            for d in detections
+        ]
+        return sum(cal_confs) / len(cal_confs)
+
+    def _catalog_match_rate(self, detections: List[Dict]) -> float:
+        """Calculate what fraction of OCR detections match known product codes.
+
+        A high raw confidence is meaningless if the detected text doesn't
+        match any products in the catalog. This ratio helps the routing
+        logic decide whether to trust local OCR or escalate to Azure.
+
+        Returns:
+            Float 0.0-1.0 representing the fraction of detections that
+            contain at least one catalog product code match.
+        """
+        if not detections:
+            return 0.0
+
+        try:
+            from app.services.receipt_service import receipt_service
+            catalog = receipt_service.parser.product_catalog
+        except Exception:
+            try:
+                from app.services.product_service import product_service
+                catalog = product_service.get_product_code_map()
+                catalog = {k.upper(): v for k, v in catalog.items()}
+            except Exception:
+                return 0.5  # Can't check — give benefit of the doubt
+
+        if not catalog:
+            return 0.5
+
+        matched = 0
+        # Only consider detections that are likely product lines (3+ chars, has alpha)
+        candidate_dets = [
+            d for d in detections
+            if len(d.get("text", "").strip()) >= 3
+            and any(c.isalpha() for c in d.get("text", ""))
+        ]
+
+        if not candidate_dets:
+            return 0.0
+
+        for det in candidate_dets:
+            text = det.get("text", "").upper().strip()
+            for token in text.split():
+                clean = ''.join(c for c in token if c.isalnum()).upper()
+                if 2 <= len(clean) <= 7 and clean in catalog:
+                    matched += 1
+                    break
+
+        return matched / len(candidate_dets)
 
     def get_engine_status(self) -> Dict:
         """

@@ -258,6 +258,82 @@ class OCREngine:
         logger.info(f"OCR turbo extracted {len(detections)} elements in {elapsed_ms}ms")
         return detections
 
+    @staticmethod
+    def calibrate_confidence(text: str, raw_confidence: float) -> float:
+        """
+        Calibrate raw EasyOCR confidence to produce more realistic scores.
+
+        EasyOCR's CRNN model frequently reports inflated confidence (0.70-0.95)
+        on garbled or misread handwritten text. This calibration applies
+        evidence-based penalties to surface genuinely uncertain detections.
+
+        Penalties applied:
+            - Very short text (1-2 chars): EasyOCR overestimates on fragments
+            - High ratio of OCR-confusion characters (digits/symbols in alpha context)
+            - Non-alphanumeric noise characters
+            - All-digit text that is very long (likely misread)
+            - Repetitive character patterns (e.g., "IIII", "0000")
+
+        Args:
+            text: The detected text string.
+            raw_confidence: EasyOCR's raw confidence score (0.0-1.0).
+
+        Returns:
+            Calibrated confidence score (0.0-1.0), always <= raw_confidence.
+        """
+        if not text or not text.strip():
+            return 0.0
+
+        cal = raw_confidence
+        stripped = text.strip()
+        length = len(stripped)
+
+        # ── Penalty 1: Very short text (1-2 chars) ──
+        # EasyOCR often gives 0.8+ confidence on single-char noise fragments
+        if length == 1:
+            cal *= 0.60  # Heavy penalty — single chars are unreliable
+        elif length == 2:
+            cal *= 0.80  # Moderate penalty
+
+        # ── Penalty 2: OCR-confusion character ratio ──
+        # Characters commonly confused in handwriting OCR
+        confusion_chars = set('|![]{}()_=;$&#@~`')
+        n_confusion = sum(1 for c in stripped if c in confusion_chars)
+        if length > 0:
+            confusion_ratio = n_confusion / length
+            if confusion_ratio > 0.3:
+                cal *= 0.65  # >30% noise chars → very unreliable
+            elif confusion_ratio > 0.15:
+                cal *= 0.80
+
+        # ── Penalty 3: Repetitive characters ──
+        # "IIII", "0000", "llll" — EasyOCR artifacts from ink smudges
+        if length >= 3:
+            unique_ratio = len(set(stripped.lower())) / length
+            if unique_ratio < 0.35:
+                cal *= 0.70  # Very repetitive → likely noise
+
+        # ── Penalty 4: All-digit strings > 5 chars ──
+        # Long digit strings on handwritten receipts are often misreads
+        # (e.g., price read as phone number, date as random digits)
+        alpha_count = sum(1 for c in stripped if c.isalpha())
+        digit_count = sum(1 for c in stripped if c.isdigit())
+        if digit_count > 5 and alpha_count == 0:
+            cal *= 0.75
+
+        # ── Penalty 5: Mixed case with many symbols ──
+        # "J1L{2" type garbage from handwriting misreads
+        symbol_count = sum(1 for c in stripped if not c.isalnum() and c != ' ')
+        if symbol_count >= 2 and length <= 6:
+            cal *= 0.75
+
+        # ── Bonus: Clean alphanumeric text (3-7 chars) ──
+        # Product codes like TEW1, PEPW20, GHI are clean and reliable
+        if 3 <= length <= 7 and all(c.isalnum() for c in stripped):
+            cal = min(cal * 1.05, raw_confidence)  # Slight boost, never above raw
+
+        return round(min(cal, raw_confidence), 4)  # Never exceed raw confidence
+
     def extract_text_simple(self, image: np.ndarray) -> List[str]:
         """
         Extract text and return only the text strings (no metadata).
@@ -277,6 +353,21 @@ class OCREngine:
             return 0.0
         confidences = [d["confidence"] for d in detections]
         return round(sum(confidences) / len(confidences), 4)
+
+    def get_calibrated_avg_confidence(self, detections: List[Dict]) -> float:
+        """Calculate average CALIBRATED confidence across all detections.
+
+        Uses calibrate_confidence() to adjust each detection's raw score
+        before averaging. This gives a more realistic overall confidence
+        that the hybrid engine uses for routing decisions.
+        """
+        if not detections:
+            return 0.0
+        cal_confs = [
+            self.calibrate_confidence(d.get("text", ""), d.get("confidence", 0))
+            for d in detections
+        ]
+        return round(sum(cal_confs) / len(cal_confs), 4)
 
     def get_low_confidence_items(
         self, detections: List[Dict], threshold: float = OCR_CONFIDENCE_THRESHOLD

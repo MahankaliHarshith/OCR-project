@@ -436,12 +436,14 @@ class AzureOCREngine:
 
                 # Azure lines don't have per-line confidence in Read model,
                 # but words do. Average word confidences for the line.
-                line_conf = 1.0
+                # Use realistic default (0.80) instead of inflated 1.0.
+                line_conf = 0.80
                 if page.words:
                     # Find words that belong to this line by checking overlap
                     word_confs = []
+                    line_words = set(text.split())
                     for word in page.words:
-                        if word.content and word.content in text:
+                        if word.content and word.content.strip() in line_words:
                             if word.confidence is not None:
                                 word_confs.append(word.confidence)
                     if word_confs:
@@ -477,11 +479,17 @@ class AzureOCREngine:
                     bbox = self._polygon_to_bbox(line.polygon)
 
                     # Get word-level confidence average
-                    line_conf = 0.95  # Azure default high confidence
+                    # Use realistic default (0.80) instead of inflated 0.95.
+                    # Azure Read model doesn't always provide per-word confidence,
+                    # and defaulting to 0.95 masks potential accuracy issues.
+                    line_conf = 0.80
                     if page.words:
                         word_confs = []
+                        # Match words to this line using content overlap
+                        # Use exact word boundary matching to avoid false substring matches
+                        line_words = set(text.split())
                         for word in page.words:
-                            if word.content and word.content.strip() in text:
+                            if word.content and word.content.strip() in line_words:
                                 if word.confidence is not None:
                                     word_confs.append(word.confidence)
                         if word_confs:

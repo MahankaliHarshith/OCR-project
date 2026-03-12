@@ -92,10 +92,12 @@ AZURE_DOC_INTEL_AVAILABLE = bool(AZURE_DOC_INTEL_ENDPOINT and AZURE_DOC_INTEL_KE
 OCR_ENGINE_MODE = os.getenv("OCR_ENGINE_MODE", "auto")
 
 # Azure model selection strategy:
-#   "read-only"   → Use ONLY prebuilt-read ($0.0015/page) — RECOMMENDED for handwritten
-#   "receipt-only" → Use ONLY prebuilt-receipt ($0.01/page) — good for printed receipts
+#   "receipt-only" → Use ONLY prebuilt-receipt ($0.01/page) — BEST for receipts (structured extraction)
+#   "read-only"   → Use ONLY prebuilt-read ($0.0015/page) — cheapest, raw text only
 #   "receipt-then-read" → Try receipt first, fall back to read (BURNS 2 PAGES if receipt fails!)
-AZURE_MODEL_STRATEGY = os.getenv("AZURE_MODEL_STRATEGY", "read-only")
+# NOTE: prebuilt-receipt handles BOTH printed AND handwritten receipts and natively
+# extracts items, quantities, prices — dramatically better than raw text parsing.
+AZURE_MODEL_STRATEGY = os.getenv("AZURE_MODEL_STRATEGY", "receipt-only")
 
 # Azure receipt model confidence threshold — below this, re-run with Read model
 # (Only used when AZURE_MODEL_STRATEGY = "receipt-then-read")
@@ -133,13 +135,19 @@ AZURE_FREE_TIER_PAGES = 500
 
 # Smart routing: if local OCR confidence > this threshold, skip Azure entirely.
 # Lower = saves more Azure pages; Higher = uses Azure more often for accuracy.
-# 0.72 is the sweet spot: handwritten receipts that EasyOCR reads well enough
-# don't need Azure, but hard-to-read ones get the cloud boost.
-LOCAL_CONFIDENCE_SKIP_THRESHOLD = float(os.getenv("LOCAL_CONFIDENCE_SKIP_THRESHOLD", "0.72"))
+# 0.85 ensures only genuinely well-read receipts bypass Azure. EasyOCR often
+# reports 0.70-0.80 confidence on garbled handwritten text, so the old 0.72
+# threshold was letting bad results through.
+LOCAL_CONFIDENCE_SKIP_THRESHOLD = float(os.getenv("LOCAL_CONFIDENCE_SKIP_THRESHOLD", "0.85"))
 
 # Minimum local OCR detections to trust local results (skip Azure).
 # If local OCR finds >= this many text blocks, it probably read the receipt fine.
 LOCAL_MIN_DETECTIONS_SKIP = int(os.getenv("LOCAL_MIN_DETECTIONS_SKIP", "4"))
+
+# Minimum catalog match rate (0.0-1.0) for local OCR to skip Azure.
+# Even with high confidence, if few detected words match known product codes,
+# the local OCR probably misread the handwriting. Route to Azure for accuracy.
+LOCAL_CATALOG_MATCH_SKIP_THRESHOLD = float(os.getenv("LOCAL_CATALOG_MATCH_SKIP_THRESHOLD", "0.3"))
 
 
 # ─── Image Cache (prevents paying twice for same image) ──────────────────────

@@ -134,7 +134,7 @@ class ImagePreprocessor:
         else:
             logger.debug(f"  [2a/7] Document scan skipped — no clear boundary found ({scan_ms}ms)")
 
-        metadata["_color_image"] = img.copy()   # keep resized color for OCR color pass
+        metadata["_color_image"] = img   # keep reference (already a resize-copy, no need to deep-copy again)
 
         # 2b. WHITE BALANCE CORRECTION — neutralize color casts from lighting
         # Phone cameras under fluorescent/LED lighting produce yellow/blue casts
@@ -363,18 +363,24 @@ class ImagePreprocessor:
         h, w = gray_image.shape[:2]
         start = time.time()
 
+        # Downscale to 1/4 size for faster morphology — grid lines are large-scale
+        # features that survive downsampling perfectly (~4x speedup)
+        scale = 0.25
+        small = cv2.resize(gray_image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        h_s, w_s = small.shape[:2]
+
         # Binarize (invert so lines are white)
         _, binary = cv2.threshold(
-            gray_image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+            small, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
         )
 
-        # Detect long horizontal lines
-        h_kernel_len = max(w // 5, 50)
+        # Detect long horizontal lines (using downscaled dimensions)
+        h_kernel_len = max(w_s // 5, 12)
         h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (h_kernel_len, 1))
         horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kernel, iterations=2)
 
         # Detect long vertical lines
-        v_kernel_len = max(h // 5, 50)
+        v_kernel_len = max(h_s // 5, 12)
         v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, v_kernel_len))
         vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kernel, iterations=2)
 
@@ -382,13 +388,13 @@ class ImagePreprocessor:
         h_contours, _ = cv2.findContours(
             horizontal, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        sig_h = sum(1 for c in h_contours if cv2.boundingRect(c)[2] > w * 0.4)
+        sig_h = sum(1 for c in h_contours if cv2.boundingRect(c)[2] > w_s * 0.4)
 
         # Count significant vertical lines (span ≥30% of image height)
         v_contours, _ = cv2.findContours(
             vertical, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        sig_v = sum(1 for c in v_contours if cv2.boundingRect(c)[3] > h * 0.3)
+        sig_v = sum(1 for c in v_contours if cv2.boundingRect(c)[3] > h_s * 0.3)
 
         # Need strong evidence of a table: many rows (≥6 h-lines) and
         # multiple columns (≥3 v-lines) to avoid false positives on
@@ -1049,10 +1055,12 @@ class ImagePreprocessor:
             # - Reversed gradient asymmetry
             ink_ratio = lower_ink / (total_ink + 1e-6)
             
-            # Strong signal: lower half has >60% of ink AND gradient asymmetry is reversed
+            # Strong signal: lower half has >70% of ink AND gradient asymmetry is reversed
+            # Threshold raised from 0.60 to 0.70 to prevent false flips on receipts
+            # with large totals, stamps, or signatures at the bottom
             is_inverted = (
-                ink_ratio > 0.60
-                and lower_gradient_sum > upper_gradient_sum * 1.3
+                ink_ratio > 0.70
+                and lower_gradient_sum > upper_gradient_sum * 1.5
             )
             
             logger.debug(

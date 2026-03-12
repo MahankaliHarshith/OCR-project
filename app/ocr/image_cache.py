@@ -40,7 +40,10 @@ class ImageCache:
         - Thread-safe
         - Hit/miss statistics
         - Disk persistence (JSON) — survives server restarts
+        - Debounced disk writes (at most once per 30s) to reduce I/O
     """
+
+    DISK_WRITE_DEBOUNCE_SECONDS = 30  # Min interval between disk writes
 
     def __init__(self, max_size: int = 100, ttl_seconds: int = 3600, persist_path: Optional[str] = None):
         """
@@ -131,8 +134,13 @@ class ImageCache:
                 f"cache_size={len(self._cache)}/{self.max_size}"
             )
 
-            # Persist inside the lock to prevent race (data is small, fast enough inline)
-            self._save_to_disk_unlocked()
+            # Persist with debounce — at most once per 30s to reduce disk I/O
+            now = time.time()
+            if not hasattr(self, '_last_disk_write'):
+                self._last_disk_write = 0.0
+            if now - self._last_disk_write >= self.DISK_WRITE_DEBOUNCE_SECONDS:
+                self._save_to_disk_unlocked()
+                self._last_disk_write = now
 
     def get_stats(self) -> Dict:
         """Get cache performance statistics."""

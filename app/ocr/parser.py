@@ -488,13 +488,14 @@ class ReceiptParser:
                     uline_y = uline.get("y_center", 0)
                     best_item = None
                     best_dist = float('inf')
+                    # Adaptive proximity: use 6% of max_y (was 4%), which better handles
+                    # widely-spaced handwritten receipts while still preventing cross-line jumps
+                    orphan_proximity = max_y * 0.06 if max_y else 100
                     for item in items:
                         if item["quantity"] == 1.0:
                             item_y = item.get("y_center", 0)
                             dist = abs(uline_y - item_y) if uline_y and item_y else float('inf')
-                            # Only associate if within same Y-band (tighter than line grouping)
-                            # This prevents quantities from jumping to items on other lines
-                            if dist < best_dist and dist < (max_y * 0.04 if max_y else 100):
+                            if dist < best_dist and dist < orphan_proximity:
                                 best_dist = dist
                                 best_item = item
                     if best_item:
@@ -780,13 +781,13 @@ class ReceiptParser:
             return ocr_results  # Fallback: return as-is
 
         # Filter out top-edge noise (y < 2% of image height)
-        # These are typically header text or edge artifacts
+        # Only filter if ALSO low confidence — prevents dropping first legitimate item
         max_y = max(d["y_center"] for d in detections_with_pos)
         top_edge_threshold = max_y * 0.02
         filtered_detections = []
         for d in detections_with_pos:
-            if d["y_center"] < top_edge_threshold:
-                logger.debug(f"    FILTER-OUT top-edge: {d['text']!r} (y={d['y_center']:.0f})")
+            if d["y_center"] < top_edge_threshold and d.get("confidence", 1.0) < 0.3:
+                logger.debug(f"    FILTER-OUT top-edge noise: {d['text']!r} (y={d['y_center']:.0f}, conf={d.get('confidence', 0):.2f})")
             else:
                 filtered_detections.append(d)
         if filtered_detections:

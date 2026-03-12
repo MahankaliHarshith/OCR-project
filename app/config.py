@@ -185,11 +185,14 @@ FUZZY_MAX_RESULTS = 5  # More candidates (was 3)
 def get_adaptive_fuzzy_cutoff(code_length: int) -> float:
     """Length-adaptive fuzzy match cutoff.
     Short codes need stricter matching to avoid false positives.
-    Long codes can tolerate more OCR errors."""
+    Long codes can tolerate more OCR errors.
+    
+    Tightened for ≤4 chars to prevent single-char-difference false matches
+    (e.g. TEW1→TEW4, MNO→MN0)."""
     if code_length <= 3:
-        return 0.85  # Very strict for 3-char codes (e.g. ABC)
+        return 0.88  # Very strict for 3-char codes (e.g. ABC)
     elif code_length <= 4:
-        return 0.78  # Moderate for 4-char codes
+        return 0.82  # Strict for 4-char codes — 1 char diff = reject
     elif code_length <= 6:
         return 0.72  # Default for medium codes
     else:

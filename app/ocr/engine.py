@@ -66,12 +66,13 @@ class OCREngine:
         # Warmup: run a realistically-sized dummy image through OCR to trigger
         # PyTorch JIT compilation. Without this, the first real scan pays ~5-8s
         # of JIT overhead on CPU, making structured receipts appear slow.
-        # Use 480x640 to match typical preprocessed receipt dimensions
-        # after CRAFT's internal canvas_size scaling.
+        # Use 1024x768 to match actual canvas_size used in real scans —
+        # CRAFT JIT compiles differently for different input sizes, so
+        # the warmup image must be close to real scan dimensions.
         warmup_start = time.time()
-        dummy = np.full((640, 480), 200, dtype=np.uint8)  # light gray, receipt-like
+        dummy = np.full((768, 1024), 200, dtype=np.uint8)  # realistic receipt size
         try:
-            self.reader.readtext(dummy, detail=0, canvas_size=640, mag_ratio=1.0)
+            self.reader.readtext(dummy, detail=0, canvas_size=1024, mag_ratio=1.0)
         except Exception:
             pass  # Warmup errors are harmless
         warmup_ms = int((time.time() - warmup_start) * 1000)

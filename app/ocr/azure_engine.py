@@ -148,7 +148,7 @@ class AzureOCREngine:
 
         return optimized
 
-    def extract_receipt_structured(self, image_path: str) -> Dict:
+    def extract_receipt_structured(self, image_path: str, image_bytes: bytes = None) -> Dict:
         """
         Extract structured receipt data using Azure's prebuilt-receipt model.
 
@@ -160,6 +160,7 @@ class AzureOCREngine:
 
         Args:
             image_path: Path to the receipt image file.
+            image_bytes: Optional pre-optimized image bytes (skips disk re-read).
 
         Returns:
             Dict with structured receipt data and raw OCR detections.
@@ -169,9 +170,9 @@ class AzureOCREngine:
         start = time.time()
         logger.info(f"Azure Receipt extraction starting: {image_path}")
 
-        # Optimize image before upload (saves bandwidth + time)
+        # Use provided bytes or optimize from disk (saves ~10-30ms when bytes available)
         with optional_span(_tracer, "azure.optimize_image") as _opt_span:
-            image_data = self._optimize_image_for_upload(image_path)
+            image_data = image_bytes if image_bytes else self._optimize_image_for_upload(image_path)
             _opt_span.set_attribute("image.size_bytes", len(image_data))
 
         success = False
@@ -213,7 +214,7 @@ class AzureOCREngine:
 
         return parsed
 
-    def extract_text_read(self, image_path: str) -> List[Dict]:
+    def extract_text_read(self, image_path: str, image_bytes: bytes = None) -> List[Dict]:
         """
         Extract raw text using Azure's prebuilt-read model.
 
@@ -223,6 +224,7 @@ class AzureOCREngine:
 
         Args:
             image_path: Path to the image file.
+            image_bytes: Optional pre-optimized image bytes (skips disk re-read).
 
         Returns:
             List of detection dicts compatible with EasyOCR format:
@@ -233,9 +235,9 @@ class AzureOCREngine:
         start = time.time()
         logger.info(f"Azure Read extraction starting: {image_path}")
 
-        # Optimize image before upload
+        # Use provided bytes or optimize from disk
         with optional_span(_tracer, "azure.optimize_image") as _opt_span:
-            image_data = self._optimize_image_for_upload(image_path)
+            image_data = image_bytes if image_bytes else self._optimize_image_for_upload(image_path)
             _opt_span.set_attribute("image.size_bytes", len(image_data))
 
         success = False

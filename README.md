@@ -14,6 +14,7 @@
 
 - [Features](#features)
 - [Architecture](#architecture)
+- [Request Flow Diagram](#request-flow-diagram)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
 - [Configuration](#configuration)
@@ -86,6 +87,226 @@
 │  │  MigrationMgr    │    │  Drop-in swap via env var    │  │
 │  │  BackupManager   │    │                              │  │
 │  └──────────────────┘    └──────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Request Flow Diagram
+
+Detailed end-to-end flow showing every stage a receipt goes through — from user interaction to final output.
+
+### End-to-End Scan Flow
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                        USER (Browser / app.js)                       │
+│  [Scan] Upload file / Camera capture / Clipboard paste               │
+│  [Review] View & edit OCR results                                    │
+│  [Batch] Manage batches, async processing                            │
+│  [Products] CRUD product catalog                                     │
+│  [Dashboard] Stats, engine status, cost tracking                     │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             │  POST /api/receipts/scan (multipart file)
+                             ▼
+┌─── FastAPI Middleware Stack (6 layers) ───────────────────────────────┐
+│  DevTunnel CORS → Security Headers (CSP, nosniff, Referrer-Policy)   │
+│  → Rate Limiter (30 RPM general, 10 RPM scan)                        │
+│  → API Key Guard (X-API-Key for destructive endpoints)               │
+│  → GZip Compression (>500B, ~60% savings)                            │
+│  → CORS → Request Logging (method, path, status, duration)           │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             ▼
+┌─── API Route Validation ─────────────────────────────────────────────┐
+│  1. Extension check (.jpg / .png / .bmp / .tiff / .webp)             │
+│  2. Stream size check (≤20MB, read in 1MB chunks)                    │
+│  3. Magic byte validation (prevents disguised uploads)               │
+│  4. Save to uploads/ with UUID-suffixed filename                     │
+│  5. asyncio.to_thread() → non-blocking processing                   │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             ▼
+┌══════════════════════════════════════════════════════════════════════┐
+║           ReceiptService.process_receipt() — 5 Steps                ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  STEP 0: IMAGE CACHE CHECK                                          ║
+║     SHA-256 hash → LRU cache lookup                                  ║
+║     HIT? → Skip directly to Step 4 (FREE)                           ║
+║                         ↓ MISS                                       ║
+║                                                                      ║
+║  STEP 1: SAVE UPLOADED IMAGE                                         ║
+║     Copy to uploads/ directory with receipt name                     ║
+║                         ↓                                            ║
+║                                                                      ║
+║  STEP 2: IMAGE PREPROCESSING (ImagePreprocessor)                     ║
+║     ┌─────────────────────────────────────────────┐                  ║
+║     │ 1. EXIF rotation fix                        │                  ║
+║     │ 2. Resize (max 1800px)                      │                  ║
+║     │ 3. Document scan (edge detection →          │                  ║
+║     │    contour → 4-point perspective warp)      │                  ║
+║     │ 4. White balance (gray-world correction)    │                  ║
+║     │ 5. Grayscale conversion                     │                  ║
+║     │ 6. Deskew (Hough lines, rotate if >1.5°)    │                  ║
+║     │ 7. Upside-down detection & 180° fix         │                  ║
+║     │ 8. Quality assessment (blur, brightness,    │                  ║
+║     │    contrast → quality score)                │                  ║
+║     │ 9. Enhancement (denoise, sharpen, CLAHE,    │                  ║
+║     │    morphological closing, shadow normalize) │                  ║
+║     └─────────────────────────────────────────────┘                  ║
+║                         ↓                                            ║
+║                                                                      ║
+║  STEP 3: HYBRID OCR ENGINE (HybridOCREngine)                        ║
+║     ┌─────────────────────────────────────────────┐                  ║
+║     │          AUTO MODE (default)                │                  ║
+║     │                                             │                  ║
+║     │  Image cache → HIT? Return (FREE)           │                  ║
+║     │       ↓ MISS                                │                  ║
+║     │  Quality gate → BAD? Local only             │                  ║
+║     │       ↓ PASS                                │                  ║
+║     │                                             │                  ║
+║     │  ┌───────────────────────────────┐          │                  ║
+║     │  │ LOCAL EasyOCR (always free)   │          │                  ║
+║     │  │ • Dual-pass: grayscale+color  │          │                  ║
+║     │  │ • Dynamic param tuning        │          │                  ║
+║     │  │ • CRAFT text detector         │          │                  ║
+║     │  └──────────┬────────────────────┘          │                  ║
+║     │             ↓                               │                  ║
+║     │  Calibrated conf ≥ 0.85                     │                  ║
+║     │  AND detections ≥ 4                         │                  ║
+║     │  AND catalog match ≥ 30%?                   │                  ║
+║     │       ↓ YES → SKIP Azure! Return local      │                  ║
+║     │       ↓ NO                                  │                  ║
+║     │                                             │                  ║
+║     │  ┌───────────────────────────────┐          │                  ║
+║     │  │ AZURE Document Intelligence  │          │                  ║
+║     │  │ • Optimize image (<1500px)    │          │                  ║
+║     │  │ • Receipt / Read model        │          │                  ║
+║     │  │ • _get_field_value() helper   │          │                  ║
+║     │  │ • 50/day, 500/month caps      │          │                  ║
+║     │  │ • Cache result (24h TTL)      │          │                  ║
+║     │  └──────────┬────────────────────┘          │                  ║
+║     │             ↓ FAIL? Fallback to local       │                  ║
+║     └─────────────────────────────────────────────┘                  ║
+║                         ↓                                            ║
+║                                                                      ║
+║  STEP 4: RECEIPT PARSING (ReceiptParser)                             ║
+║     ┌─────────────────────────────────────────────┐                  ║
+║     │ • Line cleaning & skip detection            │                  ║
+║     │ • 10+ regex patterns (priority ordered)     │                  ║
+║     │ • 4-tier code matching:                     │                  ║
+║     │   exact → OCR-sub → handwriting-sub → fuzzy │                  ║
+║     │ • Adaptive fuzzy cutoff (strict for short)  │                  ║
+║     │ • OCR digit fix (O→0, I→1, S→5)            │                  ║
+║     │ • Total line extraction                     │                  ║
+║     └─────────────────────────────────────────────┘                  ║
+║                         ↓                                            ║
+║                                                                      ║
+║  STEP 4b: BILL TOTAL VERIFICATION (BillTotalVerifier)                ║
+║     • Total line extraction (spatial + keyword)                      ║
+║     • Multi-pass digit re-reading                                    ║
+║     • Arithmetic reconciliation (OCR total vs computed sum)          ║
+║     • Dispute resolution (confidence-weighted trust)                 ║
+║                         ↓                                            ║
+║                                                                      ║
+║  STEP 4c: MATH / PRICE VERIFICATION                                 ║
+║     • Catalog price injection per item                               ║
+║     • Line total validation (qty × unit_price)                       ║
+║                         ↓                                            ║
+║                                                                      ║
+║  STEP 5: DATABASE SAVE (SQLite / PostgreSQL)                         ║
+║     • INSERT → receipts table                                        ║
+║     • INSERT → receipt_items table                                   ║
+║     • INSERT → processing_logs table                                 ║
+║     • Record Prometheus metrics                                      ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
+                             │
+                             ▼
+              JSON Response → Frontend (app.js)
+              { receipt_data, items[], metadata, errors }
+                             │
+                             ▼
+┌─── User Review & Export ─────────────────────────────────────────────┐
+│  View/edit items → PUT /api/receipts/items/{id}                      │
+│  Add to batch → POST /api/export/excel → Download .xlsx              │
+│  (Excel: Data sheet + Summary sheet, low-confidence highlighting)    │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Async Batch Flow
+
+```
+POST /api/batch (up to 20 files)
+    │
+    ▼
+[Validate & Save] ──► Return 202 { batch_id } immediately
+    │
+    ▼
+[Background asyncio.Task]
+    ├── Semaphore (3 concurrent workers)
+    ├── File 1 ─── ThreadPoolExecutor ──► process_receipt()
+    ├── File 2 ─── ThreadPoolExecutor ──► process_receipt()
+    ├── File 3 ─── ThreadPoolExecutor ──► process_receipt()
+    │   ... (queued until semaphore releases)
+    └── File N ─── ThreadPoolExecutor ──► process_receipt()
+         │
+         ├── WebSocket push (/ws/batch/{id}) ──► real-time progress
+         ▼
+    [BatchJob.status = COMPLETED]
+         │
+    GET /api/batch/{id} ──► { status, progress_percent, results[] }
+```
+
+### Database Schema
+
+```
+┌──────────────┐       ┌──────────────────┐       ┌─────────────────┐
+│   products   │       │     receipts     │       │ processing_logs │
+├──────────────┤       ├──────────────────┤       ├─────────────────┤
+│ code (PK)    │       │ id (PK)          │◄──┐   │ id (PK)         │
+│ name         │       │ receipt_number   │   │   │ receipt_id (FK) │
+│ price        │       │ store_name       │   │   │ step_name       │
+│ unit         │       │ scan_date        │   │   │ duration_ms     │
+│ category     │       │ total_amount     │   │   │ success         │
+│ created_at   │       │ image_path       │   │   │ error_message   │
+└──────────────┘       │ ocr_engine       │   │   │ created_at      │
+                       │ confidence_avg   │   │   └─────────────────┘
+                       │ status           │   │
+                       │ created_at       │   │
+                       └──────────────────┘   │
+                              │               │
+                              ▼               │
+                       ┌──────────────────┐   │
+                       │  receipt_items   │   │
+                       ├──────────────────┤   │
+                       │ id (PK)          │   │
+                       │ receipt_id (FK) ─┼───┘
+                       │ product_code     │
+                       │ product_name     │
+                       │ quantity         │
+                       │ unit_price       │
+                       │ line_total       │
+                       │ ocr_confidence   │
+                       │ manually_edited  │
+                       └──────────────────┘
+```
+
+### Observability Stack
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FastAPI Application                       │
+│                                                             │
+│  /metrics ──► Prometheus ──► Grafana (20-panel dashboard)   │
+│                                │                            │
+│                                ▼                            │
+│                          Alertmanager                       │
+│                          (15 alert rules)                   │
+│                                                             │
+│  OTLP spans ──► Jaeger (distributed tracing)                │
+│                                                             │
+│  JSON logs ──► Promtail ──► Loki ──► Grafana (LogQL)        │
+│  Text logs ──► Promtail ──► Loki                            │
 └─────────────────────────────────────────────────────────────┘
 ```
 

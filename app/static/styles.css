@@ -2545,3 +2545,523 @@ button:disabled, .btn:disabled {
     color: #92400E;
     border: 1px solid #FDE68A;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TRAINING TAB
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Dashboard Stats Grid ─────────────────────────────────────────────── */
+.train-dashboard {
+    margin-bottom: 1.25rem;
+}
+
+.train-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.train-stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 1rem;
+    text-align: center;
+    transition: all var(--duration) var(--ease);
+}
+
+.train-stat-card:hover {
+    box-shadow: var(--shadow-sm);
+    border-color: var(--primary-wash);
+    transform: translateY(-1px);
+}
+
+.train-stat-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--primary);
+    line-height: 1.2;
+}
+
+.train-stat-label {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 0.25rem;
+}
+
+/* ─── Training Sections ────────────────────────────────────────────────── */
+.train-section {
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+}
+
+/* ─── Upload Area ──────────────────────────────────────────────────────── */
+.train-upload-area {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all var(--duration) var(--ease);
+    margin-top: 0.75rem;
+}
+
+.train-upload-area:hover,
+.train-upload-area.drag-over {
+    border-color: var(--primary);
+    background: rgba(79, 107, 246, 0.03);
+}
+
+.train-upload-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.train-upload-text {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.train-browse-link {
+    color: var(--primary);
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.train-upload-hint {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+/* ─── Ground Truth Form ────────────────────────────────────────────────── */
+.train-gt-form {
+    margin-top: 0.75rem;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 1rem;
+    background: var(--bg);
+}
+
+.train-gt-preview {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.train-gt-preview img {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+.train-gt-file-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text);
+}
+
+.train-gt-items-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.train-gt-items {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+
+.train-gt-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.train-gt-row input {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.82rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    transition: border-color var(--duration) var(--ease);
+}
+
+.train-gt-row input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(79, 107, 246, 0.1);
+}
+
+.train-gt-row input::placeholder {
+    color: var(--text-muted);
+}
+
+.train-gt-remove-btn {
+    background: none;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    padding: 0.3rem;
+    border-radius: var(--radius-xs);
+    display: flex;
+    align-items: center;
+    transition: background var(--duration) var(--ease);
+}
+
+.train-gt-remove-btn:hover {
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.train-gt-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+/* ─── Batch Upload Area ────────────────────────────────────────────────── */
+.train-batch-area {
+    margin-top: 0.75rem;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 1rem;
+    background: var(--bg);
+}
+
+.train-batch-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.train-batch-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.train-batch-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-xs);
+    background: var(--surface);
+    font-size: 0.8rem;
+}
+
+.train-batch-item .batch-item-name {
+    flex: 1;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.train-batch-item .batch-item-status {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+.train-batch-item.success { border-left: 3px solid var(--accent); }
+.train-batch-item.failed  { border-left: 3px solid var(--danger); }
+.train-batch-item.pending { border-left: 3px solid var(--warning); }
+
+/* ─── Benchmark Controls & Results ─────────────────────────────────────── */
+.train-benchmark-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 0.75rem;
+}
+
+.train-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.train-checkbox input[type="checkbox"] {
+    accent-color: var(--primary);
+    width: 15px;
+    height: 15px;
+}
+
+.train-benchmark-results {
+    margin-top: 1rem;
+}
+
+.train-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.65rem;
+    margin-bottom: 1rem;
+}
+
+.train-metric-card {
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem;
+    text-align: center;
+}
+
+.train-metric-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.train-metric-value.good  { color: var(--accent); }
+.train-metric-value.ok    { color: var(--warning); }
+.train-metric-value.poor  { color: var(--danger); }
+
+.train-metric-label {
+    font-size: 0.68rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-top: 0.2rem;
+}
+
+.train-benchmark-details {
+    margin-top: 0.5rem;
+}
+
+.data-table-sm {
+    font-size: 0.78rem;
+}
+
+.data-table-sm th,
+.data-table-sm td {
+    padding: 0.4rem 0.6rem;
+}
+
+/* ─── Optimization Controls & Results ──────────────────────────────────── */
+.train-optimize-controls {
+    margin-top: 0.75rem;
+}
+
+.train-optimize-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.train-optimize-note {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.train-optimize-results {
+    margin-top: 1rem;
+    border-top: 1px solid var(--border-light);
+    padding-top: 1rem;
+}
+
+.train-optimize-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    margin-bottom: 0.75rem;
+}
+
+.train-optimize-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--radius-full);
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.train-optimize-badge.improved {
+    background: #D1FAE5;
+    color: #065F46;
+}
+
+.train-optimize-badge.unchanged {
+    background: var(--border-light);
+    color: var(--text-secondary);
+}
+
+.train-optimize-params {
+    margin-bottom: 0.75rem;
+}
+
+/* ─── Parameters Grid ──────────────────────────────────────────────────── */
+.train-params-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.train-param-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.55rem 0.75rem;
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-xs);
+    font-size: 0.8rem;
+}
+
+.train-param-name {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.train-param-value {
+    color: var(--text);
+    font-weight: 600;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    font-size: 0.78rem;
+}
+
+/* ─── Profiles List ────────────────────────────────────────────────────── */
+.train-profiles-list {
+    margin-top: 0.75rem;
+}
+
+.train-profile-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.65rem 0.85rem;
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    margin-bottom: 0.5rem;
+    transition: all var(--duration) var(--ease);
+}
+
+.train-profile-card:hover {
+    border-color: var(--primary-wash);
+    box-shadow: var(--shadow-xs);
+}
+
+.train-profile-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.train-profile-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.train-profile-meta {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+/* ─── Template Learning ────────────────────────────────────────────────── */
+.train-template-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.train-template-result {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+}
+
+/* ─── Processing Spinner ───────────────────────────────────────────────── */
+.train-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ─── Empty State ──────────────────────────────────────────────────────── */
+.empty-state {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    padding: 1.5rem;
+    font-style: italic;
+}
+
+/* ─── Responsive: Training Tab ─────────────────────────────────────────── */
+@media (max-width: 640px) {
+    .train-stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .train-metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .train-gt-row {
+        grid-template-columns: 1fr 1fr auto;
+    }
+
+    .train-benchmark-controls {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .train-optimize-actions {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .train-params-grid {
+        grid-template-columns: 1fr;
+    }
+}

@@ -50,6 +50,10 @@
                         <i data-lucide="package" class="nav-icon"></i>
                         <span>Catalog</span>
                     </button>
+                    <button class="nav-btn" data-tab="train" role="tab" aria-selected="false" aria-controls="tab-train" id="tab-btn-train">
+                        <i data-lucide="graduation-cap" class="nav-icon"></i>
+                        <span>Train</span>
+                    </button>
                 </div>
             </nav>
         </div>
@@ -568,6 +572,285 @@
                         <tbody id="catalogBody"></tbody>
                     </table>
                 </div>
+            </div>
+        </section>
+
+        <!-- ─── Train Tab ──────────────────────────────────────────── -->
+        <section id="tab-train" class="tab-content" role="tabpanel" aria-labelledby="tab-btn-train">
+            <div class="catalog-container">
+
+                <!-- Training Status Dashboard -->
+                <div class="train-dashboard" id="trainDashboard">
+                    <div class="section-header">
+                        <div class="card-label">
+                            <i data-lucide="activity" style="width:15px;height:15px"></i>
+                            Training Pipeline
+                        </div>
+                        <button class="btn btn-ghost btn-sm" id="refreshTrainStatusBtn" title="Refresh status">
+                            <i data-lucide="refresh-cw" style="width:14px;height:14px"></i>
+                        </button>
+                    </div>
+                    <div class="train-stats-grid">
+                        <div class="train-stat-card">
+                            <div class="train-stat-value" id="trainSampleCount">0</div>
+                            <div class="train-stat-label">Training Samples</div>
+                        </div>
+                        <div class="train-stat-card">
+                            <div class="train-stat-value" id="trainBenchmarkCount">0</div>
+                            <div class="train-stat-label">Benchmarks Run</div>
+                        </div>
+                        <div class="train-stat-card">
+                            <div class="train-stat-value" id="trainProfileCount">0</div>
+                            <div class="train-stat-label">Saved Profiles</div>
+                        </div>
+                        <div class="train-stat-card">
+                            <div class="train-stat-value" id="trainTemplateCount">0</div>
+                            <div class="train-stat-label">Templates</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Upload Training Data -->
+                <div class="train-section" id="trainUploadSection">
+                    <div class="section-header">
+                        <div class="card-label">
+                            <i data-lucide="upload" style="width:15px;height:15px"></i>
+                            Upload Labeled Receipts
+                        </div>
+                    </div>
+                    <div class="train-upload-area" id="trainDropZone">
+                        <div class="train-upload-inner">
+                            <i data-lucide="image-plus" style="width:36px;height:36px;color:var(--primary)"></i>
+                            <p class="train-upload-text">Drop receipt image here or <label for="trainFileInput" class="train-browse-link">browse</label></p>
+                            <p class="train-upload-hint">JPG, PNG, BMP, TIFF, WebP — Max 20MB</p>
+                            <input type="file" id="trainFileInput" accept="image/*" style="display:none" multiple>
+                        </div>
+                    </div>
+
+                    <!-- Ground Truth Form (shown after image selected) -->
+                    <div class="train-gt-form" id="trainGtForm" style="display:none">
+                        <div class="train-gt-preview">
+                            <img id="trainPreviewImg" src="" alt="Receipt preview">
+                            <div class="train-gt-file-info">
+                                <span id="trainFileName">receipt.jpg</span>
+                                <button class="btn btn-ghost btn-sm" id="trainClearFileBtn" title="Remove file">
+                                    <i data-lucide="x" style="width:14px;height:14px"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="train-gt-items-header">
+                            <span class="card-label" style="font-size:0.82rem">
+                                <i data-lucide="list-checks" style="width:14px;height:14px"></i>
+                                Ground Truth Items
+                            </span>
+                            <button class="btn btn-ghost btn-sm" id="trainAddItemBtn">
+                                <i data-lucide="plus" style="width:14px;height:14px"></i>
+                                Add Item
+                            </button>
+                        </div>
+                        <div class="train-gt-items" id="trainGtItems">
+                            <!-- Dynamic rows will be inserted here -->
+                        </div>
+                        <div class="train-gt-actions">
+                            <button class="btn btn-primary" id="trainSubmitBtn">
+                                <i data-lucide="upload" style="width:15px;height:15px"></i>
+                                Upload Training Sample
+                            </button>
+                            <button class="btn btn-ghost" id="trainCancelBtn">Cancel</button>
+                        </div>
+                    </div>
+
+                    <!-- Batch Upload for multiple files -->
+                    <div class="train-batch-area" id="trainBatchArea" style="display:none">
+                        <div class="train-batch-header">
+                            <span class="card-label" style="font-size:0.82rem">
+                                <i data-lucide="layers" style="width:14px;height:14px"></i>
+                                Batch Upload — <span id="trainBatchFileCount">0</span> files
+                            </span>
+                            <button class="btn btn-ghost btn-sm" id="trainBatchClearBtn">Clear All</button>
+                        </div>
+                        <div class="train-batch-list" id="trainBatchList"></div>
+                        <div class="train-batch-progress" id="trainBatchProgress" style="display:none">
+                            <div class="progress-track"><div class="progress-fill" id="trainBatchProgressFill"></div></div>
+                            <p class="train-batch-status" id="trainBatchStatus">0 / 0</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Training Samples List -->
+                <div class="train-section" id="trainSamplesSection">
+                    <div class="section-header">
+                        <div class="card-label">
+                            <i data-lucide="database" style="width:15px;height:15px"></i>
+                            Training Samples
+                        </div>
+                        <button class="btn btn-ghost btn-sm" id="refreshSamplesBtn" title="Refresh list">
+                            <i data-lucide="refresh-cw" style="width:14px;height:14px"></i>
+                        </button>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="data-table" id="trainSamplesTable">
+                            <thead>
+                                <tr>
+                                    <th>Receipt ID</th>
+                                    <th>Items</th>
+                                    <th>Total Qty</th>
+                                    <th>Added</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="trainSamplesBody">
+                                <tr><td colspan="5" class="empty-state">No training samples yet. Upload labeled receipts above.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Benchmark Panel -->
+                <div class="train-section" id="trainBenchmarkSection">
+                    <div class="section-header">
+                        <div class="card-label">
+                            <i data-lucide="bar-chart-3" style="width:15px;height:15px"></i>
+                            Accuracy Benchmark
+                        </div>
+                    </div>
+                    <div class="train-benchmark-controls">
+                        <button class="btn btn-primary" id="runBenchmarkBtn">
+                            <i data-lucide="play" style="width:15px;height:15px"></i>
+                            Run Benchmark
+                        </button>
+                        <label class="train-checkbox">
+                            <input type="checkbox" id="benchmarkVerbose" checked>
+                            <span>Show per-image details</span>
+                        </label>
+                    </div>
+                    <div class="train-benchmark-results" id="benchmarkResults" style="display:none">
+                        <div class="train-metrics-grid" id="benchmarkMetrics"></div>
+                        <div class="train-benchmark-details" id="benchmarkDetails" style="display:none">
+                            <div class="card-label" style="font-size:0.78rem;margin-bottom:0.5rem">
+                                <i data-lucide="file-text" style="width:13px;height:13px"></i>
+                                Per-Image Breakdown
+                            </div>
+                            <div class="table-wrapper">
+                                <table class="data-table data-table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Receipt</th>
+                                            <th>Matched</th>
+                                            <th>Missing</th>
+                                            <th>Extra</th>
+                                            <th>Qty Match</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="benchmarkDetailsBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Optimization Panel -->
+                <div class="train-section" id="trainOptimizeSection">
+                    <div class="section-header">
+                        <div class="card-label">
+                            <i data-lucide="settings" style="width:15px;height:15px"></i>
+                            Auto-Optimize OCR
+                        </div>
+                    </div>
+                    <div class="train-optimize-controls">
+                        <div class="form-grid" style="margin-bottom:0.75rem">
+                            <div class="form-group">
+                                <label for="optimizeStrategy">Strategy</label>
+                                <select id="optimizeStrategy" class="input">
+                                    <option value="smart">Smart Tune (fast)</option>
+                                    <option value="grid">Grid Search (thorough)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="optimizeMetric">Optimize For</label>
+                                <select id="optimizeMetric" class="input">
+                                    <option value="f1_score">F1 Score</option>
+                                    <option value="precision">Precision</option>
+                                    <option value="recall">Recall</option>
+                                    <option value="code_accuracy">Code Accuracy</option>
+                                    <option value="qty_accuracy">Qty Accuracy</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="optimizeRounds">Max Rounds</label>
+                                <select id="optimizeRounds" class="input">
+                                    <option value="2">2</option>
+                                    <option value="3" selected>3</option>
+                                    <option value="5">5</option>
+                                    <option value="10">10</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="train-optimize-actions">
+                            <button class="btn btn-accent" id="runOptimizeBtn">
+                                <i data-lucide="wand-2" style="width:15px;height:15px"></i>
+                                Start Optimization
+                            </button>
+                            <span class="train-optimize-note">Requires ≥2 training samples</span>
+                        </div>
+                    </div>
+                    <div class="train-optimize-results" id="optimizeResults" style="display:none">
+                        <div class="train-optimize-summary" id="optimizeSummary"></div>
+                        <div class="train-optimize-params" id="optimizeParams"></div>
+                        <button class="btn btn-primary" id="applyProfileBtn" style="display:none">
+                            <i data-lucide="check-circle" style="width:15px;height:15px"></i>
+                            Apply Optimized Profile
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Current Parameters -->
+                <div class="train-section" id="trainParamsSection">
+                    <div class="section-header">
+                        <div class="card-label">
+                            <i data-lucide="sliders-horizontal" style="width:15px;height:15px"></i>
+                            Current OCR Parameters
+                        </div>
+                        <button class="btn btn-ghost btn-sm" id="refreshParamsBtn" title="Refresh">
+                            <i data-lucide="refresh-cw" style="width:14px;height:14px"></i>
+                        </button>
+                    </div>
+                    <div class="train-params-grid" id="currentParamsGrid">
+                        <p class="empty-state">Loading parameters…</p>
+                    </div>
+                </div>
+
+                <!-- Saved Profiles -->
+                <div class="train-section" id="trainProfilesSection">
+                    <div class="section-header">
+                        <div class="card-label">
+                            <i data-lucide="bookmark" style="width:15px;height:15px"></i>
+                            Saved Profiles
+                        </div>
+                    </div>
+                    <div id="savedProfilesList" class="train-profiles-list">
+                        <p class="empty-state">No saved profiles yet. Run optimization first.</p>
+                    </div>
+                </div>
+
+                <!-- Template Learning -->
+                <div class="train-section" id="trainTemplateSection">
+                    <div class="section-header">
+                        <div class="card-label">
+                            <i data-lucide="layout-template" style="width:15px;height:15px"></i>
+                            Template Learning
+                        </div>
+                    </div>
+                    <div class="train-template-controls">
+                        <button class="btn btn-primary btn-sm" id="learnTemplateBtn">
+                            <i data-lucide="brain" style="width:14px;height:14px"></i>
+                            Learn Receipt Template
+                        </button>
+                        <span class="train-optimize-note">Analyzes receipt layouts to speed up future scans</span>
+                    </div>
+                    <div id="templateResult" style="display:none" class="train-template-result"></div>
+                </div>
+
             </div>
         </section>
     </main>

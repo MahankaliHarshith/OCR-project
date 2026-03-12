@@ -288,6 +288,7 @@ $$('.nav-btn').forEach(btn => {
             if (searchInput) searchInput.value = '';
             loadCatalog();
         }
+        if (tab === 'train') loadTrainingTab();
     });
 });
 
@@ -396,6 +397,9 @@ document.addEventListener('keydown', (e) => {
     } else if (e.key === '3' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         $$('.nav-btn')[2]?.click();
+    } else if (e.key === '4' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        $$('.nav-btn')[3]?.click();
     }
     // N = New scan (reset to upload)
     else if (e.key === 'n' || e.key === 'N') {
@@ -2713,4 +2717,838 @@ document.addEventListener('DOMContentLoaded', () => {
             e.returnValue = '';
         }
     });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TRAINING TAB — Upload labeled receipts, benchmark, optimize, apply profiles
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const trainState = {
+    selectedFiles: [],       // Files selected for upload
+    currentFileIndex: -1,    // Index of file being labeled
+    isTraining: false,       // Whether a long operation is running
+};
+
+// ─── Load Training Tab ───────────────────────────────────────────────────────
+
+async function loadTrainingTab() {
+    await Promise.all([
+        loadTrainingStatus(),
+        loadTrainingSamples(),
+        loadCurrentParams(),
+        loadSavedProfiles(),
+    ]);
+}
+
+// ─── Training Status Dashboard ───────────────────────────────────────────────
+
+async function loadTrainingStatus() {
+    try {
+        const res = await fetch('/api/training/status');
+        const data = await res.json();
+
+        const sampleCount = $('#trainSampleCount');
+        const benchmarkCount = $('#trainBenchmarkCount');
+        const profileCount = $('#trainProfileCount');
+        const templateCount = $('#trainTemplateCount');
+
+        if (sampleCount) sampleCount.textContent = data.training_samples ?? 0;
+        if (benchmarkCount) benchmarkCount.textContent = data.benchmark_results ?? 0;
+        if (profileCount) profileCount.textContent = (data.available_profiles ?? []).length;
+        if (templateCount) templateCount.textContent = (data.available_templates ?? []).length;
+    } catch (e) {
+        console.warn('Failed to load training status:', e);
+    }
+}
+
+// ─── Training Samples List ───────────────────────────────────────────────────
+
+async function loadTrainingSamples() {
+    const tbody = $('#trainSamplesBody');
+    if (!tbody) return;
+
+    try {
+        const res = await fetch('/api/training/samples');
+        const data = await res.json();
+        const samples = data.samples || [];
+
+        if (samples.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No training samples yet. Upload labeled receipts above.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = samples.map(s => {
+            const items = s.ground_truth?.items || s.items || [];
+            const totalQty = items.reduce((sum, i) => sum + (i.quantity || 0), 0);
+            const added = s.timestamp ? new Date(s.timestamp).toLocaleDateString() : '—';
+            return `<tr>
+                <td><code style="font-size:0.78rem">${escHtml(s.receipt_id || s.id || '—')}</code></td>
+                <td>${items.length}</td>
+                <td>${totalQty}</td>
+                <td>${added}</td>
+                <td>
+                    <button class="btn btn-ghost btn-sm" onclick="deleteTrainingSample('${escHtml(s.receipt_id || s.id)}')" title="Delete sample">
+                        <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Failed to load training samples.</td></tr>';
+    }
+}
+
+async function deleteTrainingSample(receiptId) {
+    if (!confirm(`Delete training sample "${receiptId}"?`)) return;
+
+    try {
+        const res = await fetch(`/api/training/samples/${encodeURIComponent(receiptId)}`, { method: 'DELETE' });
+        if (res.ok) {
+            showToast(`Sample "${receiptId}" deleted.`, 'success');
+            loadTrainingSamples();
+            loadTrainingStatus();
+        } else {
+            const data = await res.json();
+            showToast(data.detail || 'Failed to delete sample.', 'error');
+        }
+    } catch (e) {
+        showToast('Error deleting sample.', 'error');
+    }
+}
+
+// ─── Upload Training Data ────────────────────────────────────────────────────
+
+function initTrainingUpload() {
+    const dropZone = $('#trainDropZone');
+    const fileInput = $('#trainFileInput');
+    if (!dropZone || !fileInput) return;
+
+    // Drag & drop
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        handleTrainingFiles(Array.from(e.dataTransfer.files));
+    });
+
+    // Click to browse
+    dropZone.addEventListener('click', (e) => {
+        if (e.target.closest('.train-browse-link')) return; // label handles it
+        fileInput.click();
+    });
+
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            handleTrainingFiles(Array.from(fileInput.files));
+        }
+        fileInput.value = '';
+    });
+
+    // Ground truth form buttons
+    $('#trainAddItemBtn')?.addEventListener('click', () => addGtRow());
+    $('#trainSubmitBtn')?.addEventListener('click', submitTrainingSample);
+    $('#trainCancelBtn')?.addEventListener('click', resetTrainingUpload);
+    $('#trainClearFileBtn')?.addEventListener('click', resetTrainingUpload);
+}
+
+function handleTrainingFiles(files) {
+    const validTypes = ['image/jpeg', 'image/png', 'image/bmp', 'image/tiff', 'image/webp'];
+    const validFiles = files.filter(f =>
+        validTypes.includes(f.type) || f.name.match(/\.(jpg|jpeg|png|bmp|tiff|webp)$/i)
+    );
+
+    if (validFiles.length === 0) {
+        showToast('No valid image files selected.', 'error');
+        return;
+    }
+
+    if (validFiles.length === 1) {
+        // Single file: show ground truth form
+        showGroundTruthForm(validFiles[0]);
+    } else {
+        // Multiple files: show batch mode
+        showBatchTrainingMode(validFiles);
+    }
+}
+
+function showGroundTruthForm(file) {
+    trainState.selectedFiles = [file];
+    trainState.currentFileIndex = 0;
+
+    const form = $('#trainGtForm');
+    const dropArea = $('#trainDropZone');
+    const batchArea = $('#trainBatchArea');
+
+    // Show form, hide upload area
+    if (dropArea) dropArea.style.display = 'none';
+    if (batchArea) batchArea.style.display = 'none';
+    if (form) form.style.display = 'block';
+
+    // Set preview image
+    const img = $('#trainPreviewImg');
+    if (img) {
+        const url = URL.createObjectURL(file);
+        img.src = url;
+        img.onload = () => URL.revokeObjectURL(url);
+    }
+
+    // Set file name
+    const nameEl = $('#trainFileName');
+    if (nameEl) nameEl.textContent = file.name;
+
+    // Initialize with 2 empty rows
+    const itemsContainer = $('#trainGtItems');
+    if (itemsContainer) {
+        itemsContainer.innerHTML = '';
+        addGtRow();
+        addGtRow();
+    }
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function addGtRow() {
+    const container = $('#trainGtItems');
+    if (!container) return;
+
+    const row = document.createElement('div');
+    row.className = 'train-gt-row';
+    row.innerHTML = `
+        <input type="text" placeholder="Product Code (e.g. ABC)" class="gt-code" maxlength="10">
+        <input type="number" placeholder="Quantity" class="gt-qty" min="0.01" step="0.01">
+        <button class="train-gt-remove-btn" title="Remove" onclick="this.parentElement.remove()">
+            <i data-lucide="x" style="width:14px;height:14px"></i>
+        </button>
+    `;
+    container.appendChild(row);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+
+    // Focus the code input
+    row.querySelector('.gt-code')?.focus();
+}
+
+async function submitTrainingSample() {
+    if (trainState.isTraining) return;
+
+    const file = trainState.selectedFiles[trainState.currentFileIndex];
+    if (!file) {
+        showToast('No file selected.', 'error');
+        return;
+    }
+
+    // Collect ground truth items
+    const rows = $$('#trainGtItems .train-gt-row');
+    const items = [];
+    for (const row of rows) {
+        const code = row.querySelector('.gt-code')?.value?.trim();
+        const qty = parseFloat(row.querySelector('.gt-qty')?.value);
+        if (code && !isNaN(qty) && qty > 0) {
+            items.push({ code, quantity: qty });
+        }
+    }
+
+    if (items.length === 0) {
+        showToast('Add at least one item with product code and quantity.', 'warning');
+        return;
+    }
+
+    // Build form data
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('ground_truth', JSON.stringify({ items }));
+
+    trainState.isTraining = true;
+    const submitBtn = $('#trainSubmitBtn');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="train-spinner"></span> Uploading…';
+    }
+
+    try {
+        const res = await fetch('/api/training/upload', {
+            method: 'POST',
+            body: formData,
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            showToast(`Training sample uploaded: ${data.sample?.receipt_id || 'success'}`, 'success');
+            resetTrainingUpload();
+            loadTrainingSamples();
+            loadTrainingStatus();
+        } else {
+            showToast(data.detail || 'Upload failed.', 'error');
+        }
+    } catch (e) {
+        showToast('Network error during upload.', 'error');
+    } finally {
+        trainState.isTraining = false;
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i data-lucide="upload" style="width:15px;height:15px"></i> Upload Training Sample';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+    }
+}
+
+function resetTrainingUpload() {
+    trainState.selectedFiles = [];
+    trainState.currentFileIndex = -1;
+
+    const form = $('#trainGtForm');
+    const dropArea = $('#trainDropZone');
+    const batchArea = $('#trainBatchArea');
+
+    if (form) form.style.display = 'none';
+    if (batchArea) batchArea.style.display = 'none';
+    if (dropArea) dropArea.style.display = 'block';
+}
+
+// ─── Batch Training Mode ─────────────────────────────────────────────────────
+
+function showBatchTrainingMode(files) {
+    trainState.selectedFiles = files;
+    trainState.currentFileIndex = 0;
+
+    const dropArea = $('#trainDropZone');
+    const batchArea = $('#trainBatchArea');
+    const form = $('#trainGtForm');
+
+    if (dropArea) dropArea.style.display = 'none';
+    if (form) form.style.display = 'none';
+    if (batchArea) batchArea.style.display = 'block';
+
+    const countEl = $('#trainBatchFileCount');
+    if (countEl) countEl.textContent = files.length;
+
+    // Render file list
+    const listEl = $('#trainBatchList');
+    if (listEl) {
+        listEl.innerHTML = files.map((f, i) => `
+            <div class="train-batch-item" id="trainBatchItem_${i}">
+                <span class="batch-item-name">${escHtml(f.name)}</span>
+                <span class="batch-item-status">Waiting…</span>
+            </div>
+        `).join('');
+    }
+
+    // Show the first file's ground truth form
+    showGroundTruthFormForBatch(0);
+}
+
+function showGroundTruthFormForBatch(index) {
+    if (index >= trainState.selectedFiles.length) {
+        // All done
+        showToast(`Batch complete! ${trainState.selectedFiles.length} files processed.`, 'success');
+        resetTrainingUpload();
+        loadTrainingSamples();
+        loadTrainingStatus();
+        return;
+    }
+
+    trainState.currentFileIndex = index;
+    const file = trainState.selectedFiles[index];
+    const form = $('#trainGtForm');
+    if (form) form.style.display = 'block';
+
+    // Update preview
+    const img = $('#trainPreviewImg');
+    if (img) {
+        const url = URL.createObjectURL(file);
+        img.src = url;
+        img.onload = () => URL.revokeObjectURL(url);
+    }
+
+    const nameEl = $('#trainFileName');
+    if (nameEl) nameEl.textContent = `[${index + 1}/${trainState.selectedFiles.length}] ${file.name}`;
+
+    // Reset items
+    const itemsContainer = $('#trainGtItems');
+    if (itemsContainer) {
+        itemsContainer.innerHTML = '';
+        addGtRow();
+        addGtRow();
+    }
+
+    // Update batch item status
+    const item = $(`#trainBatchItem_${index}`);
+    if (item) {
+        item.classList.add('pending');
+        item.querySelector('.batch-item-status').textContent = '✏️ Labeling…';
+    }
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+// Override submit for batch mode
+const _origSubmit = submitTrainingSample;
+submitTrainingSample = async function() {
+    if (trainState.selectedFiles.length <= 1) {
+        return _origSubmit();
+    }
+
+    // Batch mode: submit current, then show next
+    if (trainState.isTraining) return;
+
+    const index = trainState.currentFileIndex;
+    const file = trainState.selectedFiles[index];
+    if (!file) return;
+
+    const rows = $$('#trainGtItems .train-gt-row');
+    const items = [];
+    for (const row of rows) {
+        const code = row.querySelector('.gt-code')?.value?.trim();
+        const qty = parseFloat(row.querySelector('.gt-qty')?.value);
+        if (code && !isNaN(qty) && qty > 0) {
+            items.push({ code, quantity: qty });
+        }
+    }
+
+    if (items.length === 0) {
+        showToast('Add at least one item with product code and quantity.', 'warning');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('ground_truth', JSON.stringify({ items }));
+
+    trainState.isTraining = true;
+    const submitBtn = $('#trainSubmitBtn');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="train-spinner"></span> Uploading…';
+    }
+
+    try {
+        const res = await fetch('/api/training/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        const itemEl = $(`#trainBatchItem_${index}`);
+
+        if (res.ok) {
+            if (itemEl) {
+                itemEl.classList.remove('pending');
+                itemEl.classList.add('success');
+                itemEl.querySelector('.batch-item-status').textContent = '✅ Uploaded';
+            }
+        } else {
+            if (itemEl) {
+                itemEl.classList.remove('pending');
+                itemEl.classList.add('failed');
+                itemEl.querySelector('.batch-item-status').textContent = '❌ ' + (data.detail || 'Failed');
+            }
+        }
+    } catch (e) {
+        const itemEl = $(`#trainBatchItem_${index}`);
+        if (itemEl) {
+            itemEl.classList.remove('pending');
+            itemEl.classList.add('failed');
+            itemEl.querySelector('.batch-item-status').textContent = '❌ Network error';
+        }
+    } finally {
+        trainState.isTraining = false;
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i data-lucide="upload" style="width:15px;height:15px"></i> Upload Training Sample';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+    }
+
+    // Move to next file
+    showGroundTruthFormForBatch(index + 1);
+};
+
+// ─── Benchmark ───────────────────────────────────────────────────────────────
+
+async function runBenchmark() {
+    if (trainState.isTraining) return;
+
+    const verbose = $('#benchmarkVerbose')?.checked ?? true;
+    const btn = $('#runBenchmarkBtn');
+
+    trainState.isTraining = true;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="train-spinner"></span> Running Benchmark…';
+    }
+
+    try {
+        const res = await fetch(`/api/training/benchmark?verbose=${verbose}`, { method: 'POST' });
+        const data = await res.json();
+
+        if (!res.ok) {
+            showToast(data.detail || 'Benchmark failed.', 'error');
+            return;
+        }
+
+        displayBenchmarkResults(data);
+        showToast('Benchmark complete!', 'success');
+        loadTrainingStatus();
+    } catch (e) {
+        showToast('Network error running benchmark.', 'error');
+    } finally {
+        trainState.isTraining = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="play" style="width:15px;height:15px"></i> Run Benchmark';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+    }
+}
+
+function displayBenchmarkResults(data) {
+    const container = $('#benchmarkResults');
+    const metricsGrid = $('#benchmarkMetrics');
+    const detailsContainer = $('#benchmarkDetails');
+    const detailsBody = $('#benchmarkDetailsBody');
+
+    if (!container || !metricsGrid) return;
+    container.style.display = 'block';
+
+    // Main metrics
+    const metrics = data.metrics || data;
+    const metricItems = [
+        { label: 'Precision', value: metrics.precision, format: 'pct' },
+        { label: 'Recall', value: metrics.recall, format: 'pct' },
+        { label: 'F1 Score', value: metrics.f1_score, format: 'pct' },
+        { label: 'Code Accuracy', value: metrics.code_accuracy, format: 'pct' },
+        { label: 'Qty Accuracy', value: metrics.qty_accuracy, format: 'pct' },
+        { label: 'Samples', value: metrics.total_samples || data.total_samples, format: 'num' },
+    ];
+
+    metricsGrid.innerHTML = metricItems.map(m => {
+        const val = m.value;
+        let displayVal, colorClass;
+        if (m.format === 'pct' && val !== undefined) {
+            displayVal = (val * 100).toFixed(1) + '%';
+            colorClass = val >= 0.8 ? 'good' : val >= 0.5 ? 'ok' : 'poor';
+        } else {
+            displayVal = val ?? '—';
+            colorClass = '';
+        }
+        return `<div class="train-metric-card">
+            <div class="train-metric-value ${colorClass}">${displayVal}</div>
+            <div class="train-metric-label">${m.label}</div>
+        </div>`;
+    }).join('');
+
+    // Per-image details
+    const details = data.details || data.per_image || [];
+    if (details.length > 0 && detailsContainer && detailsBody) {
+        detailsContainer.style.display = 'block';
+        detailsBody.innerHTML = details.map(d => {
+            const matched = d.matched_codes ?? d.matched ?? 0;
+            const missing = d.missing_codes ?? d.missing ?? 0;
+            const extra = d.extra_codes ?? d.extra ?? 0;
+            const qtyMatch = d.qty_matches !== undefined
+                ? `${d.qty_matches}/${d.qty_total || (matched + missing)}`
+                : '—';
+            return `<tr>
+                <td><code style="font-size:0.75rem">${escHtml(d.receipt_id || '—')}</code></td>
+                <td style="color:var(--accent)">${matched}</td>
+                <td style="color:var(--danger)">${missing}</td>
+                <td style="color:var(--warning)">${extra}</td>
+                <td>${qtyMatch}</td>
+            </tr>`;
+        }).join('');
+    } else if (detailsContainer) {
+        detailsContainer.style.display = 'none';
+    }
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+// ─── Optimization ────────────────────────────────────────────────────────────
+
+async function runOptimization() {
+    if (trainState.isTraining) return;
+
+    const strategy = $('#optimizeStrategy')?.value || 'smart';
+    const metric = $('#optimizeMetric')?.value || 'f1_score';
+    const maxRounds = parseInt($('#optimizeRounds')?.value) || 3;
+
+    const btn = $('#runOptimizeBtn');
+    trainState.isTraining = true;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="train-spinner"></span> Optimizing… This may take a while';
+    }
+
+    try {
+        const res = await fetch('/api/training/optimize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                strategy,
+                metric,
+                max_rounds: maxRounds,
+                quick: true,
+            }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            showToast(data.detail || 'Optimization failed.', 'error');
+            return;
+        }
+
+        displayOptimizationResults(data);
+        showToast('Optimization complete!', 'success');
+        loadTrainingStatus();
+        loadSavedProfiles();
+        loadCurrentParams();
+    } catch (e) {
+        showToast('Network error during optimization.', 'error');
+    } finally {
+        trainState.isTraining = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="wand-2" style="width:15px;height:15px"></i> Start Optimization';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+    }
+}
+
+function displayOptimizationResults(data) {
+    const container = $('#optimizeResults');
+    const summaryEl = $('#optimizeSummary');
+    const paramsEl = $('#optimizeParams');
+    const applyBtn = $('#applyProfileBtn');
+
+    if (!container) return;
+    container.style.display = 'block';
+
+    // Summary badges
+    if (summaryEl) {
+        const baseMetrics = data.baseline_metrics || data.baseline || {};
+        const optMetrics = data.optimized_metrics || data.best_score || {};
+        const improvement = data.improvement || {};
+
+        let summaryHtml = '';
+        const metricLabels = {
+            f1_score: 'F1 Score',
+            precision: 'Precision',
+            recall: 'Recall',
+            code_accuracy: 'Code Accuracy',
+            qty_accuracy: 'Qty Accuracy',
+        };
+
+        for (const [key, label] of Object.entries(metricLabels)) {
+            const before = baseMetrics[key];
+            const after = optMetrics[key];
+            if (before !== undefined && after !== undefined) {
+                const diff = ((after - before) * 100).toFixed(1);
+                const improved = after > before;
+                summaryHtml += `<span class="train-optimize-badge ${improved ? 'improved' : 'unchanged'}">
+                    ${label}: ${(before * 100).toFixed(1)}% → ${(after * 100).toFixed(1)}%
+                    ${improved ? `(+${diff}%)` : ''}
+                </span>`;
+            }
+        }
+
+        summaryEl.innerHTML = summaryHtml || '<span class="train-optimize-badge unchanged">Optimization complete</span>';
+    }
+
+    // Best params
+    if (paramsEl && data.best_params) {
+        let paramsHtml = '<div class="card-label" style="font-size:0.78rem;margin-bottom:0.5rem">' +
+            '<i data-lucide="settings-2" style="width:13px;height:13px"></i> Optimized Parameters</div>';
+        paramsHtml += '<div class="train-params-grid">';
+        for (const [key, val] of Object.entries(data.best_params)) {
+            paramsHtml += `<div class="train-param-card">
+                <span class="train-param-name">${escHtml(key)}</span>
+                <span class="train-param-value">${typeof val === 'number' ? val.toFixed(3) : escHtml(String(val))}</span>
+            </div>`;
+        }
+        paramsHtml += '</div>';
+        paramsEl.innerHTML = paramsHtml;
+    }
+
+    // Apply button
+    if (applyBtn && data.best_params) {
+        applyBtn.style.display = 'inline-flex';
+    }
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+// ─── Apply Profile ───────────────────────────────────────────────────────────
+
+async function applyOptimizedProfile(profileName = 'optimized') {
+    try {
+        const res = await fetch('/api/training/apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ profile_name: profileName }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            showToast(`Profile "${profileName}" applied! ${data.changes || 0} parameters updated.`, 'success');
+            loadCurrentParams();
+        } else {
+            showToast(data.detail || 'Failed to apply profile.', 'error');
+        }
+    } catch (e) {
+        showToast('Error applying profile.', 'error');
+    }
+}
+
+// ─── Current Parameters ──────────────────────────────────────────────────────
+
+async function loadCurrentParams() {
+    const grid = $('#currentParamsGrid');
+    if (!grid) return;
+
+    try {
+        const res = await fetch('/api/training/params');
+        const data = await res.json();
+
+        if (Object.keys(data).length === 0) {
+            grid.innerHTML = '<p class="empty-state">No parameters available.</p>';
+            return;
+        }
+
+        grid.innerHTML = Object.entries(data).map(([key, val]) => {
+            const displayVal = typeof val === 'number'
+                ? (Number.isInteger(val) ? val : val.toFixed(3))
+                : String(val);
+            return `<div class="train-param-card">
+                <span class="train-param-name">${escHtml(key)}</span>
+                <span class="train-param-value">${escHtml(displayVal)}</span>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        grid.innerHTML = '<p class="empty-state">Failed to load parameters.</p>';
+    }
+}
+
+// ─── Saved Profiles ──────────────────────────────────────────────────────────
+
+async function loadSavedProfiles() {
+    const container = $('#savedProfilesList');
+    if (!container) return;
+
+    try {
+        const res = await fetch('/api/training/profiles');
+        const data = await res.json();
+        const profiles = data.profiles || [];
+
+        if (profiles.length === 0) {
+            container.innerHTML = '<p class="empty-state">No saved profiles yet. Run optimization first.</p>';
+            return;
+        }
+
+        container.innerHTML = profiles.map(p => {
+            const name = p.name || 'unknown';
+            const strategy = p.data?.strategy || '—';
+            const timestamp = p.data?.timestamp
+                ? new Date(p.data.timestamp).toLocaleString()
+                : '—';
+            const metrics = p.data?.metrics || {};
+            const f1 = metrics.f1_score !== undefined
+                ? (metrics.f1_score * 100).toFixed(1) + '% F1'
+                : '';
+
+            return `<div class="train-profile-card">
+                <div class="train-profile-info">
+                    <span class="train-profile-name">${escHtml(name)}</span>
+                    <span class="train-profile-meta">${strategy} · ${timestamp} ${f1 ? '· ' + f1 : ''}</span>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="applyOptimizedProfile('${escHtml(name)}')">
+                    <i data-lucide="check-circle" style="width:14px;height:14px"></i>
+                    Apply
+                </button>
+            </div>`;
+        }).join('');
+
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    } catch (e) {
+        container.innerHTML = '<p class="empty-state">Failed to load profiles.</p>';
+    }
+}
+
+// ─── Template Learning ───────────────────────────────────────────────────────
+
+async function learnReceiptTemplate() {
+    if (trainState.isTraining) return;
+
+    const btn = $('#learnTemplateBtn');
+    trainState.isTraining = true;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="train-spinner"></span> Learning template…';
+    }
+
+    try {
+        const res = await fetch('/api/training/learn-template?template_id=default', { method: 'POST' });
+        const data = await res.json();
+
+        if (!res.ok) {
+            showToast(data.detail || 'Template learning failed.', 'error');
+            return;
+        }
+
+        const resultEl = $('#templateResult');
+        if (resultEl) {
+            resultEl.style.display = 'block';
+            const tmpl = data.template || {};
+            resultEl.innerHTML = `
+                <div class="card-label" style="font-size:0.78rem;margin-bottom:0.4rem">
+                    <i data-lucide="check-circle" style="width:13px;height:13px;color:var(--accent)"></i>
+                    Template learned successfully
+                </div>
+                <div style="font-size:0.78rem;color:var(--text-secondary)">
+                    ID: <strong>${escHtml(tmpl.template_id || 'default')}</strong> ·
+                    Samples analyzed: <strong>${tmpl.sample_count ?? '—'}</strong> ·
+                    Regions: <strong>${tmpl.regions?.length ?? '—'}</strong>
+                </div>
+            `;
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        showToast('Receipt template learned!', 'success');
+        loadTrainingStatus();
+    } catch (e) {
+        showToast('Error learning template.', 'error');
+    } finally {
+        trainState.isTraining = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="brain" style="width:14px;height:14px"></i> Learn Receipt Template';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+    }
+}
+
+// ─── Training Event Listeners ────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Initialize upload area
+    initTrainingUpload();
+
+    // Dashboard buttons
+    $('#refreshTrainStatusBtn')?.addEventListener('click', loadTrainingStatus);
+    $('#refreshSamplesBtn')?.addEventListener('click', loadTrainingSamples);
+    $('#refreshParamsBtn')?.addEventListener('click', loadCurrentParams);
+
+    // Benchmark
+    $('#runBenchmarkBtn')?.addEventListener('click', runBenchmark);
+
+    // Optimize
+    $('#runOptimizeBtn')?.addEventListener('click', runOptimization);
+    $('#applyProfileBtn')?.addEventListener('click', () => applyOptimizedProfile('optimized'));
+
+    // Template learning
+    $('#learnTemplateBtn')?.addEventListener('click', learnReceiptTemplate);
 });

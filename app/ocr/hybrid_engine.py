@@ -143,6 +143,7 @@ class HybridOCREngine:
         processed_image=None,
         is_structured: bool = False,
         original_color=None,
+        quality_info: dict = None,
     ) -> Dict:
         """
         Process a receipt image through the optimal OCR pipeline.
@@ -156,6 +157,8 @@ class HybridOCREngine:
             is_structured: Whether a grid/table structure was detected.
             original_color: Pre-loaded color image (BGR numpy array) to avoid
                             re-reading from disk. If None, loaded from image_path.
+            quality_info: Image quality assessment dict from preprocessor
+                          (score, is_blurry, is_low_contrast, is_too_dark, etc.)
 
         Returns:
             Unified result dict:
@@ -173,11 +176,11 @@ class HybridOCREngine:
 
         with optional_span(_tracer, "hybrid_engine.route", {"ocr.mode": self.mode}) as span:
             if self.mode == "local":
-                result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color)
+                result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color, quality_info=quality_info)
             elif self.mode == "azure":
                 result = self._run_azure_pipeline(image_path, processed_image, is_structured)
             else:  # "auto" — recommended
-                result = self._run_auto_pipeline(image_path, processed_image, is_structured, original_color=original_color)
+                result = self._run_auto_pipeline(image_path, processed_image, is_structured, original_color=original_color, quality_info=quality_info)
             span.set_attribute("ocr.engine_used", result.get("engine_used", "unknown"))
             span.set_attribute("ocr.detections", len(result.get("ocr_detections", [])))
             return result
@@ -188,6 +191,7 @@ class HybridOCREngine:
         processed_image,
         is_structured: bool,
         original_color=None,
+        quality_info: dict = None,
     ) -> Dict:
         """
         AUTO mode: Smart routing with MAXIMUM cost efficiency.
@@ -253,7 +257,7 @@ class HybridOCREngine:
                         "reason": quality["reason"],
                     })
                     # Run local and return — don't burn an Azure page on garbage
-                    local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color)
+                    local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color, quality_info=quality_info)
                     total_ms = int((time.time() - total_start) * 1000)
                     local_result["ocr_time_ms"] = total_ms
                     local_result["metadata"] = {
@@ -269,7 +273,7 @@ class HybridOCREngine:
         local_result = None
         if processed_image is not None:
             try:
-                local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color)
+                local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color, quality_info=quality_info)
                 local_conf = local_result.get("confidence_avg", 0)
                 local_items = len(local_result.get("ocr_detections", []))
 
@@ -354,7 +358,7 @@ class HybridOCREngine:
                         "reason": reason,
                     })
                     if local_result is None:
-                        local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color)
+                        local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color, quality_info=quality_info)
                     total_ms = int((time.time() - total_start) * 1000)
                     local_result["ocr_time_ms"] = total_ms
                     local_result["metadata"] = {
@@ -500,7 +504,7 @@ class HybridOCREngine:
 
         # ── Step 5: Local EasyOCR fallback ───────────────────────────────
         if local_result is None:
-            local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color)
+            local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color, quality_info=quality_info)
 
         local_result["metadata"] = {**metadata, **local_result.get("metadata", {})}
         local_result["metadata"]["strategy"] = "auto-fallback-local"
@@ -651,6 +655,7 @@ class HybridOCREngine:
         image_path: str,
         is_structured: bool,
         original_color=None,
+        quality_info: dict = None,
     ) -> Dict:
         """
         LOCAL mode: EasyOCR multi-pass strategy with parallel dual-pass.
@@ -681,7 +686,7 @@ class HybridOCREngine:
             preprocessor = ImagePreprocessor()
             processed_image, _ = preprocessor.preprocess(image_path)
 
-        # Crop to content region
+        # Crop to content region (skip if document scan already cropped)
         from app.ocr.preprocessor import ImagePreprocessor
         cropped_gray = ImagePreprocessor.crop_to_content_static(processed_image)
 
@@ -728,7 +733,7 @@ class HybridOCREngine:
             ocr_engine_2 = self.local_engine_2
             with ThreadPoolExecutor(max_workers=2) as executor:
                 fut_gray  = executor.submit(ocr_engine.extract_text_fast, cropped_gray)
-                fut_color = executor.submit(ocr_engine_2.extract_text, original_color)
+                fut_color = executor.submit(ocr_engine_2.extract_text, original_color, quality_info)
                 gray_results  = fut_gray.result()
                 color_results = fut_color.result()
 
@@ -787,7 +792,7 @@ class HybridOCREngine:
         if not skip_second and original_color is not None:
             logger.info(f"[Local] Phase 2: only {quick_items} items (conf={gray_conf:.3f}), running color pass...")
             phase2_start = time.time()
-            color_results = ocr_engine.extract_text(original_color)
+            color_results = ocr_engine.extract_text(original_color, quality_info=quality_info)
             phase2_ms = int((time.time() - phase2_start) * 1000)
             logger.info(f"[Local] Phase 2: {len(color_results)} detections in {phase2_ms}ms")
 

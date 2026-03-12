@@ -142,6 +142,7 @@ class ReceiptService:
         # ─── Step 2: Preprocess image (skipped on early cache hit) ───────
         # Defaults in case preprocessing is skipped (cache hit path)
         preprocess_ms = 0
+        preprocess_meta = None
         processed_image = None
         _color_img = None   # reused color image to avoid disk re-read in OCR
         processed_path = result["metadata"].get("image_path", "")
@@ -198,12 +199,15 @@ class ReceiptService:
                 logger.debug(f"[Step 3/5] Running hybrid OCR engine (mode={self.hybrid_engine.mode})...")
 
                 # Pass the already-loaded color image to avoid reloading from disk
+                # Also pass quality info from preprocessing for dynamic OCR tuning
+                _quality_info = preprocess_meta.get("quality") if preprocess_meta else None
                 with optional_span(_tracer, "hybrid_ocr_engine", {"ocr.mode": self.hybrid_engine.mode}) as _ocr_span:
                     hybrid_result = self.hybrid_engine.process_image(
                         image_path=saved_path,
                         processed_image=processed_image,
                         is_structured=is_structured,
                         original_color=_color_img,
+                        quality_info=_quality_info,
                     )
                     _ocr_span.set_attribute("ocr.engine_used", hybrid_result.get("engine_used", "unknown"))
                     _ocr_span.set_attribute("ocr.detections", len(hybrid_result.get("ocr_detections", [])))

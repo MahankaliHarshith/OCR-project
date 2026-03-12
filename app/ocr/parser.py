@@ -1231,6 +1231,10 @@ class ReceiptParser:
         '(': 'C',
         ')': 'J',
         '_': '',   # just noise
+        '2': 'Z',  # 2 ↔ Z in some handwriting
+        '4': 'A',  # 4 ↔ A in sloppy writing
+        '7': 'T',  # 7 ↔ T (cross-bar confusion)
+        '3': 'E',  # 3 ↔ E (mirror confusion)
     }
 
     # Reverse OCR confusion table (letter → likely digit)
@@ -1245,6 +1249,9 @@ class ReceiptParser:
         'B': '8',            # B often OCR'd from 8
         'A': '4',            # A sometimes OCR'd from 4
         'T': '7',            # T sometimes OCR'd from 7
+        'E': '3',            # E sometimes OCR'd from 3 (mirror)
+        'D': '0',            # D ↔ 0 in rounded handwriting
+        'Q': '9',            # Q ↔ 9 (tail confusion)
     }
 
     # Handwriting letter-to-letter confusion map (lowercase OCR output → likely uppercase)
@@ -1256,6 +1263,11 @@ class ReceiptParser:
         'u': 'V',   # u ↔ v
         'w': 'M',   # w ↔ m when inverted
         'p': 'R',   # p ↔ r in some hands
+        'c': 'C',   # c ↔ C (case confusion)
+        'k': 'K',   # k ↔ K
+        'e': 'C',   # e ↔ c in rushed handwriting
+        'a': 'O',   # a ↔ o (open loop)
+        'f': 'F',   # f ↔ F
     }
 
     # Patterns for line-number-like fragments: "2 .", "[.", "%.", standalone single digits

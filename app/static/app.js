@@ -758,6 +758,115 @@ function enhanceImageForOCR(file, options = {}) {
     });
 }
 
+/**
+ * Client-side image quality check — detects blur and darkness BEFORE upload.
+ * Uses Laplacian variance (sharpness) and mean luminance (brightness) on a
+ * downscaled version of the image for speed (~5ms on mobile).
+ *
+ * Returns an array of warning strings (empty = all good).
+ */
+function checkImageQuality(file) {
+    return new Promise((resolve) => {
+        if (!file.type.startsWith('image/')) {
+            resolve([]);
+            return;
+        }
+
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            const issues = [];
+
+            try {
+                // Downscale to 200px max for fast analysis
+                const maxDim = 200;
+                let { width, height } = img;
+                const ratio = Math.min(maxDim / width, maxDim / height, 1);
+                width = Math.round(width * ratio);
+                height = Math.round(height * ratio);
+
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                const imageData = ctx.getImageData(0, 0, width, height);
+                const data = imageData.data;
+
+                // ── Brightness check (mean luminance) ──
+                let lumSum = 0;
+                const pixelCount = width * height;
+                for (let i = 0; i < data.length; i += 4) {
+                    lumSum += data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+                }
+                const meanLum = lumSum / pixelCount;
+
+                if (meanLum < 50) {
+                    issues.push('Image is very dark — try better lighting');
+                } else if (meanLum < 80) {
+                    issues.push('Image is dark — results may be affected');
+                } else if (meanLum > 240) {
+                    issues.push('Image is overexposed — try reducing brightness');
+                }
+
+                // ── Blur check (Laplacian variance approximation) ──
+                // Compute a simple edge-detection (Sobel-like) variance as blur proxy
+                const gray = new Float32Array(pixelCount);
+                for (let i = 0; i < pixelCount; i++) {
+                    const idx = i * 4;
+                    gray[i] = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114;
+                }
+
+                let lapSum = 0;
+                let lapSq = 0;
+                let lapCount = 0;
+                for (let y = 1; y < height - 1; y++) {
+                    for (let x = 1; x < width - 1; x++) {
+                        const idx = y * width + x;
+                        // Laplacian kernel: center*4 - top - bottom - left - right
+                        const lap = 4 * gray[idx] - gray[idx - width] - gray[idx + width] - gray[idx - 1] - gray[idx + 1];
+                        lapSum += lap;
+                        lapSq += lap * lap;
+                        lapCount++;
+                    }
+                }
+                const lapVar = lapCount > 0 ? (lapSq / lapCount) - Math.pow(lapSum / lapCount, 2) : 0;
+
+                if (lapVar < 100) {
+                    issues.push('Image appears blurry — try holding steadier');
+                } else if (lapVar < 300) {
+                    issues.push('Image is slightly blurry');
+                }
+
+                // ── Contrast check ──
+                let lumSq = 0;
+                for (let i = 0; i < pixelCount; i++) {
+                    lumSq += gray[i] * gray[i];
+                }
+                const lumStd = Math.sqrt(lumSq / pixelCount - meanLum * meanLum);
+                if (lumStd < 25) {
+                    issues.push('Low contrast — text may be hard to read');
+                }
+
+            } catch (e) {
+                // Quality check failed — don't block the upload
+                console.warn('Quality check failed:', e);
+            }
+
+            resolve(issues);
+        };
+
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve([]);
+        };
+
+        img.src = url;
+    });
+}
+
 async function processFile(file) {
     // Prevent double upload
     if (state.isProcessing) {
@@ -775,6 +884,15 @@ async function processFile(file) {
     if (file.size > 20 * 1024 * 1024) {
         showToast('File too large. Maximum size is 20MB.', 'error');
         return;
+    }
+
+    // ── CLIENT-SIDE QUALITY CHECK ──
+    // Detect blurry/dark images BEFORE uploading to save time and bandwidth.
+    // Uses Laplacian variance (blur) and mean luminance (darkness).
+    const qualityIssues = await checkImageQuality(file);
+    if (qualityIssues.length > 0) {
+        const issueText = qualityIssues.join(' • ');
+        showToast(`⚠ Image quality: ${issueText}. Results may be inaccurate.`, 'warning');
     }
 
     // Show processing
@@ -937,6 +1055,64 @@ function displayResults(data, file) {
         if (perfState.processingTimes.length > 20) perfState.processingTimes.shift();
     } else if (ptEl) {
         ptEl.style.display = 'none';
+    }
+
+    // ── Processing Pipeline Breakdown ──
+    // Show timing for each stage so users can see what's slow
+    let existingBreakdown = document.querySelector('.pipeline-breakdown');
+    if (existingBreakdown) existingBreakdown.remove();
+
+    const preprocessMs = data.metadata?.preprocessing?.processing_time_ms;
+    const ocrMs = data.metadata?.ocr_time_ms;
+    const parseMs = data.metadata?.parse_time_ms;
+    const stages = data.metadata?.preprocessing?.stages || [];
+    const engineUsed = data.metadata?.engine_used || 'local';
+    const receiptType = data.metadata?.receipt_type || 'unknown';
+    const qualityScore = data.metadata?.preprocessing?.quality?.score;
+
+    if (preprocessMs || ocrMs || parseMs) {
+        const breakdownDiv = document.createElement('div');
+        breakdownDiv.className = 'pipeline-breakdown';
+        
+        let html = '<div class="breakdown-header"><i data-lucide="activity" style="width:13px;height:13px"></i> Pipeline</div><div class="breakdown-stages">';
+        
+        if (preprocessMs != null) {
+            html += `<span class="breakdown-stage" title="Stages: ${stages.join(', ') || 'N/A'}"><span class="stage-label">Preprocess</span><span class="stage-time">${preprocessMs}ms</span></span>`;
+        }
+        if (ocrMs != null) {
+            html += `<span class="breakdown-stage" title="Engine: ${engineUsed}"><span class="stage-label">OCR</span><span class="stage-time">${ocrMs}ms</span></span>`;
+        }
+        if (parseMs != null) {
+            html += `<span class="breakdown-stage"><span class="stage-label">Parse</span><span class="stage-time">${parseMs}ms</span></span>`;
+        }
+        
+        html += '</div>';
+        
+        // Meta badges
+        html += '<div class="breakdown-meta">';
+        if (receiptType !== 'unknown') {
+            html += `<span class="meta-badge">${receiptType === 'structured' ? '📊' : '✍️'} ${receiptType}</span>`;
+        }
+        if (qualityScore != null) {
+            const qClass = qualityScore >= 60 ? 'good' : qualityScore >= 30 ? 'fair' : 'poor';
+            html += `<span class="meta-badge quality-${qClass}">Quality: ${Math.round(qualityScore)}/100</span>`;
+        }
+        if (stages.includes('document_scan')) {
+            html += `<span class="meta-badge">📱 Doc scanned</span>`;
+        }
+        if (stages.includes('rotation_180')) {
+            html += `<span class="meta-badge">↻ Auto-rotated</span>`;
+        }
+        if (stages.includes('deskew')) {
+            html += `<span class="meta-badge">📐 Deskewed</span>`;
+        }
+        if (stages.includes('white_balance')) {
+            html += `<span class="meta-badge">🎨 WB corrected</span>`;
+        }
+        html += '</div>';
+        
+        breakdownDiv.innerHTML = html;
+        ptEl?.parentNode?.insertBefore(breakdownDiv, ptEl.nextSibling);
     }
 
     // Show Azure engine usage info after scan

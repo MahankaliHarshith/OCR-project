@@ -77,12 +77,14 @@ class OCREngine:
         warmup_ms = int((time.time() - warmup_start) * 1000)
         logger.info(f"OCR warmup completed in {warmup_ms}ms")
 
-    def extract_text(self, image: np.ndarray) -> List[Dict]:
+    def extract_text(self, image: np.ndarray, quality_info: dict = None) -> List[Dict]:
         """
         Extract text from a preprocessed image.
 
         Args:
             image: Preprocessed image as numpy array (grayscale or BGR).
+            quality_info: Optional dict from preprocessor quality assessment.
+                          Used to dynamically tune OCR parameters per-image.
 
         Returns:
             List of detected text elements, each containing:
@@ -94,25 +96,55 @@ class OCREngine:
         start = time.time()
         logger.debug(f"extract_text called | image shape={image.shape}, dtype={image.dtype}")
 
+        # ── Dynamic parameter tuning based on image quality ──
+        # Adjust OCR sensitivity for blurry, dark, or low-contrast images
+        # to maximize text detection on challenging inputs.
+        text_threshold = OCR_TEXT_THRESHOLD
+        low_text = OCR_LOW_TEXT
+        contrast_ths = 0.2
+        adjust_contrast = 0.9
+        add_margin = 0.15
+        canvas_size = OCR_CANVAS_SIZE
+        mag_ratio = OCR_MAG_RATIO
+
+        if quality_info:
+            if quality_info.get("is_blurry"):
+                # Blurry: lower thresholds to catch faint text, increase magnification
+                text_threshold = max(0.25, text_threshold - 0.1)
+                low_text = max(0.15, low_text - 0.1)
+                mag_ratio = min(2.5, mag_ratio + 0.4)
+                add_margin = 0.20  # Larger margin for fuzzy character boundaries
+                logger.debug("  OCR params: BLURRY mode (lower thresholds, higher mag)")
+            if quality_info.get("is_low_contrast"):
+                # Low contrast: lower contrast threshold so EasyOCR doesn't skip faint text
+                contrast_ths = 0.1
+                adjust_contrast = 1.0  # Let EasyOCR boost contrast internally
+                logger.debug("  OCR params: LOW CONTRAST mode (lower contrast_ths)")
+            if quality_info.get("is_too_dark"):
+                # Dark image: increase contrast adjustment
+                adjust_contrast = 1.2
+                contrast_ths = 0.15
+                logger.debug("  OCR params: DARK mode (increased adjust_contrast)")
+
         try:
             results = self.reader.readtext(
                 image,
                 detail=1,
                 paragraph=False,       # Individual detections (we group in parser)
                 min_size=OCR_MIN_SIZE,
-                text_threshold=OCR_TEXT_THRESHOLD,
-                low_text=OCR_LOW_TEXT,
+                text_threshold=text_threshold,
+                low_text=low_text,
                 link_threshold=OCR_LINK_THRESHOLD,
-                canvas_size=OCR_CANVAS_SIZE,
-                mag_ratio=OCR_MAG_RATIO,
+                canvas_size=canvas_size,
+                mag_ratio=mag_ratio,
                 batch_size=1,           # Stable on CPU
-                contrast_ths=0.2,       # Lower threshold for faint handwriting
-                adjust_contrast=0.9,    # Minimal reduction — preserves faded handwriting ink
+                contrast_ths=contrast_ths,
+                adjust_contrast=adjust_contrast,
                 slope_ths=0.4,          # Allow more slanted handwriting
                 ycenter_ths=0.5,        # Better vertical grouping for messy writing
                 height_ths=0.8,         # More flexible height matching
                 width_ths=0.7,          # Tighter to keep alphanumeric codes together (TEW1, PEPW10)
-                add_margin=0.15,        # Larger margin captures handwriting ascenders/descenders
+                add_margin=add_margin,  # Captures handwriting ascenders/descenders
             )
         except Exception as e:
             logger.error(f"EasyOCR extraction failed: {e}")

@@ -298,6 +298,71 @@ body {
     border-radius: var(--radius-full);
 }
 
+/* ─── Pipeline Breakdown ───────────────────────────────────────────── */
+.pipeline-breakdown {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.65rem;
+    background: var(--glass-bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    font-size: 0.65rem;
+}
+.breakdown-header {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 0.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.58rem;
+}
+.breakdown-stages {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+.breakdown-stage {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    background: var(--border-light);
+    padding: 0.15rem 0.45rem;
+    border-radius: var(--radius-full);
+    cursor: default;
+}
+.stage-label {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+.stage-time {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.breakdown-meta {
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+    margin-top: 0.35rem;
+}
+.meta-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-full);
+    font-size: 0.6rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border-light);
+}
+.meta-badge.quality-good { color: var(--accent); border-color: rgba(16,185,129,0.25); }
+.meta-badge.quality-fair { color: var(--warning); border-color: rgba(245,158,11,0.25); }
+.meta-badge.quality-poor { color: var(--danger); border-color: rgba(239,68,68,0.25); }
+
 /* ─── Success Checkmark Animation ──────────────────────────────────── */
 @keyframes successPop {
     0%   { transform: scale(0.5); opacity: 0; }

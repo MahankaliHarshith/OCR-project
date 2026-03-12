@@ -962,8 +962,9 @@ class ImagePreprocessor:
             best_angle = 0.0
             best_variance = 0.0
             
-            # Coarse search: -10° to +10° in 1° steps
-            for angle_10x in range(-100, 101, 10):
+            # Coarse search: -10° to +10° in 2° steps (11 iterations)
+            # Most receipts have <5° skew; fine search refines to 0.25° precision
+            for angle_10x in range(-100, 101, 20):
                 angle = angle_10x / 10.0
                 M = cv2.getRotationMatrix2D((sw // 2, sh // 2), angle, 1.0)
                 rotated = cv2.warpAffine(small, M, (sw, sh),

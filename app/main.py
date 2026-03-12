@@ -104,6 +104,21 @@ async def lifespan(app: FastAPI):
         get_ocr_engine()
         logger.info("   ✅ Local OCR engine ready")
 
+        # Pre-warm second OCR reader in background thread if parallel dual-pass
+        # is enabled — eliminates the 5-8s cold-start spike on the first
+        # parallel scan by loading CRAFT+CRNN models ahead of time.
+        from app.config import OCR_PARALLEL_DUAL_PASS
+        if OCR_PARALLEL_DUAL_PASS:
+            import threading
+            def _prewarm_reader2():
+                try:
+                    _ = hybrid.local_engine_2
+                    logger.info("   ✅ Second OCR reader pre-warmed (parallel dual-pass ready)")
+                except Exception as e:
+                    logger.warning(f"   ⚠ Second OCR reader pre-warm failed: {e}")
+            threading.Thread(target=_prewarm_reader2, daemon=True, name="ocr-reader2-prewarm").start()
+            logger.info("   ⏳ Pre-warming second OCR reader in background...")
+
     if AZURE_DOC_INTEL_AVAILABLE:
         logger.info("   ✅ Azure Document Intelligence ready")
 

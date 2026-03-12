@@ -5,6 +5,7 @@ Orchestrates the full receipt scanning pipeline:
 """
 
 import logging
+import os
 import time
 import shutil
 from pathlib import Path
@@ -728,7 +729,12 @@ class ReceiptService:
         if src.parent.resolve() == UPLOAD_DIR.resolve():
             return str(src)
 
-        shutil.copy2(str(src), str(dest))
+        # Use hard-link (instant, zero-copy) when on the same filesystem.
+        # Falls back to shutil.copy2 only for cross-device or permission errors.
+        try:
+            os.link(str(src), str(dest))
+        except (OSError, NotImplementedError):
+            shutil.copy2(str(src), str(dest))
         logger.debug(f"Image saved to: {dest}")
         return str(dest)
 

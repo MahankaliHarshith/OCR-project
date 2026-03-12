@@ -501,15 +501,24 @@ class AzureOCREngine:
 
                 # Azure lines don't have per-line confidence in Read model,
                 # but words do. Average word confidences for the line.
-                # Use realistic default (0.80) instead of inflated 1.0.
+                # Use bounding-box containment (not set-membership) to avoid
+                # mis-attributing duplicate words across lines (e.g. "1", "TOTAL").
                 line_conf = 0.80
-                if page.words:
-                    # Find words that belong to this line by checking overlap
+                if page.words and line.polygon and len(line.polygon) >= 8:
+                    lp = line.polygon
+                    lx_coords = [lp[i] for i in range(0, len(lp), 2)]
+                    ly_coords = [lp[i] for i in range(1, len(lp), 2)]
+                    lx_min, lx_max = min(lx_coords), max(lx_coords)
+                    ly_min, ly_max = min(ly_coords), max(ly_coords)
+                    ly_tol = (ly_max - ly_min) * 0.3  # 30% vertical tolerance
                     word_confs = []
-                    line_words = set(text.split())
                     for word in page.words:
-                        if word.content and word.content.strip() in line_words:
-                            if word.confidence is not None:
+                        if word.polygon and len(word.polygon) >= 8 and word.confidence is not None:
+                            wp = word.polygon
+                            wcx = sum(wp[i] for i in range(0, len(wp), 2)) / 4
+                            wcy = sum(wp[i] for i in range(1, len(wp), 2)) / 4
+                            if (lx_min <= wcx <= lx_max and
+                                    ly_min - ly_tol <= wcy <= ly_max + ly_tol):
                                 word_confs.append(word.confidence)
                     if word_confs:
                         line_conf = sum(word_confs) / len(word_confs)
@@ -543,19 +552,25 @@ class AzureOCREngine:
 
                     bbox = self._polygon_to_bbox(line.polygon)
 
-                    # Get word-level confidence average
-                    # Use realistic default (0.80) instead of inflated 0.95.
-                    # Azure Read model doesn't always provide per-word confidence,
-                    # and defaulting to 0.95 masks potential accuracy issues.
+                    # Get word-level confidence average using bbox containment.
+                    # Replaces set-membership matching which fails when multiple
+                    # lines share the same word (e.g. "1", "TOTAL", "$").
                     line_conf = 0.80
-                    if page.words:
+                    if page.words and line.polygon and len(line.polygon) >= 8:
+                        lp = line.polygon
+                        lx_coords = [lp[i] for i in range(0, len(lp), 2)]
+                        ly_coords = [lp[i] for i in range(1, len(lp), 2)]
+                        lx_min, lx_max = min(lx_coords), max(lx_coords)
+                        ly_min, ly_max = min(ly_coords), max(ly_coords)
+                        ly_tol = (ly_max - ly_min) * 0.3
                         word_confs = []
-                        # Match words to this line using content overlap
-                        # Use exact word boundary matching to avoid false substring matches
-                        line_words = set(text.split())
                         for word in page.words:
-                            if word.content and word.content.strip() in line_words:
-                                if word.confidence is not None:
+                            if word.polygon and len(word.polygon) >= 8 and word.confidence is not None:
+                                wp = word.polygon
+                                wcx = sum(wp[i] for i in range(0, len(wp), 2)) / 4
+                                wcy = sum(wp[i] for i in range(1, len(wp), 2)) / 4
+                                if (lx_min <= wcx <= lx_max and
+                                        ly_min - ly_tol <= wcy <= ly_max + ly_tol):
                                     word_confs.append(word.confidence)
                         if word_confs:
                             line_conf = sum(word_confs) / len(word_confs)

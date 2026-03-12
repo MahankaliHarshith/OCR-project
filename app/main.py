@@ -218,6 +218,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # ─── API Routes ───────────────────────────────────────────────────────────────
 app.include_router(router)
 
+# ─── Training Pipeline Routes ─────────────────────────────────────────────────
+from app.training.routes import training_router
+app.include_router(training_router)
+
 
 # ─── Serve Frontend ──────────────────────────────────────────────────────────
 @app.get("/", include_in_schema=False)

@@ -1,0 +1,25 @@
+[
+    {
+        "image_file": "receipt_001.jpg",
+        "receipt_id": "receipt_001",
+        "items": [
+            {"code": "ABC", "quantity": 2},
+            {"code": "DEF", "quantity": 3},
+            {"code": "GHI", "quantity": 1}
+        ],
+        "total_quantity": 6,
+        "receipt_type": "handwritten",
+        "notes": "Clear handwriting, standard format"
+    },
+    {
+        "image_file": "receipt_002.jpg",
+        "receipt_id": "receipt_002",
+        "items": [
+            {"code": "MNO", "quantity": 10},
+            {"code": "JKL", "quantity": 2}
+        ],
+        "total_quantity": 12,
+        "receipt_type": "handwritten",
+        "notes": "Slightly blurry photo"
+    }
+]

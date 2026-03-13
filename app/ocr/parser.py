@@ -6,6 +6,7 @@ using pattern recognition and product code mapping.
 
 import re
 import logging
+import threading
 from typing import List, Dict, Tuple, Optional
 from difflib import get_close_matches
 from datetime import datetime
@@ -178,6 +179,7 @@ class ReceiptParser:
         # LRU cache for _map_product_code results (avoids repeated fuzzy search)
         self._code_match_cache: Dict[str, Tuple[str, str, Optional[str]]] = {}
         self._CODE_CACHE_MAX = 128
+        self._cache_lock = threading.Lock()
 
     def parse(self, ocr_results: List[Dict], is_structured: bool = False) -> Dict:
         """
@@ -646,7 +648,7 @@ class ReceiptParser:
                 qty  = item.get("quantity", 0)
                 amt  = item.get("line_total", 0)
                 expected = round(qty * rate, 2)
-                ok = abs(amt - expected) < 0.01 if amt > 0 else True
+                ok = abs(amt - expected) < max(0.01, abs(expected) * 0.005) if amt > 0 else True
                 if not ok:
                     all_line_ok = False
                 computed_grand += expected
@@ -2096,8 +2098,9 @@ class ReceiptParser:
                 return self.product_catalog[stripped], "exact", stripped
 
         # ── Check code-match cache before expensive fuzzy/overlap search ──
-        if code in self._code_match_cache:
-            return self._code_match_cache[code]
+        cached = self._get_cached_code(code)
+        if cached is not None:
+            return cached
 
         # Try OCR-substituted variants for exact match
         variants = self._generate_ocr_variants(code)
@@ -2474,21 +2477,30 @@ class ReceiptParser:
         return aggregated
 
     def _generate_receipt_number(self) -> str:
-        """Generate a unique receipt number with random suffix to prevent collisions."""
+        """Generate a unique receipt number with random suffix to prevent collisions.
+        Uses 12 hex chars (48 bits) for ~281 trillion possible values per second,
+        virtually eliminating birthday-paradox collisions."""
         import uuid
         now = datetime.now()
-        suffix = uuid.uuid4().hex[:5].upper()
+        suffix = uuid.uuid4().hex[:12].upper()
         return f"REC-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}-{suffix}"
 
     def _cache_code_result(self, code: str, result: Tuple[str, str, Optional[str]]) -> None:
-        """Store a code→result mapping, evicting oldest if over limit."""
-        if len(self._code_match_cache) >= self._CODE_CACHE_MAX:
-            # Evict oldest entry (first key inserted)
-            oldest = next(iter(self._code_match_cache))
-            del self._code_match_cache[oldest]
-        self._code_match_cache[code] = result
+        """Store a code→result mapping, evicting oldest if over limit. Thread-safe."""
+        with self._cache_lock:
+            if len(self._code_match_cache) >= self._CODE_CACHE_MAX:
+                # Evict oldest entry (first key inserted)
+                oldest = next(iter(self._code_match_cache))
+                del self._code_match_cache[oldest]
+            self._code_match_cache[code] = result
+
+    def _get_cached_code(self, code: str) -> Optional[Tuple[str, str, Optional[str]]]:
+        """Thread-safe cache lookup."""
+        with self._cache_lock:
+            return self._code_match_cache.get(code)
 
     def update_catalog(self, catalog: Dict[str, str]) -> None:
         """Update the product catalog and invalidate match cache."""
         self.product_catalog = {k.upper(): v for k, v in catalog.items()}
-        self._code_match_cache.clear()
+        with self._cache_lock:
+            self._code_match_cache.clear()

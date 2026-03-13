@@ -110,9 +110,9 @@ class RateLimiter:
 
             self._requests[client_ip].append(now)
 
-            # Periodic cleanup of stale IPs (every 100 calls)
+            # Periodic cleanup of stale IPs (every 50 calls)
             self._cleanup_counter += 1
-            if self._cleanup_counter >= 100:
+            if self._cleanup_counter >= 50:
                 self._cleanup_counter = 0
                 self._cleanup(cutoff)
 

@@ -277,13 +277,17 @@ class ExcelService:
 
     def _adjust_column_widths(self, ws) -> None:
         """Auto-adjust column widths based on content."""
+        from openpyxl.cell.cell import MergedCell
         for column_cells in ws.columns:
             max_length = 0
             column_letter = get_column_letter(column_cells[0].column)
 
             for cell in column_cells:
                 try:
-                    cell_len = len(str(cell.value or ""))
+                    # Skip merged cells — they have no value and can behave differently
+                    if isinstance(cell, MergedCell) or cell.value is None:
+                        continue
+                    cell_len = len(str(cell.value))
                     if cell_len > max_length:
                         max_length = cell_len
                 except Exception:

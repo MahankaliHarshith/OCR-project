@@ -116,6 +116,7 @@ class BatchJob:
     success_count: int = 0
     error_count: int = 0
     _task: Optional[asyncio.Task] = field(default=None, repr=False)
+    _counter_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def to_dict(self, include_results: bool = True) -> Dict:
         """Serialize batch job to dict for API response."""
@@ -382,7 +383,8 @@ class BatchProcessingService:
 
             file_result.status = FileStatus.SUCCESS
             file_result.data = safe_result
-            batch.success_count += 1
+            async with batch._counter_lock:
+                batch.success_count += 1
 
         except asyncio.CancelledError:
             # Batch was cancelled while this file was processing — mark as skipped
@@ -390,19 +392,22 @@ class BatchProcessingService:
             file_result.status = FileStatus.SKIPPED
             file_result.error = "Batch cancelled"
             file_result.processing_time_ms = int((time.time() - start) * 1000)
-            batch.processed_count += 1
+            async with batch._counter_lock:
+                batch.processed_count += 1
             raise
         except Exception as e:
             file_result.status = FileStatus.ERROR
             file_result.error = str(e)
-            batch.error_count += 1
+            async with batch._counter_lock:
+                batch.error_count += 1
             logger.warning(
                 f"Batch {batch.batch_id} file [{index}] "
                 f"'{file_result.filename}' failed: {e}"
             )
 
         file_result.processing_time_ms = int((time.time() - start) * 1000)
-        batch.processed_count += 1
+        async with batch._counter_lock:
+            batch.processed_count += 1
 
         # Notify WebSocket subscribers of per-file progress
         await self._ws_broadcast(batch.batch_id, {

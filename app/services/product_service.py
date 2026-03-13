@@ -134,6 +134,20 @@ class ProductService:
         """
         logger.debug(f"import_from_csv: content length={len(csv_content)} chars")
         reader = csv.DictReader(io.StringIO(csv_content))
+
+        # Validate required CSV headers
+        if reader.fieldnames is None:
+            return {"added": 0, "skipped": 0, "errors": ["CSV file is empty or has no header row."]}
+        headers = {h.strip().lower() for h in reader.fieldnames if h}
+        required = {"product_code", "product_name"}
+        missing = required - headers
+        if missing:
+            return {
+                "added": 0, "skipped": 0,
+                "errors": [f"Missing required CSV columns: {', '.join(sorted(missing))}. "
+                           f"Expected: product_code, product_name, category (optional), unit (optional)."],
+            }
+
         added = 0
         skipped = 0
         errors = []

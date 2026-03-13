@@ -829,6 +829,10 @@ function checkImageQuality(file) {
                 // ── Brightness check (mean luminance) ──
                 let lumSum = 0;
                 const pixelCount = width * height;
+                if (pixelCount === 0) {
+                    resolve(issues);
+                    return;
+                }
                 for (let i = 0; i < data.length; i += 4) {
                     lumSum += data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
                 }
@@ -984,6 +988,11 @@ async function processFile(file) {
                 const retryRes = await fetch('/api/receipts/scan', { method: 'POST', body: retryForm });
                 const retryData = await retryRes.json();
                 if (retryRes.ok && (retryData.receipt_data?.items?.length || 0) > itemCount) {
+                    // Delete the empty receipt from the first attempt to avoid duplicates
+                    const firstReceiptId = data.receipt_id || data.receipt_data?.receipt_id;
+                    if (firstReceiptId) {
+                        fetch(`/api/receipts/${firstReceiptId}`, { method: 'DELETE' }).catch(() => {});
+                    }
                     showToast('Retry succeeded with original image!', 'success');
                     displayResults(retryData, file);
                     state._retryAttempted = false;
@@ -1606,12 +1615,25 @@ window.removeRow = function(idx) {
         // Refresh math verification panel after row removal
         const mathData = state.currentReceiptData.receipt_data.math_verification;
         if (mathData) {
-            // Recalculate line_checks: remove the entry at the deleted index.
-            // Using index instead of code avoids the duplicate-code bug where
-            // removing one item with code "ABC" would keep ALL line_checks for "ABC".
+            // Rebuild line_checks from remaining items to avoid stale-index bugs
+            // when multiple rows are removed in sequence.
             const remaining = state.currentReceiptData.receipt_data.items;
-            if (mathData.line_checks) {
-                mathData.line_checks.splice(idx, 1);
+            if (mathData.line_checks && remaining.length > 0) {
+                // Rebuild line_checks from scratch using remaining items
+                mathData.line_checks = remaining.map(item => {
+                    const rate = item.unit_price || 0;
+                    const qty = item.quantity || 0;
+                    const amt = item.line_total || 0;
+                    const expected = Math.round(qty * rate * 100) / 100;
+                    return {
+                        code: item.code || '',
+                        qty: qty,
+                        rate: rate,
+                        amount_ocr: amt,
+                        amount_expected: expected,
+                        math_ok: amt > 0 ? Math.abs(amt - expected) < 0.01 : true,
+                    };
+                });
                 // Recalculate computed grand total
                 mathData.computed_grand_total = mathData.line_checks.reduce(
                     (sum, lc) => sum + (lc.amount_expected || 0), 0

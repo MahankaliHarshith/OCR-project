@@ -1161,7 +1161,9 @@ class HybridOCREngine:
         return len(found)
 
     def _avg_confidence(self, detections: List[Dict]) -> float:
-        """Calculate average confidence across detections."""
+        """Calculate average confidence across detections.
+        Returns 0.0 for empty lists — callers should check len(detections)
+        separately to distinguish 'no data' from 'low confidence'."""
         if not detections:
             return 0.0
         confs = [d.get("confidence", 0) for d in detections]

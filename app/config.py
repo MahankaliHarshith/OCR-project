@@ -265,7 +265,7 @@ RATE_LIMIT_SCAN_RPM = int(os.getenv("RATE_LIMIT_SCAN_RPM", "20"))  # scan + batc
 # In production, these endpoints require header: X-API-Key: <key>
 # If not set and not in debug mode, a random key is auto-generated and logged.
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
-if not API_SECRET_KEY and not os.getenv("API_DEBUG", "false").lower() in ("true", "1", "yes"):
+if not API_SECRET_KEY and os.getenv("API_DEBUG", "false").lower() not in ("true", "1", "yes"):
     import secrets as _secrets
     API_SECRET_KEY = _secrets.token_urlsafe(32)
     # SECURITY: Never print the actual key — it would leak to Docker logs,

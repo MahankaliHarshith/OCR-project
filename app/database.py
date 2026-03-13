@@ -162,11 +162,26 @@ class BackupManager:
             return  # nothing to back up yet
 
         try:
-            shutil.copy2(str(self.db_path), str(dest))
+            # Use SQLite Online Backup API instead of shutil.copy2 —
+            # file copy can capture a half-written WAL state, producing
+            # a corrupt backup if a write transaction is in progress.
+            source = sqlite3.connect(str(self.db_path))
+            dest_conn = sqlite3.connect(str(dest))
+            try:
+                source.backup(dest_conn)
+            finally:
+                dest_conn.close()
+                source.close()
             size_kb = dest.stat().st_size / 1024
             logger.info("Daily backup created: %s (%.1f KB)", dest.name, size_kb)
         except Exception as exc:
             logger.error("Backup failed: %s", exc)
+            # Remove partial backup file if it was created
+            try:
+                if dest.exists():
+                    dest.unlink()
+            except OSError:
+                pass
 
     def _prune_old(self) -> None:
         cutoff = date.today() - timedelta(days=self.keep_days)

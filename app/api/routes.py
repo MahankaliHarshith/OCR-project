@@ -14,7 +14,7 @@ from datetime import datetime
 import numpy as np
 import re
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, UploadFile, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from typing import List as TypingList
@@ -363,7 +363,7 @@ async def scan_receipts_batch(files: TypingList[UploadFile] = File(...)):
             file_result["error"] = "Processing failed for this file."
             # Clean up orphaned upload file on failure
             try:
-                if 'upload_path' in dir() and upload_path and Path(upload_path).exists():
+                if 'upload_path' in locals() and upload_path and Path(upload_path).exists():
                     Path(upload_path).unlink(missing_ok=True)
             except OSError:
                 pass
@@ -963,16 +963,26 @@ async def websocket_batch_updates(websocket: WebSocket, batch_id: str):
 # ─── Alertmanager Webhook Receiver ───────────────────────────────────────────
 
 @router.post("/api/webhooks/alerts", tags=["System"], include_in_schema=False)
-async def receive_alertmanager_webhook():
+async def receive_alertmanager_webhook(request: Request):
     """
     Receive alerts from Prometheus Alertmanager.
 
     Logs each alert for visibility.  In production, extend this to
     send Slack/email/PagerDuty notifications.
     """
-    from fastapi import Request as _Request
-    # FastAPI automatically parses JSON body
-    import json as _json
-
-    logger.warning("🚨 Alertmanager webhook received — check Prometheus alerts")
+    try:
+        body = await request.json()
+        alerts = body.get("alerts", [])
+        for alert in alerts:
+            status = alert.get("status", "unknown")
+            labels = alert.get("labels", {})
+            alertname = labels.get("alertname", "unnamed")
+            logger.warning(
+                "🚨 Alert [%s] %s: %s",
+                status, alertname,
+                alert.get("annotations", {}).get("summary", "no summary"),
+            )
+        logger.warning("🚨 Alertmanager webhook received — %d alert(s)", len(alerts))
+    except Exception as e:
+        logger.error("Failed to parse Alertmanager payload: %s", e)
     return {"status": "received"}

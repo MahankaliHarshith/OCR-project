@@ -611,6 +611,14 @@ class AzureOCREngine:
                 [float(polygon[4]), float(polygon[5])],
                 [float(polygon[6]), float(polygon[7])],
             ]
+        elif len(polygon) >= 6:
+            # 3+ points as flat coords (6 or 7 elements) — build bounding rectangle
+            xs = [float(polygon[i]) for i in range(0, len(polygon) - 1, 2)]
+            ys = [float(polygon[i]) for i in range(1, len(polygon), 2)]
+            return [
+                [min(xs), min(ys)], [max(xs), min(ys)],
+                [max(xs), max(ys)], [min(xs), max(ys)],
+            ]
         elif len(polygon) == 4:
             # 4 flat coordinates: treat as [x_min, y_min, x_max, y_max]
             x_min, y_min, x_max, y_max = [float(v) for v in polygon]

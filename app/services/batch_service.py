@@ -394,6 +394,26 @@ class BatchProcessingService:
             file_result.processing_time_ms = int((time.time() - start) * 1000)
             async with batch._counter_lock:
                 batch.processed_count += 1
+            # Send WebSocket notification BEFORE re-raising so the UI sees
+            # the skip instead of stalling with a frozen progress bar.
+            try:
+                await self._ws_broadcast(batch.batch_id, {
+                    "type": "file_completed",
+                    "batch_id": batch.batch_id,
+                    "index": index,
+                    "filename": file_result.filename,
+                    "status": file_result.status.value,
+                    "processing_time_ms": file_result.processing_time_ms,
+                    "error": file_result.error,
+                    "processed": batch.processed_count,
+                    "total_files": batch.total_files,
+                    "progress_percent": round(
+                        (batch.processed_count / batch.total_files * 100) if batch.total_files > 0 else 0,
+                        1,
+                    ),
+                })
+            except Exception:
+                pass  # Don't let WS failure block cancellation
             raise
         except Exception as e:
             file_result.status = FileStatus.ERROR

@@ -1108,6 +1108,7 @@ function displayResults(data, file) {
     if (navigator.vibrate) navigator.vibrate(50);
 
     state.currentReceiptData = data;
+    state._removedItemIds = [];  // Reset tracked deletions for new receipt
 
     // Show processing time
     const serverTimeMs = data.metadata?.total_time_ms;

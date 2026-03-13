@@ -1121,17 +1121,42 @@ class HybridOCREngine:
         """
         local_dets = local_result.get("ocr_detections", [])
         azure_texts = {d["text"].upper().strip() for d in azure_detections}
+        # Also build a set of individual tokens from Azure (word-level) for
+        # token-level matching when Azure returns word-level detections
+        # but EasyOCR returns full-line detections.
+        azure_tokens = set()
+        for t in azure_texts:
+            for tok in t.split():
+                tok = tok.strip()
+                if len(tok) >= 3:  # Skip very short tokens (noise)
+                    azure_tokens.add(tok)
 
         for det in local_dets:
             local_text = det["text"].upper().strip()
+            # 1. Exact match (same granularity)
             if local_text in azure_texts:
-                # Both engines agree — boost confidence
                 det["confidence"] = min(1.0, det["confidence"] * 1.15)
                 det["needs_review"] = False
                 det["cross_verified"] = True
-            else:
-                # Only local found this — keep but flag
-                det["cross_verified"] = False
+                continue
+            # 2. Token-level match: check if most local tokens appear in Azure
+            local_tokens = [tok.strip() for tok in local_text.split() if len(tok.strip()) >= 3]
+            if local_tokens:
+                matched = sum(1 for tok in local_tokens if tok in azure_tokens)
+                match_ratio = matched / len(local_tokens)
+                if match_ratio >= 0.5:  # At least half of tokens match
+                    boost = 1.0 + (0.15 * match_ratio)  # Proportional boost
+                    det["confidence"] = min(1.0, det["confidence"] * boost)
+                    det["needs_review"] = False
+                    det["cross_verified"] = True
+                    continue
+            # 3. Substring match: Azure word contained in local line
+            if any(az_text in local_text for az_text in azure_texts if len(az_text) >= 4):
+                det["confidence"] = min(1.0, det["confidence"] * 1.08)
+                det["cross_verified"] = True
+                continue
+            # No match found
+            det["cross_verified"] = False
 
         local_result["engine_used"] = "hybrid-cross-verified"
         local_result["metadata"]["cross_verified"] = True

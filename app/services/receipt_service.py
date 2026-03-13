@@ -723,7 +723,7 @@ class ReceiptService:
             "total_qty_match": None,
             "verification_status": "not_found",
             "ocr_total": azure_total_float,
-            "computed_total": computed_monetary_total if computed_monetary_total > 0 else computed_qty_total,
+            "computed_total": computed_monetary_total if computed_monetary_total > 0 else None,
         }
         if azure_total_float is not None and computed_monetary_total > 0:
             # Compare monetary totals

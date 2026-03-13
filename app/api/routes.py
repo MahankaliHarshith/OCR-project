@@ -232,11 +232,11 @@ async def scan_receipts_batch(files: TypingList[UploadFile] = File(...)):
     """
     Upload and process multiple receipt images in one request.
 
-    Accepts up to 10 images per batch. Each image is validated and processed
+    Accepts up to 20 images per batch. Each image is validated and processed
     sequentially. Returns an array of results (one per file), each with
     success/failure status so the frontend can display per-file feedback.
     """
-    MAX_BATCH_FILES = 10
+    MAX_BATCH_FILES = 20
 
     if len(files) > MAX_BATCH_FILES:
         raise HTTPException(

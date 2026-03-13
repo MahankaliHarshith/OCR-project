@@ -138,17 +138,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         client_ip = request.client.host if request.client else "unknown"
 
-        # Determine limit based on endpoint
-        if path == "/api/receipts/scan":
-            limit = self.scan_rpm
-        else:
-            limit = self.general_rpm
+        # Determine limit based on endpoint — scan + batch share a stricter budget
+        is_scan_endpoint = (
+            path == "/api/receipts/scan"
+            or path == "/api/receipts/scan-batch"
+            or path == "/api/batch"
+        )
+        limit = self.scan_rpm if is_scan_endpoint else self.general_rpm
 
         allowed, remaining = _rate_limiter.is_allowed(client_ip, limit)
 
         if not allowed:
             logger.warning(f"Rate limit exceeded: {client_ip} on {path}")
-            _record_rate_limit("scan" if path == "/api/receipts/scan" else "general")
+            _record_rate_limit("scan" if is_scan_endpoint else "general")
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too many requests. Please wait a moment and try again."},

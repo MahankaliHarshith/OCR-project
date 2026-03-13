@@ -249,8 +249,8 @@ CORS_ORIGINS = (
 # Dev Tunnels add origin at runtime — handled by middleware pattern match
 
 # Rate Limiting (requests per minute per client IP)
-RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "30"))       # general endpoints
-RATE_LIMIT_SCAN_RPM = int(os.getenv("RATE_LIMIT_SCAN_RPM", "10"))  # scan endpoint (expensive)
+RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "60"))       # general endpoints
+RATE_LIMIT_SCAN_RPM = int(os.getenv("RATE_LIMIT_SCAN_RPM", "20"))  # scan + batch endpoints (expensive)
 
 # Optional API key for destructive operations (delete, reset, clear).
 # If set, these endpoints require header: X-API-Key: <key>

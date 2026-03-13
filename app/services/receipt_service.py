@@ -469,6 +469,13 @@ class ReceiptService:
 
             self.db.add_receipt_items(receipt_id, receipt_data["items"])
 
+            # Populate DB-assigned IDs back into items so the frontend
+            # can PUT (update) instead of POST (duplicate) on "Confirm & Save"
+            saved_receipt = self.db.get_receipt(receipt_id)
+            if saved_receipt and saved_receipt.get("items"):
+                for item, saved_item in zip(receipt_data["items"], saved_receipt["items"]):
+                    item["id"] = saved_item["id"]
+
             # Log processing stages (single batch insert — 1 round-trip)
             total_ms = int((time.time() - total_start) * 1000)
             self.db.add_processing_logs_batch([
@@ -550,6 +557,10 @@ class ReceiptService:
     def delete_receipt(self, receipt_id: int) -> bool:
         """Delete a receipt."""
         return self.db.delete_receipt(receipt_id)
+
+    def delete_receipt_item(self, item_id: int) -> bool:
+        """Delete a single receipt item."""
+        return self.db.delete_receipt_item(item_id)
 
     def add_receipt_item(
         self,

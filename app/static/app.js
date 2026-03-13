@@ -1610,6 +1610,12 @@ window.removeRow = function(idx) {
             showToast('Cannot remove the last item. Use "Scan Again" to start over.', 'warning');
             return;
         }
+        // Track removed item IDs for deletion on confirm
+        const removedItem = items[idx];
+        if (removedItem && removedItem.id) {
+            if (!state._removedItemIds) state._removedItemIds = [];
+            state._removedItemIds.push(removedItem.id);
+        }
         state.currentReceiptData.receipt_data.items.splice(idx, 1);
         state.isDirty = true;
         populateItemsTable(state.currentReceiptData.receipt_data.items);
@@ -1742,6 +1748,20 @@ $('#confirmBtn').addEventListener('click', async () => {
     let _saveFailures = 0;
     if (dbId) {
         try {
+            // Delete items that were removed by the user
+            if (state._removedItemIds && state._removedItemIds.length > 0) {
+                for (const removedId of state._removedItemIds) {
+                    try {
+                        const dr = await fetch(`/api/receipts/items/${removedId}`, { method: 'DELETE' });
+                        if (!dr.ok) _saveFailures++;
+                    } catch (delErr) {
+                        _saveFailures++;
+                        console.warn('Failed to delete removed item:', delErr);
+                    }
+                }
+                state._removedItemIds = [];
+            }
+            // Update existing / add new items
             for (const item of items) {
                 try {
                     if (item.id) {
@@ -1968,6 +1988,7 @@ function resetScanUI() {
     state.confirmed = false;
     state.isProcessing = false;
     state._abortController = null;
+    state._removedItemIds = [];
     clearProgressInterval();
     // Reset confirm button
     const confirmBtn = $('#confirmBtn');

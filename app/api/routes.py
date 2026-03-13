@@ -297,6 +297,7 @@ async def scan_receipts_batch(files: TypingList[UploadFile] = File(...)):
 
     results = []
     for idx, file in enumerate(files):
+        upload_path = None  # Reset to prevent cross-iteration cleanup
         file_result = {"filename": file.filename, "index": idx, "success": False}
 
         try:
@@ -598,6 +599,21 @@ async def add_receipt_item(receipt_id: int, data: ItemUpdate):
     except Exception as e:
         logger.error(f"Add receipt item failed: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail="Failed to add item. Please try again.")
+
+
+@router.delete("/api/receipts/items/{item_id}", tags=["Receipts"])
+async def delete_receipt_item(item_id: int):
+    """Delete a single receipt item and recalculate parent receipt totals."""
+    try:
+        success = receipt_service.delete_receipt_item(item_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Receipt item not found.")
+        return {"message": "Item deleted successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete receipt item failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete item.")
 
 
 @router.get("/api/receipts/date/{date}", tags=["Receipts"])

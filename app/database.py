@@ -479,6 +479,9 @@ class DatabaseBackend(ABC):
     def add_receipt_item(self, receipt_id: int, product_code: str, product_name: str, quantity: float,
                          unit_price: float = 0.0, line_total: float = 0.0) -> int: ...
 
+    @abstractmethod
+    def delete_receipt_item(self, item_id: int) -> bool: ...
+
     # ── Processing Logs ───────────────────────────────────────────────────
 
     @abstractmethod
@@ -917,10 +920,25 @@ class Database(DatabaseBackend):
                 "WHERE id = ?",
                 (product_code, product_name, quantity, unit_price, line_total, item_id),
             )
-            conn.commit()
             if cursor.rowcount == 0:
+                conn.commit()
                 logger.warning("Receipt item not found: id=%d", item_id)
                 return False
+            # Recalculate parent receipt totals to stay consistent
+            row = conn.execute(
+                "SELECT receipt_id FROM receipt_items WHERE id = ?", (item_id,)
+            ).fetchone()
+            if row:
+                rid = row["receipt_id"]
+                conn.execute(
+                    "UPDATE receipts SET total_items = "
+                    "(SELECT COUNT(*) FROM receipt_items WHERE receipt_id = ?), "
+                    "bill_total = "
+                    "(SELECT COALESCE(SUM(line_total), 0) FROM receipt_items WHERE receipt_id = ?) "
+                    "WHERE id = ?",
+                    (rid, rid, rid),
+                )
+            conn.commit()
             logger.info("Receipt item updated: id=%d, code=%s, qty=%s", item_id, product_code, quantity)
             return True
         except Exception:
@@ -987,6 +1005,36 @@ class Database(DatabaseBackend):
             conn.commit()
             logger.info("Receipt item added: id=%d, receipt=%d, code=%s", new_id, receipt_id, product_code)
             return new_id
+        except Exception:
+            conn.rollback()
+            raise
+
+    def delete_receipt_item(self, item_id: int) -> bool:
+        """Delete a single receipt item and recalculate parent receipt totals."""
+        logger.debug("delete_receipt_item(item_id=%d)", item_id)
+        self._before_write()
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT receipt_id FROM receipt_items WHERE id = ?", (item_id,)
+            ).fetchone()
+            if not row:
+                logger.warning("Receipt item not found for deletion: id=%d", item_id)
+                return False
+            rid = row["receipt_id"]
+            conn.execute("DELETE FROM receipt_items WHERE id = ?", (item_id,))
+            # Recalculate parent receipt totals
+            conn.execute(
+                "UPDATE receipts SET total_items = "
+                "(SELECT COUNT(*) FROM receipt_items WHERE receipt_id = ?), "
+                "bill_total = "
+                "(SELECT COALESCE(SUM(line_total), 0) FROM receipt_items WHERE receipt_id = ?) "
+                "WHERE id = ?",
+                (rid, rid, rid),
+            )
+            conn.commit()
+            logger.info("Receipt item deleted: id=%d, receipt=%d", item_id, rid)
+            return True
         except Exception:
             conn.rollback()
             raise

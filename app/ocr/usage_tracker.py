@@ -355,9 +355,10 @@ class UsageTracker:
     def _save(self) -> None:
         """Persist usage data to JSON file (atomic write to prevent corruption)."""
         try:
+            today = date.today()  # Defined once, used by both daily and monthly cleanup
+
             # Clean up old daily data (keep last 7 days only)
             if "days" in self._data:
-                today = date.today()
                 keys_to_remove = []
                 for day_key in self._data["days"]:
                     try:

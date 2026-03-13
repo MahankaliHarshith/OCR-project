@@ -229,13 +229,25 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
                 break
 
         if is_protected:
-            provided_key = request.headers.get("X-API-Key", "")
-            if provided_key != self.api_key:
-                logger.warning(f"Unauthorized {method} {path} from {request.client.host if request.client else '?'}")
-                return JSONResponse(
-                    status_code=403,
-                    content={"detail": "Invalid or missing API key. Set X-API-Key header."},
-                )
+            # Allow same-origin requests from the browser frontend without API key.
+            # Browsers set Sec-Fetch-Site automatically; external tools (curl, scripts) don't.
+            fetch_site = request.headers.get("Sec-Fetch-Site", "")
+            referer = request.headers.get("Referer", "")
+            origin = request.headers.get("Origin", "")
+            host = request.headers.get("Host", "")
+            is_same_origin = (
+                fetch_site == "same-origin"
+                or (referer and host and host in referer)
+                or (origin and host and host in origin)
+            )
+            if not is_same_origin:
+                provided_key = request.headers.get("X-API-Key", "")
+                if provided_key != self.api_key:
+                    logger.warning(f"Unauthorized {method} {path} from {request.client.host if request.client else '?'}")
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Invalid or missing API key. Set X-API-Key header."},
+                    )
 
         return await call_next(request)
 

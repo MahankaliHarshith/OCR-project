@@ -105,6 +105,11 @@ class RateLimiter:
 
             current_count = len(self._requests[client_ip])
 
+            # Remove empty keys to prevent unbounded memory growth
+            # from millions of unique IPs over the server lifetime
+            if current_count == 0:
+                del self._requests[client_ip]
+
             if current_count >= limit:
                 return False, 0
 

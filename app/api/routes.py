@@ -703,7 +703,7 @@ async def import_products_csv(file: UploadFile = File(...)):
     if len(raw) > 1024 * 1024:
         raise HTTPException(status_code=400, detail="CSV file too large. Maximum size is 1MB.")
     try:
-        content = raw.decode("utf-8")
+        content = raw.decode("utf-8-sig")  # utf-8-sig auto-strips BOM from Excel CSVs
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail="CSV file must be UTF-8 encoded.")
     result = product_service.import_from_csv(content)

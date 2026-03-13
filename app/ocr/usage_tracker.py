@@ -369,6 +369,22 @@ class UsageTracker:
                 for k in keys_to_remove:
                     del self._data["days"][k]
 
+            # Clean up old monthly data (keep last 13 months)
+            if "months" in self._data:
+                current_month = today.strftime("%Y-%m")
+                month_keys_to_remove = []
+                for month_key in self._data["months"]:
+                    try:
+                        # Parse YYYY-MM and check age
+                        y, m = month_key.split("-")
+                        month_age = (today.year - int(y)) * 12 + (today.month - int(m))
+                        if month_age > 13:
+                            month_keys_to_remove.append(month_key)
+                    except (ValueError, IndexError):
+                        month_keys_to_remove.append(month_key)
+                for k in month_keys_to_remove:
+                    del self._data["months"][k]
+
             # Atomic write: write to temp file, then rename
             import tempfile
             tmp_fd, tmp_path = tempfile.mkstemp(

@@ -35,6 +35,7 @@ Engine Modes:
 import logging
 import re
 import time
+import threading
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
@@ -518,6 +519,7 @@ class HybridOCREngine:
                 if can_verify:
                     logger.info("[Hybrid] Cross-verify: running Azure Read for verification...")
                     verify_detections = self.azure_engine.extract_text_read(image_path)
+                    metadata["azure_pages_used"] = metadata.get("azure_pages_used", 0) + 1
                     if verify_detections:
                         local_result = self._cross_verify_results(
                             local_result, verify_detections
@@ -1277,11 +1279,14 @@ class HybridOCREngine:
 # ─── Singleton ───────────────────────────────────────────────────────────────
 
 _hybrid_engine: Optional[HybridOCREngine] = None
+_hybrid_engine_lock = threading.Lock()
 
 
 def get_hybrid_engine() -> HybridOCREngine:
-    """Get or create the hybrid OCR engine singleton."""
+    """Get or create the hybrid OCR engine singleton. Thread-safe."""
     global _hybrid_engine
     if _hybrid_engine is None:
-        _hybrid_engine = HybridOCREngine()
+        with _hybrid_engine_lock:
+            if _hybrid_engine is None:
+                _hybrid_engine = HybridOCREngine()
     return _hybrid_engine

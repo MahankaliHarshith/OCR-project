@@ -3430,7 +3430,7 @@ async function loadTrainingSamples() {
                 <td>${totalQty}</td>
                 <td>${added}</td>
                 <td>
-                    <button class="btn btn-ghost btn-sm" onclick="deleteTrainingSample('${escHtml(s.receipt_id || s.id)}')" title="Delete sample">
+                    <button class="btn btn-ghost btn-sm" onclick="deleteTrainingSample('${escAttr(s.receipt_id || s.id)}')" title="Delete sample">
                         <i data-lucide="trash-2" style="width:14px;height:14px"></i>
                     </button>
                 </td>
@@ -4119,7 +4119,7 @@ async function loadSavedProfiles() {
                     <span class="train-profile-name">${escHtml(name)}</span>
                     <span class="train-profile-meta">${strategy} · ${timestamp} ${f1 ? '· ' + f1 : ''}</span>
                 </div>
-                <button class="btn btn-primary btn-sm" onclick="applyOptimizedProfile('${escHtml(name)}')">
+                <button class="btn btn-primary btn-sm" onclick="applyOptimizedProfile('${escAttr(name)}')">
                     <i data-lucide="check-circle" style="width:14px;height:14px"></i>
                     Apply
                 </button>

@@ -11,6 +11,7 @@ import os
 import io
 import logging
 import time
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
@@ -626,23 +627,29 @@ class AzureOCREngine:
 # ─── Lazy singleton ──────────────────────────────────────────────────────────
 
 _azure_engine: Optional[AzureOCREngine] = None
+_azure_engine_lock = threading.Lock()
 
 
 def get_azure_engine() -> Optional[AzureOCREngine]:
     """
     Get or create the Azure OCR engine singleton.
     Returns None if Azure is not available (SDK not installed or no credentials).
+    Thread-safe via double-checked locking.
     """
     global _azure_engine
     if _azure_engine is not None:
         return _azure_engine
 
-    if not is_azure_available():
-        return None
+    with _azure_engine_lock:
+        if _azure_engine is not None:
+            return _azure_engine
 
-    try:
-        _azure_engine = AzureOCREngine()
-        return _azure_engine
-    except Exception as e:
-        logger.warning(f"Failed to initialize Azure OCR engine: {e}")
-        return None
+        if not is_azure_available():
+            return None
+
+        try:
+            _azure_engine = AzureOCREngine()
+            return _azure_engine
+        except Exception as e:
+            logger.warning(f"Failed to initialize Azure OCR engine: {e}")
+            return None

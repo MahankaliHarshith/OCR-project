@@ -46,6 +46,7 @@ class ReceiptService:
         self._parser: Optional[ReceiptParser] = None
         self._catalog_last_refresh: float = 0.0   # epoch seconds
         self._CATALOG_TTL: float = 30.0            # refresh at most once per 30s
+        self._catalog_lock = threading.Lock()       # must be created in __init__, not lazily
 
     @property
     def parser(self) -> ReceiptParser:
@@ -66,8 +67,6 @@ class ReceiptService:
         Thread-safe: guarded by _catalog_lock to prevent races in
         concurrent batch processing.
         """
-        if not hasattr(self, '_catalog_lock'):
-            self._catalog_lock = threading.Lock()
         with self._catalog_lock:
             now = time.time()
             if now - self._catalog_last_refresh < self._CATALOG_TTL:
@@ -115,6 +114,21 @@ class ReceiptService:
             _pipeline_span = None
             _token = None
 
+        # Ensure span is ended and context detached on ALL code paths (including early returns)
+        def _end_pipeline_span():
+            try:
+                if _pipeline_span is not None:
+                    _pipeline_span.set_attribute("receipt.success", result.get("success", False))
+                    _pipeline_span.set_attribute("receipt.total_ms", int((time.time() - total_start) * 1000))
+                    rd = result.get("receipt_data") or {}
+                    _pipeline_span.set_attribute("receipt.items_count", rd.get("total_items", 0))
+                    _pipeline_span.end()
+                if _token is not None:
+                    from opentelemetry import trace as _otrace2
+                    _otrace2.context_api.detach(_token)
+            except Exception:
+                pass
+
         # ─── Step 0: Early cache check (skip preprocessing on cache hits) ──────
         # Compute hash of the raw upload BEFORE any heavy OpenCV work.
         # If it's a cache hit, we bypass Steps 2+3 entirely (~200-400ms saved).
@@ -132,6 +146,8 @@ class ReceiptService:
                 result["metadata"]["early_cache_hit"] = True
                 # Inject cached OCR result straight into hybrid_result downstream
                 result["metadata"]["_cached_hybrid_result"] = _cached
+                # Preserve the is_structured flag that was cached alongside the result
+                result["metadata"]["_cached_is_structured"] = _early_cache.get_meta(_early_cache_key, "is_structured", False)
         except Exception as _e:
             logger.debug(f"[Step 0/5] Early cache check failed: {_e}")
 
@@ -145,6 +161,7 @@ class ReceiptService:
             if not result["metadata"].get("image_path"):  # not already saved by Step 0
                 result["errors"].append(f"Image save failed: {e}")
                 logger.error(f"[Step 1/5] Image save failed: {e}", exc_info=True)
+                _end_pipeline_span()
                 return result
 
         # ─── Step 2: Preprocess image (skipped on early cache hit) ───────
@@ -182,6 +199,7 @@ class ReceiptService:
             except Exception as e:
                 result["errors"].append(f"Preprocessing failed: {e}")
                 logger.error(f"[Step 2/5] Preprocessing failed: {e}", exc_info=True)
+                _end_pipeline_span()
                 return result
 
         # ─── Step 3: OCR text extraction (Hybrid Engine) ────────────────
@@ -191,7 +209,9 @@ class ReceiptService:
             # ── Short-circuit: use cached OCR result if Step 0 hit the cache ──
             if result["metadata"].get("_cached_hybrid_result"):
                 hybrid_result = result["metadata"].pop("_cached_hybrid_result")
-                is_structured = hybrid_result.get("metadata", {}).get("is_structured", False)
+                # Use the is_structured flag that was cached alongside the result,
+                # NOT from hybrid metadata (which never stores it)
+                is_structured = result["metadata"].pop("_cached_is_structured", False)
                 result["metadata"]["receipt_type"] = "structured" if is_structured else "handwritten"
                 logger.info("[Step 3/5] ✅ Using early cached OCR result (engine skipped)")
             else:
@@ -221,6 +241,15 @@ class ReceiptService:
                     _ocr_span.set_attribute("ocr.detections", len(hybrid_result.get("ocr_detections", [])))
                     _ocr_span.set_attribute("ocr.time_ms", hybrid_result.get("ocr_time_ms", 0))
 
+                # Store is_structured in image cache so cache hits use correct parse mode
+                try:
+                    from app.ocr.image_cache import get_image_cache
+                    _cache = get_image_cache()
+                    _hash = _cache.compute_hash(saved_path)
+                    _cache.put_meta(_hash, "is_structured", is_structured)
+                except Exception:
+                    pass
+
             engine_used = hybrid_result["engine_used"]
             ocr_results = hybrid_result["ocr_detections"]
             azure_structured = hybrid_result.get("azure_structured")
@@ -237,6 +266,7 @@ class ReceiptService:
                 )
                 result["metadata"]["ocr_time_ms"] = ocr_ms
                 result["metadata"]["engine_used"] = engine_used
+                _end_pipeline_span()
                 return result
 
             result["metadata"]["ocr_time_ms"] = ocr_ms
@@ -261,6 +291,7 @@ class ReceiptService:
         except Exception as e:
             result["errors"].append(f"OCR extraction failed: {e}")
             logger.error(f"OCR extraction failed: {e}", exc_info=True)
+            _end_pipeline_span()
             return result
 
         # ─── Step 4: Parse receipt data ──────────────────────────────────
@@ -301,11 +332,13 @@ class ReceiptService:
                 )
                 result["receipt_data"] = receipt_data
                 logger.warning("[Step 4/5] No items found after parsing")
+                _end_pipeline_span()
                 return result
 
         except Exception as e:
             result["errors"].append(f"Data parsing failed: {e}")
             logger.error(f"[Step 4/5] Data parsing failed: {e}", exc_info=True)
+            _end_pipeline_span()
             return result
 
         # ─── Step 4b: Bill Total Verification ────────────────────────────
@@ -475,18 +508,7 @@ class ReceiptService:
             pass
 
         # ── End pipeline tracing span ──
-        try:
-            if _pipeline_span is not None:
-                _pipeline_span.set_attribute("receipt.success", result["success"])
-                _pipeline_span.set_attribute("receipt.total_ms", int((time.time() - total_start) * 1000))
-                rd = result.get("receipt_data") or {}
-                _pipeline_span.set_attribute("receipt.items_count", rd.get("total_items", 0))
-                _pipeline_span.end()
-            if _token is not None:
-                from opentelemetry import trace as _otrace2
-                _otrace2.context_api.detach(_token)
-        except Exception:
-            pass
+        _end_pipeline_span()
 
         return result
 

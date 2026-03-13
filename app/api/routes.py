@@ -153,7 +153,9 @@ async def scan_receipt(file: UploadFile = File(...)):
     """
     # Validate file extension
     ext = Path(file.filename or "").suffix.lower()
-    logger.info(f"Receipt scan request: filename={file.filename!r}, content_type={file.content_type}")
+    # Sanitize filename for logging to prevent log injection via newlines/control chars
+    safe_log_name = (file.filename or "").replace("\n", "_").replace("\r", "_").replace("\t", "_")[:200]
+    logger.info(f"Receipt scan request: filename={safe_log_name!r}, content_type={file.content_type}")
     if ext not in ALLOWED_IMAGE_EXTENSIONS:
         raise HTTPException(
             status_code=400,
@@ -286,9 +288,10 @@ async def scan_receipts_batch(files: TypingList[UploadFile] = File(...)):
                 b'BM': '.bmp',
                 b'II\x2a\x00': '.tiff',
                 b'MM\x00\x2a': '.tiff',
-                b'RIFF': '.webp',
             }
-            magic_ok = any(contents[:len(sig)] == sig for sig in _MAGIC)
+            # WebP needs a two-part check: RIFF header + WEBP at offset 8
+            is_webp = (len(contents) >= 12 and contents[:4] == b'RIFF' and contents[8:12] == b'WEBP')
+            magic_ok = is_webp or any(contents[:len(sig)] == sig for sig in _MAGIC)
             if not magic_ok:
                 file_result["error"] = "File content does not match a valid image format."
                 results.append(file_result)
@@ -315,6 +318,12 @@ async def scan_receipts_batch(files: TypingList[UploadFile] = File(...)):
         except Exception as e:
             logger.error(f"Batch scan [{idx+1}/{len(files)}] failed: {e}", exc_info=True)
             file_result["error"] = "Processing failed for this file."
+            # Clean up orphaned upload file on failure
+            try:
+                if 'upload_path' in dir() and upload_path and Path(upload_path).exists():
+                    Path(upload_path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
         results.append(file_result)
 
@@ -394,9 +403,10 @@ async def create_batch(files: TypingList[UploadFile] = File(...)):
             b'BM': '.bmp',
             b'II\x2a\x00': '.tiff',
             b'MM\x00\x2a': '.tiff',
-            b'RIFF': '.webp',
         }
-        if not any(contents[:len(sig)] == sig for sig in _MAGIC):
+        # WebP needs a two-part check: RIFF header + WEBP at offset 8
+        is_webp = (len(contents) >= 12 and contents[:4] == b'RIFF' and contents[8:12] == b'WEBP')
+        if not is_webp and not any(contents[:len(sig)] == sig for sig in _MAGIC):
             for _, p in saved_paths:
                 try:
                     Path(p).unlink(missing_ok=True)
@@ -524,6 +534,8 @@ async def update_receipt_item(item_id: int, data: ItemUpdate):
         if not updated:
             raise HTTPException(status_code=404, detail="Receipt item not found.")
         return {"message": "Item updated successfully."}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Update receipt item failed: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail="Failed to update item. Please try again.")

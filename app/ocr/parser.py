@@ -2402,7 +2402,7 @@ class ReceiptParser:
                 if item.get("match_type") == "ambiguous_oi":
                     old_code = item["code"]
                     item["code"] = shorter
-                    item["product_name"] = self.product_catalog[shorter]
+                    item["product"] = self.product_catalog[shorter]
                     item["match_type"] = "oi_resolved"
                     item["needs_review"] = True
                     logger.info(
@@ -2417,7 +2417,7 @@ class ReceiptParser:
                     if (f"{shorter}O" in raw or f"{shorter}I" in raw) and f"{dup_code}" not in raw.replace(f"{shorter}O", "").replace(f"{shorter}I", ""):
                         old_code = item["code"]
                         item["code"] = shorter
-                        item["product_name"] = self.product_catalog[shorter]
+                        item["product"] = self.product_catalog[shorter]
                         item["match_type"] = "ocr_variant"
                         logger.info(
                             f"  Dedup ambiguity (raw_text): '{old_code}' → '{shorter}' "
@@ -2448,7 +2448,16 @@ class ReceiptParser:
                 aggregated[idx]["quantity"] += item["quantity"]
                 aggregated[idx]["needs_review"] = True
                 aggregated[idx]["raw_text"] += f" | {item['raw_text']}"
-                # Recalculate line_total after qty merge
+                # Preserve higher confidence from the better detection
+                if item.get("confidence", 0) > aggregated[idx].get("confidence", 0):
+                    aggregated[idx]["confidence"] = item["confidence"]
+                # If the existing item has no price but the new one does,
+                # adopt the new item's price data (prevents losing OCR prices)
+                existing_rate = aggregated[idx].get("unit_price", 0)
+                new_rate = item.get("unit_price", 0)
+                if existing_rate == 0 and new_rate > 0:
+                    aggregated[idx]["unit_price"] = new_rate
+                # Recalculate line_total after qty merge using best available rate
                 rate = aggregated[idx].get("unit_price", 0)
                 if rate > 0:
                     aggregated[idx]["line_total"] = round(

@@ -110,13 +110,15 @@ class ImageCache:
             _record_cache_miss()
             return None
 
-    def put(self, image_hash: str, result: Dict) -> None:
+    def put(self, image_hash: str, result: Dict, meta: Optional[Dict] = None) -> None:
         """
         Store an OCR result in the cache.
 
         Args:
             image_hash: SHA-256 hash of the image
             result: The hybrid engine result dict to cache
+            meta: Optional metadata dict to store alongside the result
+                  (e.g., {"is_structured": True}) — survives cache retrieval
         """
         with self._lock:
             # Evict oldest if at capacity
@@ -127,6 +129,7 @@ class ImageCache:
             self._cache[image_hash] = {
                 "result": result,
                 "cached_at": time.time(),
+                "meta": meta or {},
             }
 
             logger.debug(
@@ -141,6 +144,22 @@ class ImageCache:
             if now - self._last_disk_write >= self.DISK_WRITE_DEBOUNCE_SECONDS:
                 self._save_to_disk_unlocked()
                 self._last_disk_write = now
+
+    def put_meta(self, image_hash: str, key: str, value) -> None:
+        """Store metadata alongside a cached result without replacing the result."""
+        with self._lock:
+            if image_hash in self._cache:
+                entry = self._cache[image_hash]
+                if "meta" not in entry:
+                    entry["meta"] = {}
+                entry["meta"][key] = value
+
+    def get_meta(self, image_hash: str, key: str, default=None):
+        """Retrieve a metadata value stored alongside a cached result."""
+        with self._lock:
+            if image_hash in self._cache:
+                return self._cache[image_hash].get("meta", {}).get(key, default)
+            return default
 
     def get_stats(self) -> Dict:
         """Get cache performance statistics."""
@@ -170,6 +189,15 @@ class ImageCache:
             except Exception:
                 pass
 
+    def flush(self) -> None:
+        """Force-persist all cached entries to disk (call on shutdown).
+
+        The put() method debounces disk writes to once per 30s, so entries
+        added in the last 30 seconds before shutdown would be lost without
+        this explicit flush.
+        """
+        self._save_to_disk()
+
     # ─── Disk Persistence ────────────────────────────────────────────────────
 
     def _save_to_disk(self):
@@ -180,7 +208,11 @@ class ImageCache:
             self._save_to_disk_unlocked()
 
     def _save_to_disk_unlocked(self):
-        """Save cache entries to a JSON file (caller must hold self._lock)."""
+        """Save cache entries to a JSON file (caller must hold self._lock).
+
+        Uses atomic write (temp file + os.replace) to prevent corruption
+        if the process crashes mid-write.
+        """
         if not self._persist_path:
             return
         try:
@@ -193,9 +225,14 @@ class ImageCache:
                     data[h] = {
                         "result": self._make_json_safe(entry["result"]),
                         "cached_at": entry["cached_at"],
+                        "meta": entry.get("meta", {}),
                     }
-            with open(self._persist_path, "w") as f:
+            # Atomic write: write to temp file, then replace
+            import os
+            tmp_path = str(self._persist_path) + ".tmp"
+            with open(tmp_path, "w") as f:
                 json.dump(data, f)
+            os.replace(tmp_path, str(self._persist_path))
         except Exception as e:
             logger.debug(f"[Cache] Disk save failed: {e}")
 
@@ -210,6 +247,9 @@ class ImageCache:
             loaded = 0
             for h, entry in data.items():
                 if now - entry["cached_at"] <= self.ttl_seconds:
+                    # Ensure meta field exists (backward compat with old cache files)
+                    if "meta" not in entry:
+                        entry["meta"] = {}
                     self._cache[h] = entry
                     loaded += 1
                     if loaded >= self.max_size:

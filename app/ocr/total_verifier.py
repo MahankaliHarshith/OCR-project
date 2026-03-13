@@ -477,15 +477,24 @@ class BillTotalVerifier:
     # ─────────────────────────────────────────────────────────────────────
 
     def _extract_azure_total(self, azure_data: Dict) -> Optional[float]:
-        """Extract total from Azure receipt model structured data."""
-        # Azure receipt model provides: total, subtotal, tax
-        for key in ["total", "subtotal"]:
-            val = azure_data.get(key)
-            if val is not None:
-                try:
-                    return float(val)
-                except (ValueError, TypeError):
-                    pass
+        """Extract QUANTITY total from Azure receipt model structured data.
+
+        Azure's receipt model only provides MONETARY totals (Total, Subtotal),
+        NOT item-count/quantity totals. Returning a money value here would
+        corrupt the quantity verification (e.g. comparing ₹2500 vs 11 items).
+
+        Azure does not expose a structured 'total_qty' field, so we return None
+        and let the verifier rely on OCR-extracted quantity totals + computed sum.
+        """
+        # Look for a dedicated quantity total field (Azure doesn't provide one
+        # in the standard receipt model, but future versions might)
+        qty_total = azure_data.get("total_quantity") or azure_data.get("total_qty")
+        if qty_total is not None:
+            try:
+                return float(qty_total)
+            except (ValueError, TypeError):
+                pass
+        # Do NOT use 'total' or 'subtotal' — those are MONETARY values
         return None
 
     # ─────────────────────────────────────────────────────────────────────

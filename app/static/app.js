@@ -986,7 +986,13 @@ async function processFile(file) {
             const retryForm = new FormData();
             retryForm.append('file', file);
             try {
-                const retryRes = await fetch('/api/receipts/scan', { method: 'POST', body: retryForm });
+                const retryController = new AbortController();
+                state._abortController = retryController;  // Allow cancel button to abort retry
+                const retryTimeout = setTimeout(() => retryController.abort(), 60000);
+                const retryRes = await fetch('/api/receipts/scan', {
+                    method: 'POST', body: retryForm, signal: retryController.signal,
+                });
+                clearTimeout(retryTimeout);
                 const retryData = await retryRes.json();
                 if (retryRes.ok && (retryData.receipt_data?.items?.length || 0) > itemCount) {
                     // Delete the empty receipt from the first attempt to avoid duplicates
@@ -1483,10 +1489,11 @@ function populateItemsTable(items) {
         const amount = item.line_total || 0;
         const hasPrice = rate > 0;
 
-        // Find matching line check for math status
+        // Find matching line check for math status (prefer index-based match
+        // to handle duplicate product codes correctly)
         let mathOk = null;
         if (lineChecks.length > 0) {
-            const lc = lineChecks.find(c => c.code === item.code) || lineChecks[idx];
+            const lc = lineChecks[idx] || lineChecks.find(c => c.code === item.code);
             if (lc) mathOk = lc.math_ok;
         }
 
@@ -1617,6 +1624,24 @@ window.removeRow = function(idx) {
             if (!state._removedItemIds) state._removedItemIds = [];
             state._removedItemIds.push(removedItem.id);
         }
+        // Sync current DOM input values to backing data BEFORE splicing,
+        // so that user edits (e.g. changed quantity) are reflected in
+        // the math recalculation after row removal.
+        document.querySelectorAll('#itemsBody .editable').forEach(inp => {
+            const i = parseInt(inp.dataset.idx);
+            const field = inp.dataset.field;
+            const items = state.currentReceiptData.receipt_data.items;
+            if (items[i]) {
+                items[i][field] = field === 'quantity' ? (parseFloat(inp.value) || 0) : inp.value;
+            }
+        });
+        // Also recalculate line_total for items whose quantity was edited
+        state.currentReceiptData.receipt_data.items.forEach(item => {
+            if ((item.unit_price || 0) > 0) {
+                item.line_total = Math.round(item.quantity * item.unit_price * 100) / 100;
+            }
+        });
+
         state.currentReceiptData.receipt_data.items.splice(idx, 1);
         state.isDirty = true;
         populateItemsTable(state.currentReceiptData.receipt_data.items);
@@ -2836,9 +2861,9 @@ function escHtml(str) {
     div.textContent = String(str);
     return div.innerHTML;
 }
-/** Escape a string for safe use inside single-quoted HTML attribute values (e.g. onclick). */
+/** Escape a string for safe use inside HTML attribute values (both single and double quoted). */
 function escAttr(str) {
-    return escHtml(str).replace(/'/g, '&#39;');
+    return escHtml(str).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
 }
 /** Safely parse JSON from a fetch response. Returns {} on failure. */
 async function safeJson(res) {

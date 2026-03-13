@@ -505,24 +505,41 @@ class AzureOCREngine:
                 # Use bounding-box containment (not set-membership) to avoid
                 # mis-attributing duplicate words across lines (e.g. "1", "TOTAL").
                 line_conf = 0.80
-                if page.words and line.polygon and len(line.polygon) >= 8:
+                if page.words and line.polygon and len(line.polygon) >= 4:
                     lp = line.polygon
-                    lx_coords = [lp[i] for i in range(0, len(lp), 2)]
-                    ly_coords = [lp[i] for i in range(1, len(lp), 2)]
-                    lx_min, lx_max = min(lx_coords), max(lx_coords)
-                    ly_min, ly_max = min(ly_coords), max(ly_coords)
-                    ly_tol = (ly_max - ly_min) * 0.3  # 30% vertical tolerance
-                    word_confs = []
-                    for word in page.words:
-                        if word.polygon and len(word.polygon) >= 8 and word.confidence is not None:
+                    # Handle both Point objects (len=4) and flat coord lists (len>=8)
+                    if hasattr(lp[0], 'x'):
+                        lx_min = min(p.x for p in lp)
+                        lx_max = max(p.x for p in lp)
+                        ly_min = min(p.y for p in lp)
+                        ly_max = max(p.y for p in lp)
+                    elif len(lp) >= 8:
+                        lx_coords = [lp[i] for i in range(0, len(lp), 2)]
+                        ly_coords = [lp[i] for i in range(1, len(lp), 2)]
+                        lx_min, lx_max = min(lx_coords), max(lx_coords)
+                        ly_min, ly_max = min(ly_coords), max(ly_coords)
+                    else:
+                        lx_min = lx_max = ly_min = ly_max = None
+
+                    if lx_min is not None:
+                        ly_tol = (ly_max - ly_min) * 0.3  # 30% vertical tolerance
+                        word_confs = []
+                        for word in page.words:
                             wp = word.polygon
-                            wcx = sum(wp[i] for i in range(0, len(wp), 2)) / 4
-                            wcy = sum(wp[i] for i in range(1, len(wp), 2)) / 4
-                            if (lx_min <= wcx <= lx_max and
-                                    ly_min - ly_tol <= wcy <= ly_max + ly_tol):
-                                word_confs.append(word.confidence)
-                    if word_confs:
-                        line_conf = sum(word_confs) / len(word_confs)
+                            if wp and word.confidence is not None:
+                                if hasattr(wp[0], 'x') and len(wp) >= 4:
+                                    wcx = sum(p.x for p in wp) / len(wp)
+                                    wcy = sum(p.y for p in wp) / len(wp)
+                                elif len(wp) >= 8:
+                                    wcx = sum(wp[i] for i in range(0, len(wp), 2)) / 4
+                                    wcy = sum(wp[i] for i in range(1, len(wp), 2)) / 4
+                                else:
+                                    continue
+                                if (lx_min <= wcx <= lx_max and
+                                        ly_min - ly_tol <= wcy <= ly_max + ly_tol):
+                                    word_confs.append(word.confidence)
+                        if word_confs:
+                            line_conf = sum(word_confs) / len(word_confs)
 
                 detections.append({
                     "bbox": bbox,
@@ -557,22 +574,38 @@ class AzureOCREngine:
                     # Replaces set-membership matching which fails when multiple
                     # lines share the same word (e.g. "1", "TOTAL", "$").
                     line_conf = 0.80
-                    if page.words and line.polygon and len(line.polygon) >= 8:
+                    if page.words and line.polygon and len(line.polygon) >= 4:
                         lp = line.polygon
-                        lx_coords = [lp[i] for i in range(0, len(lp), 2)]
-                        ly_coords = [lp[i] for i in range(1, len(lp), 2)]
-                        lx_min, lx_max = min(lx_coords), max(lx_coords)
-                        ly_min, ly_max = min(ly_coords), max(ly_coords)
-                        ly_tol = (ly_max - ly_min) * 0.3
-                        word_confs = []
-                        for word in page.words:
-                            if word.polygon and len(word.polygon) >= 8 and word.confidence is not None:
+                        if hasattr(lp[0], 'x'):
+                            lx_min = min(p.x for p in lp)
+                            lx_max = max(p.x for p in lp)
+                            ly_min = min(p.y for p in lp)
+                            ly_max = max(p.y for p in lp)
+                        elif len(lp) >= 8:
+                            lx_coords = [lp[i] for i in range(0, len(lp), 2)]
+                            ly_coords = [lp[i] for i in range(1, len(lp), 2)]
+                            lx_min, lx_max = min(lx_coords), max(lx_coords)
+                            ly_min, ly_max = min(ly_coords), max(ly_coords)
+                        else:
+                            lx_min = lx_max = ly_min = ly_max = None
+
+                        if lx_min is not None:
+                            ly_tol = (ly_max - ly_min) * 0.3
+                            word_confs = []
+                            for word in page.words:
                                 wp = word.polygon
-                                wcx = sum(wp[i] for i in range(0, len(wp), 2)) / 4
-                                wcy = sum(wp[i] for i in range(1, len(wp), 2)) / 4
-                                if (lx_min <= wcx <= lx_max and
-                                        ly_min - ly_tol <= wcy <= ly_max + ly_tol):
-                                    word_confs.append(word.confidence)
+                                if wp and word.confidence is not None:
+                                    if hasattr(wp[0], 'x') and len(wp) >= 4:
+                                        wcx = sum(p.x for p in wp) / len(wp)
+                                        wcy = sum(p.y for p in wp) / len(wp)
+                                    elif len(wp) >= 8:
+                                        wcx = sum(wp[i] for i in range(0, len(wp), 2)) / 4
+                                        wcy = sum(wp[i] for i in range(1, len(wp), 2)) / 4
+                                    else:
+                                        continue
+                                    if (lx_min <= wcx <= lx_max and
+                                            ly_min - ly_tol <= wcy <= ly_max + ly_tol):
+                                        word_confs.append(word.confidence)
                         if word_confs:
                             line_conf = sum(word_confs) / len(word_confs)
 

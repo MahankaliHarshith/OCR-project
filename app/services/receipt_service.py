@@ -8,6 +8,7 @@ import logging
 import os
 import time
 import shutil
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -61,16 +62,22 @@ class ReceiptService:
         don't each pay a DB round-trip when the catalog hasn't changed.
         Force a refresh by calling with force=True or by setting
         _catalog_last_refresh = 0.
+
+        Thread-safe: guarded by _catalog_lock to prevent races in
+        concurrent batch processing.
         """
-        now = time.time()
-        if now - self._catalog_last_refresh < self._CATALOG_TTL:
-            return  # catalog is still fresh
-        catalog = product_service.get_product_code_map()
-        if self._parser:
-            self._parser.update_catalog(catalog)
-        else:
-            self._parser = ReceiptParser(catalog)
-        self._catalog_last_refresh = now
+        if not hasattr(self, '_catalog_lock'):
+            self._catalog_lock = threading.Lock()
+        with self._catalog_lock:
+            now = time.time()
+            if now - self._catalog_last_refresh < self._CATALOG_TTL:
+                return  # catalog is still fresh
+            catalog = product_service.get_product_code_map()
+            if self._parser:
+                self._parser.update_catalog(catalog)
+            else:
+                self._parser = ReceiptParser(catalog)
+            self._catalog_last_refresh = now
 
     def process_receipt(self, image_path: str) -> Dict:
         """
@@ -582,8 +589,11 @@ class ReceiptService:
 
                 if not code:
                     # 3. Fuzzy match description against product names
+                    # Use adaptive cutoff (same as parser) to prevent false matches
+                    from app.config import get_adaptive_fuzzy_cutoff
+                    fuzzy_cutoff = get_adaptive_fuzzy_cutoff(len(desc_upper))
                     close = get_close_matches(
-                        desc_upper, catalog_names.keys(), n=1, cutoff=0.5
+                        desc_upper, catalog_names.keys(), n=1, cutoff=fuzzy_cutoff
                     )
                     if close:
                         code = catalog_names[close[0]]

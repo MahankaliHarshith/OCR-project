@@ -262,23 +262,23 @@ def _migration_v3_add_prices(conn: sqlite3.Connection) -> None:
     # Products: unit price for catalog-based price lookup
     try:
         conn.execute("ALTER TABLE products ADD COLUMN unit_price REAL DEFAULT 0.0")
-    except Exception:
+    except sqlite3.OperationalError:
         pass  # column already exists
 
     # Receipt items: price per unit and line total (qty × price)
     try:
         conn.execute("ALTER TABLE receipt_items ADD COLUMN unit_price REAL DEFAULT 0.0")
-    except Exception:
+    except sqlite3.OperationalError:
         pass
     try:
         conn.execute("ALTER TABLE receipt_items ADD COLUMN line_total REAL DEFAULT 0.0")
-    except Exception:
+    except sqlite3.OperationalError:
         pass
 
     # Receipts: bill total (monetary grand total)
     try:
         conn.execute("ALTER TABLE receipts ADD COLUMN bill_total REAL DEFAULT 0.0")
-    except Exception:
+    except sqlite3.OperationalError:
         pass
 
     # Seed default prices for existing products
@@ -619,6 +619,14 @@ class Database(DatabaseBackend):
         self._before_write()
         conn = self._conn()
         try:
+            # Check if product already exists (active)
+            active = conn.execute(
+                "SELECT * FROM products WHERE product_code = ? AND is_active = 1",
+                (code.upper(),),
+            ).fetchone()
+            if active:
+                raise ValueError(f"Product with code '{code.upper()}' already exists")
+
             # Check if a soft-deleted product with this code exists
             row = conn.execute(
                 "SELECT * FROM products WHERE product_code = ? AND is_active = 0",
@@ -922,7 +930,7 @@ class Database(DatabaseBackend):
         except Exception as exc:
             conn.rollback()
             logger.error("Failed to delete receipt %d: %s", receipt_id, exc)
-            return False
+            raise  # Don't swallow — let API return 500 instead of misleading 404
 
     def add_receipt_item(
         self, receipt_id: int, product_code: str, product_name: str, quantity: float

@@ -50,7 +50,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: blob:; "
             "media-src 'self' blob:; "
-            "connect-src 'self'"
+            "connect-src 'self' ws: wss: https://*.devtunnels.ms https://*.github.dev"
         ),
     }
 
@@ -136,7 +136,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path.startswith("/static") or path.startswith("/docs") or path.startswith("/redoc"):
             return await call_next(request)
 
-        client_ip = request.client.host if request.client else "unknown"
+        # Use X-Forwarded-For if available (reverse proxy / load balancer).
+        # Take the leftmost (client) IP from the chain. Fall back to direct IP.
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
 
         # Determine limit based on endpoint — scan + batch share a stricter budget
         is_scan_endpoint = (
@@ -146,7 +152,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
         limit = self.scan_rpm if is_scan_endpoint else self.general_rpm
 
-        allowed, remaining = _rate_limiter.is_allowed(client_ip, limit)
+        # Use composite key so scan and general budgets don't mix.
+        # Without this, general API calls consume scan budget and vice versa.
+        rate_key = f"{client_ip}:scan" if is_scan_endpoint else f"{client_ip}:general"
+        allowed, remaining = _rate_limiter.is_allowed(rate_key, limit)
 
         if not allowed:
             logger.warning(f"Rate limit exceeded: {client_ip} on {path}")

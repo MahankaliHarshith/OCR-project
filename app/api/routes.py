@@ -186,9 +186,10 @@ async def scan_receipt(file: UploadFile = File(...)):
         b'BM': '.bmp',                  # BMP
         b'II\x2a\x00': '.tiff',        # TIFF (little-endian)
         b'MM\x00\x2a': '.tiff',        # TIFF (big-endian)
-        b'RIFF': '.webp',               # WebP (RIFF container)
     }
-    magic_ok = any(contents[:len(sig)] == sig for sig in _MAGIC)
+    # WebP needs a two-part check: RIFF header + WEBP at offset 8
+    is_webp = (len(contents) >= 12 and contents[:4] == b'RIFF' and contents[8:12] == b'WEBP')
+    magic_ok = is_webp or any(contents[:len(sig)] == sig for sig in _MAGIC)
     if not magic_ok:
         raise HTTPException(
             status_code=400,
@@ -501,10 +502,15 @@ async def get_receipt(receipt_id: int):
 @router.delete("/api/receipts/{receipt_id}", tags=["Receipts"])
 async def delete_receipt(receipt_id: int):
     """Delete a receipt and its items."""
-    success = receipt_service.delete_receipt(receipt_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Receipt not found.")
-    return {"message": "Receipt deleted successfully."}
+    try:
+        success = receipt_service.delete_receipt(receipt_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Receipt not found.")
+        return {"message": "Receipt deleted successfully."}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete receipt: {exc}")
 
 
 @router.put("/api/receipts/items/{item_id}", tags=["Receipts"])

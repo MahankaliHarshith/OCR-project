@@ -453,33 +453,36 @@ class ImagePreprocessor:
         """
         try:
             pil_img = Image.open(image_path)
-            # Find EXIF orientation tag
-            exif_data = pil_img.getexif()
-            orientation = None
-            for tag_id, value in exif_data.items():
-                if ExifTags.TAGS.get(tag_id) == 'Orientation':
-                    orientation = value
-                    break
+            try:
+                # Find EXIF orientation tag
+                exif_data = pil_img.getexif()
+                orientation = None
+                for tag_id, value in exif_data.items():
+                    if ExifTags.TAGS.get(tag_id) == 'Orientation':
+                        orientation = value
+                        break
 
-            if orientation is not None and orientation != 1:
-                rotate_map = {
-                    2: [Image.FLIP_LEFT_RIGHT],
-                    3: [Image.ROTATE_180],
-                    4: [Image.FLIP_TOP_BOTTOM],
-                    5: [Image.TRANSPOSE],
-                    6: [Image.ROTATE_270],  # 90° CW
-                    7: [Image.TRANSVERSE],
-                    8: [Image.ROTATE_90],   # 90° CCW
-                }
-                ops = rotate_map.get(orientation, [])
-                for op in ops:
-                    pil_img = pil_img.transpose(op)
-                logger.debug(f"EXIF orientation corrected: {orientation} → upright")
+                if orientation is not None and orientation != 1:
+                    rotate_map = {
+                        2: [Image.FLIP_LEFT_RIGHT],
+                        3: [Image.ROTATE_180],
+                        4: [Image.FLIP_TOP_BOTTOM],
+                        5: [Image.TRANSPOSE],
+                        6: [Image.ROTATE_270],  # 90° CW
+                        7: [Image.TRANSVERSE],
+                        8: [Image.ROTATE_90],   # 90° CCW
+                    }
+                    ops = rotate_map.get(orientation, [])
+                    for op in ops:
+                        pil_img = pil_img.transpose(op)
+                    logger.debug(f"EXIF orientation corrected: {orientation} → upright")
 
-            # Convert PIL (RGB) to OpenCV (BGR)
-            img_rgb = np.array(pil_img.convert('RGB'))
-            img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-            return img_bgr
+                # Convert PIL (RGB) to OpenCV (BGR)
+                img_rgb = np.array(pil_img.convert('RGB'))
+                img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+                return img_bgr
+            finally:
+                pil_img.close()  # Prevent file handle leak under concurrent scanning
         except Exception as e:
             logger.debug(f"EXIF correction failed ({e}), falling back to cv2.imread")
             img = cv2.imread(image_path)

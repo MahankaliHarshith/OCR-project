@@ -22,11 +22,18 @@ MODEL_DIR = BASE_DIR / "models"
 # SQLite doesn't work in OneDrive/cloud-synced folders (locking issues).
 # Auto-redirect the database to a local folder if needed.
 def _safe_db_path(base: Path) -> Path:
+    """Avoid creating the DB inside cloud-synced folders (OneDrive, Dropbox, etc.).
+    SQLite + file-sync = corruption. Use a local-only directory instead."""
+    import sys
     base_str = str(base).lower()
     if "onedrive" in base_str or "dropbox" in base_str or "google drive" in base_str:
-        local_dir = Path(os.environ.get("LOCALAPPDATA", base)) / "ReceiptScanner"
-        local_dir.mkdir(parents=True, exist_ok=True)
-        return local_dir / "receipt_scanner.db"
+        if sys.platform == "win32":
+            fallback = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))) / "ReceiptScanner"
+        else:
+            # Linux/Mac: use ~/.local/share (XDG_DATA_HOME) or fallback to home
+            fallback = Path(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))) / "ReceiptScanner"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback / "receipt_scanner.db"
     return base / "receipt_scanner.db"
 
 DATABASE_PATH = _safe_db_path(BASE_DIR)

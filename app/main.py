@@ -170,14 +170,17 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Compress responses >500B (~60% savings on JSON/HTML)
 
 # ─── Security Middleware ───────────────────────────────────────────────────
-# Order matters: outermost (first added) wraps all inner layers.
-app.add_middleware(DevTunnelCORSMiddleware)      # Dynamic CORS for VS Code tunnels
-app.add_middleware(SecurityHeadersMiddleware)     # X-Frame-Options, CSP, etc.
+# Starlette middleware wraps app layers — LAST added = OUTERMOST (runs first).
+# Order of execution: DevTunnelCORS → Security → RateLimit → APIKey → route.
+# CORS must be outermost so 429/401 responses still include CORS headers,
+# otherwise the browser shows a CORS error instead of the real error.
+app.add_middleware(APIKeyMiddleware,              # Protect destructive endpoints
+                   api_key=API_SECRET_KEY)
 app.add_middleware(RateLimitMiddleware,           # Per-IP rate limiting
                    general_rpm=RATE_LIMIT_RPM,
                    scan_rpm=RATE_LIMIT_SCAN_RPM)
-app.add_middleware(APIKeyMiddleware,              # Protect destructive endpoints
-                   api_key=API_SECRET_KEY)
+app.add_middleware(SecurityHeadersMiddleware)     # X-Frame-Options, CSP, etc.
+app.add_middleware(DevTunnelCORSMiddleware)       # Dynamic CORS for VS Code tunnels (outermost)
 
 # ─── Prometheus Metrics ────────────────────────────────────────────────────
 try:

@@ -594,6 +594,14 @@ class AzureOCREngine:
         if not polygon:
             return [[0, 0], [0, 0], [0, 0], [0, 0]]
 
+        # Check if elements are Point objects (have x/y attributes)
+        if hasattr(polygon[0], 'x') and hasattr(polygon[0], 'y'):
+            pts = [[float(p.x), float(p.y)] for p in polygon[:4]]
+            # Pad to 4 points if fewer
+            while len(pts) < 4:
+                pts.append(pts[-1] if pts else [0, 0])
+            return pts
+
         # Azure polygon is a flat list of coordinates
         if len(polygon) >= 8:
             return [
@@ -603,13 +611,13 @@ class AzureOCREngine:
                 [float(polygon[6]), float(polygon[7])],
             ]
         elif len(polygon) == 4:
-            # Sometimes Azure returns 4 Point objects
-            # Return clockwise: TL, TR, BR, BL
+            # 4 flat coordinates: treat as [x_min, y_min, x_max, y_max]
+            x_min, y_min, x_max, y_max = [float(v) for v in polygon]
             return [
-                [float(polygon[0]), float(polygon[1])],
-                [float(polygon[2]), float(polygon[1])],
-                [float(polygon[2]), float(polygon[3])],
-                [float(polygon[0]), float(polygon[3])],
+                [x_min, y_min],
+                [x_max, y_min],
+                [x_max, y_max],
+                [x_min, y_max],
             ]
         else:
             return [[0, 0], [0, 0], [0, 0], [0, 0]]

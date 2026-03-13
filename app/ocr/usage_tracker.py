@@ -377,10 +377,9 @@ class UsageTracker:
             try:
                 with os.fdopen(tmp_fd, "w") as f:
                     json.dump(self._data, f, indent=2)
-                # Atomic rename (on Windows, need to remove target first)
-                if self.usage_file.exists():
-                    self.usage_file.unlink()
-                os.rename(tmp_path, str(self.usage_file))
+                # os.replace() is atomic on both Windows and Unix —
+                # no crash-vulnerability window between unlink and rename
+                os.replace(tmp_path, str(self.usage_file))
             except Exception:
                 # Clean up temp file on failure
                 try:

@@ -1,0 +1,8 @@
+# Development & Testing dependencies
+# Install with: pip install -r requirements-dev.txt
+# (These are NOT included in the production Docker image)
+
+-r requirements.txt
+
+pytest==9.0.2
+httpx==0.28.1

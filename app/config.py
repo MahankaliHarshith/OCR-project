@@ -239,7 +239,9 @@ LOG_CONSOLE_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 API_DEBUG = os.getenv("API_DEBUG", "false").lower() in ("true", "1", "yes")
-API_DOCS_ENABLED = os.getenv("API_DOCS_ENABLED", "true").lower() in ("true", "1", "yes")
+# API docs: disabled by default in production for security.
+# Set API_DOCS_ENABLED=true in dev to re-enable /docs and /redoc.
+API_DOCS_ENABLED = os.getenv("API_DOCS_ENABLED", "false").lower() in ("true", "1", "yes")
 
 # CORS: restrict to known origins. Accepts comma-separated list via env var.
 # Default allows localhost dev + VS Code Dev Tunnels.
@@ -259,6 +261,12 @@ CORS_ORIGINS = (
 RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "60"))       # general endpoints
 RATE_LIMIT_SCAN_RPM = int(os.getenv("RATE_LIMIT_SCAN_RPM", "20"))  # scan + batch endpoints (expensive)
 
-# Optional API key for destructive operations (delete, reset, clear).
-# If set, these endpoints require header: X-API-Key: <key>
+# API key for destructive operations (delete, reset, clear).
+# In production, these endpoints require header: X-API-Key: <key>
+# If not set and not in debug mode, a random key is auto-generated and logged.
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
+if not API_SECRET_KEY and not os.getenv("API_DEBUG", "false").lower() in ("true", "1", "yes"):
+    import secrets as _secrets
+    API_SECRET_KEY = _secrets.token_urlsafe(32)
+    print(f"⚠️  API_SECRET_KEY not set — auto-generated: {API_SECRET_KEY}")
+    print(f"   Set API_SECRET_KEY env var in production to use a fixed key.")

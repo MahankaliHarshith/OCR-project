@@ -23,6 +23,6 @@ scrape_configs:
         labels:
           environment: "production"
           service: "receipt-scanner"
-    # Only scrape the /metrics endpoint
-    metrics_path: /metrics
+    # Only scrape the /internal/metrics endpoint
+    metrics_path: /internal/metrics
     scheme: http

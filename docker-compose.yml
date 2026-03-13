@@ -16,6 +16,17 @@ services:
       - OTEL_TRACING_ENABLED=${OTEL_TRACING_ENABLED:-true}
       - OTEL_EXPORTER_ENDPOINT=http://jaeger:4317
       - OTEL_SERVICE_NAME=receipt-scanner
+      - API_DOCS_ENABLED=${API_DOCS_ENABLED:-false}
+    # Resource limits prevent OOM-killing the host. EasyOCR + PyTorch
+    # needs ~2.5GB idle + spikes to ~4GB during batch processing.
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4g
+        reservations:
+          cpus: '1.0'
+          memory: 2g
     depends_on:
       jaeger:
         condition: service_started
@@ -81,7 +92,7 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:?Set GRAFANA_PASSWORD in .env}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro

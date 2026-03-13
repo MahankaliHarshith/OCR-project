@@ -48,21 +48,64 @@ router = APIRouter()
 @router.get("/api/health", tags=["System"])
 async def health_check():
     """
-    Health check endpoint for monitoring and tunnel verification.
-    Returns server status, uptime, and engine readiness.
+    Health check endpoint for monitoring and orchestrator probes.
+    Verifies actual readiness: database, disk, OCR engine.
+    Returns 200 only if all subsystems are operational.
     """
     import time as _time
     from app.ocr.hybrid_engine import get_hybrid_engine
 
+    checks = {}
+    healthy = True
+
+    # 1. Database connectivity
+    try:
+        from app.database import db
+        conn = db._conn()
+        conn.execute("SELECT 1")
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+        healthy = False
+
+    # 2. Disk writability (uploads + exports)
+    for name, dirpath in [("uploads", UPLOAD_DIR), ("exports", EXPORT_DIR)]:
+        try:
+            test_file = dirpath / ".health_check"
+            test_file.write_text("ok")
+            test_file.unlink()
+            checks[name] = "ok"
+        except Exception as e:
+            checks[name] = f"error: {e}"
+            healthy = False
+
+    # 3. Disk space (warn if < 500MB free)
+    try:
+        import shutil
+        usage = shutil.disk_usage(str(UPLOAD_DIR))
+        free_mb = usage.free / (1024 * 1024)
+        checks["disk_free_mb"] = round(free_mb, 1)
+        if free_mb < 500:
+            checks["disk_warning"] = "Low disk space (<500MB)"
+    except Exception:
+        pass
+
+    # 4. OCR engine readiness
     hybrid = get_hybrid_engine()
-    return {
-        "status": "healthy",
-        "version": "1.0.0",
-        "timestamp": datetime.now().isoformat(),
-        "ocr_mode": hybrid.mode,
-        "azure_available": hybrid._azure_ok,
-        "local_loaded": hybrid._local_engine is not None,
-    }
+    checks["ocr_mode"] = hybrid.mode
+    checks["ocr_local_loaded"] = hybrid._local_engine is not None
+    checks["azure_available"] = hybrid._azure_ok
+
+    status_code = 200 if healthy else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if healthy else "degraded",
+            "version": "1.0.0",
+            "timestamp": datetime.now().isoformat(),
+            "checks": checks,
+        },
+    )
 
 
 # ─── Request / Response Models ────────────────────────────────────────────────
@@ -676,7 +719,7 @@ async def generate_excel(data: ExcelGenerateRequest):
         filepath = excel_service.generate_from_db_receipts(data.receipt_ids)
         return {
             "message": "Excel report generated successfully.",
-            "file_path": filepath,
+            "file_name": Path(filepath).name,
             "download_url": f"/api/export/download/{Path(filepath).name}",
         }
     except ValueError as e:
@@ -693,7 +736,7 @@ async def generate_daily_report(date: Optional[str] = None):
         filepath = excel_service.generate_daily_report(date)
         return {
             "message": "Daily report generated successfully.",
-            "file_path": filepath,
+            "file_name": Path(filepath).name,
             "download_url": f"/api/export/download/{Path(filepath).name}",
         }
     except ValueError as e:

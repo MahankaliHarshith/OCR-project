@@ -8,6 +8,7 @@ import easyocr
 import numpy as np
 import logging
 import time
+import threading
 from typing import List, Dict, Optional
 
 from app.config import (
@@ -412,11 +413,15 @@ class OCREngine:
 # ─── Lazy singleton ──────────────────────────────────────────────────────────
 
 _engine: Optional[OCREngine] = None
+_engine_lock = threading.Lock()
 
 
 def get_ocr_engine() -> OCREngine:
-    """Get or create the OCR engine singleton (lazy initialization)."""
+    """Get or create the OCR engine singleton (thread-safe lazy initialization)."""
     global _engine
-    if _engine is None:
-        _engine = OCREngine()
+    if _engine is not None:
+        return _engine
+    with _engine_lock:
+        if _engine is None:
+            _engine = OCREngine()
     return _engine

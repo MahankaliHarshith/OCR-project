@@ -26,6 +26,18 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# Trusted reverse-proxy IPs that are allowed to set X-Forwarded-For.
+# Only these IPs' X-Forwarded-For headers are trusted; all others use
+# the direct connection IP.  Prevents rate-limit bypass via header spoofing.
+# Configure via TRUSTED_PROXIES env var (comma-separated) or defaults below.
+import os as _os
+_trusted_env = _os.getenv("TRUSTED_PROXIES", "")
+TRUSTED_PROXY_IPS: set[str] = (
+    {ip.strip() for ip in _trusted_env.split(",") if ip.strip()}
+    if _trusted_env
+    else {"127.0.0.1", "::1", "172.17.0.1"}  # localhost + default Docker gateway
+)
+
 
 # ─── Security Headers ─────────────────────────────────────────────────────────
 
@@ -136,13 +148,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path.startswith("/static") or path.startswith("/docs") or path.startswith("/redoc"):
             return await call_next(request)
 
-        # Use X-Forwarded-For if available (reverse proxy / load balancer).
-        # Take the leftmost (client) IP from the chain. Fall back to direct IP.
+        # Determine client IP for rate-limiting.
+        # SECURITY: Only trust X-Forwarded-For from known reverse proxies.
+        # If the direct connection IP is not in TRUSTED_PROXY_IPS, ignore
+        # X-Forwarded-For entirely — otherwise any client can spoof their IP
+        # and bypass rate limits.
+        direct_ip = request.client.host if request.client else "unknown"
         forwarded = request.headers.get("x-forwarded-for", "")
-        if forwarded:
+        if forwarded and direct_ip in TRUSTED_PROXY_IPS:
             client_ip = forwarded.split(",")[0].strip()
         else:
-            client_ip = request.client.host if request.client else "unknown"
+            client_ip = direct_ip
 
         # Determine limit based on endpoint — scan + batch share a stricter budget
         is_scan_endpoint = (

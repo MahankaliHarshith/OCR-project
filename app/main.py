@@ -139,6 +139,16 @@ async def lifespan(app: FastAPI):
     # ── SHUTDOWN ──
     await get_batch_service().shutdown()
     logger.info("   🛑 Batch processing service stopped")
+
+    # Flush image cache to disk before shutdown — entries from the last 30s
+    # debounce window would otherwise be lost.
+    try:
+        from app.ocr.image_cache import get_image_cache
+        get_image_cache().flush()
+        logger.info("   💾 Image cache flushed to disk")
+    except Exception as e:
+        logger.warning(f"   ⚠ Cache flush failed: {e}")
+
     shutdown_tracing()
     from app.database import db
     db.shutdown()
@@ -163,8 +173,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
 )
 # ─── Compression ──────────────────────────────────────────────────────────
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Compress responses >500B (~60% savings on JSON/HTML)
@@ -185,12 +195,16 @@ app.add_middleware(DevTunnelCORSMiddleware)       # Dynamic CORS for VS Code tun
 # ─── Prometheus Metrics ────────────────────────────────────────────────────
 try:
     from prometheus_fastapi_instrumentator import Instrumentator
-    Instrumentator(
+    _instrumentator = Instrumentator(
         should_group_status_codes=True,
         should_ignore_untemplated=True,
         excluded_handlers=["/metrics", "/static/.*"],
-    ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
-    logger.info("   📊 Prometheus metrics enabled at /metrics")
+    )
+    _instrumentator.instrument(app)
+    # Expose metrics at /internal/metrics (not /metrics) to reduce accidental exposure.
+    # In production, restrict access via reverse proxy rules or firewall.
+    _instrumentator.expose(app, endpoint="/internal/metrics", include_in_schema=False)
+    logger.info("   📊 Prometheus metrics enabled at /internal/metrics")
 except ImportError:
     logger.debug("   prometheus-fastapi-instrumentator not installed — metrics disabled")
 

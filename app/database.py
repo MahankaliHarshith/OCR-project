@@ -476,7 +476,8 @@ class DatabaseBackend(ABC):
     def get_receipts_batch(self, receipt_ids: List[int]) -> List[Dict]: ...
 
     @abstractmethod
-    def add_receipt_item(self, receipt_id: int, product_code: str, product_name: str, quantity: float) -> int: ...
+    def add_receipt_item(self, receipt_id: int, product_code: str, product_name: str, quantity: float,
+                         unit_price: float = 0.0, line_total: float = 0.0) -> int: ...
 
     # ── Processing Logs ───────────────────────────────────────────────────
 
@@ -948,7 +949,8 @@ class Database(DatabaseBackend):
             raise  # Don't swallow — let API return 500 instead of misleading 404
 
     def add_receipt_item(
-        self, receipt_id: int, product_code: str, product_name: str, quantity: float
+        self, receipt_id: int, product_code: str, product_name: str, quantity: float,
+        unit_price: float = 0.0, line_total: float = 0.0,
     ) -> int:
         """Add a new item to an existing receipt. Returns the new item ID."""
         logger.debug("add_receipt_item(receipt_id=%d, code=%r, qty=%s)", receipt_id, product_code, quantity)
@@ -963,17 +965,24 @@ class Database(DatabaseBackend):
             product = self.get_product_by_code(product_code)
             if product:
                 unit = product.get("unit", "Piece") or "Piece"
+                # Use catalog price if caller didn't provide one
+                if unit_price == 0.0 and product.get("unit_price", 0):
+                    unit_price = product["unit_price"]
+                    line_total = round(quantity * unit_price, 2)
             cursor = conn.execute(
                 "INSERT INTO receipt_items "
-                "(receipt_id, product_code, product_name, quantity, unit, ocr_confidence, manually_edited) "
-                "VALUES (?, ?, ?, ?, ?, 1.0, 1)",
-                (receipt_id, product_code, product_name, quantity, unit),
+                "(receipt_id, product_code, product_name, quantity, unit, ocr_confidence, manually_edited, unit_price, line_total) "
+                "VALUES (?, ?, ?, ?, ?, 1.0, 1, ?, ?)",
+                (receipt_id, product_code, product_name, quantity, unit, unit_price, line_total),
             )
             new_id = cursor.lastrowid
             conn.execute(
                 "UPDATE receipts SET total_items = "
-                "(SELECT COUNT(*) FROM receipt_items WHERE receipt_id = ?) WHERE id = ?",
-                (receipt_id, receipt_id),
+                "(SELECT COUNT(*) FROM receipt_items WHERE receipt_id = ?), "
+                "bill_total = "
+                "(SELECT COALESCE(SUM(line_total), 0) FROM receipt_items WHERE receipt_id = ?) "
+                "WHERE id = ?",
+                (receipt_id, receipt_id, receipt_id),
             )
             conn.commit()
             logger.info("Receipt item added: id=%d, receipt=%d, code=%s", new_id, receipt_id, product_code)

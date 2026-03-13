@@ -283,17 +283,21 @@ class ImageCache:
 # ─── Singleton ───────────────────────────────────────────────────────────────
 
 _cache: Optional[ImageCache] = None
+_cache_lock = threading.Lock()
 
 
 def get_image_cache() -> ImageCache:
-    """Get or create the image cache singleton."""
+    """Get or create the image cache singleton (thread-safe lazy initialization)."""
     global _cache
-    if _cache is None:
-        from app.config import IMAGE_CACHE_MAX_SIZE, IMAGE_CACHE_TTL, BASE_DIR
-        persist_path = str(BASE_DIR / "data" / "image_cache.json")
-        _cache = ImageCache(
-            max_size=IMAGE_CACHE_MAX_SIZE,
-            ttl_seconds=IMAGE_CACHE_TTL,
-            persist_path=persist_path,
-        )
+    if _cache is not None:
+        return _cache
+    with _cache_lock:
+        if _cache is None:
+            from app.config import IMAGE_CACHE_MAX_SIZE, IMAGE_CACHE_TTL, BASE_DIR
+            persist_path = str(BASE_DIR / "data" / "image_cache.json")
+            _cache = ImageCache(
+                max_size=IMAGE_CACHE_MAX_SIZE,
+                ttl_seconds=IMAGE_CACHE_TTL,
+                persist_path=persist_path,
+            )
     return _cache

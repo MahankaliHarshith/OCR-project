@@ -589,7 +589,8 @@ async def add_receipt_item(receipt_id: int, data: ItemUpdate):
     """Add a new item to an existing receipt (manually added row)."""
     try:
         item_id = receipt_service.add_receipt_item(
-            receipt_id, data.product_code, data.product_name, data.quantity
+            receipt_id, data.product_code, data.product_name, data.quantity,
+            unit_price=data.unit_price, line_total=data.line_total,
         )
         return {"message": "Item added.", "item_id": item_id}
     except ValueError as e:

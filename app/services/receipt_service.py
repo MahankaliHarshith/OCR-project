@@ -153,10 +153,14 @@ class ReceiptService:
 
         # ─── Step 1: Save uploaded image ─────────────────────────────────
         try:
-            logger.debug("[Step 1/5] Saving uploaded image...")
-            saved_path = self._save_uploaded_image(image_path)
-            result["metadata"]["image_path"] = saved_path
-            logger.debug(f"[Step 1/5] Image saved to: {saved_path}")
+            if not result["metadata"].get("image_path"):
+                logger.debug("[Step 1/5] Saving uploaded image...")
+                saved_path = self._save_uploaded_image(image_path)
+                result["metadata"]["image_path"] = saved_path
+                logger.debug(f"[Step 1/5] Image saved to: {saved_path}")
+            else:
+                saved_path = result["metadata"]["image_path"]
+                logger.debug(f"[Step 1/5] Image already saved by early cache check")
         except Exception as e:
             if not result["metadata"].get("image_path"):  # not already saved by Step 0
                 result["errors"].append(f"Image save failed: {e}")
@@ -553,9 +557,14 @@ class ReceiptService:
         product_code: str,
         product_name: str,
         quantity: float,
+        unit_price: float = 0.0,
+        line_total: float = 0.0,
     ) -> int:
         """Add a new item to an existing receipt (for manually added rows)."""
-        return self.db.add_receipt_item(receipt_id, product_code, product_name, quantity)
+        return self.db.add_receipt_item(
+            receipt_id, product_code, product_name, quantity,
+            unit_price=unit_price, line_total=line_total,
+        )
 
     def _parse_azure_structured(self, azure_data: Dict, ocr_detections: List[Dict], is_structured: bool = False) -> Dict:
         """
@@ -680,22 +689,41 @@ class ReceiptService:
 
         # Bill total from Azure structured data
         azure_total = azure_data.get("total") or azure_data.get("subtotal")
-        computed_total = round(sum(it.get("quantity", 0) for it in items), 1)
+        computed_qty_total = round(sum(it.get("quantity", 0) for it in items), 1)
+        computed_monetary_total = round(sum(it.get("line_total", 0) for it in items), 2)
+
+        # Safely convert azure_total to float (may be string like "$10.50" or "N/A")
+        azure_total_float = None
+        if azure_total is not None:
+            try:
+                # Strip currency symbols and whitespace before converting
+                cleaned = str(azure_total).replace("$", "").replace("€", "").replace("£", "").replace(",", "").strip()
+                azure_total_float = float(cleaned)
+            except (ValueError, TypeError):
+                logger.warning("Azure total not numeric: %r", azure_total)
+
+        # Azure "total" is a monetary value — compare against monetary sum.
+        # Quantity sum is tracked separately for qty-based verification.
         total_verification = {
-            "total_qty_ocr": float(azure_total) if azure_total is not None else None,
-            "total_qty_computed": computed_total,
+            "total_qty_ocr": None,
+            "total_qty_computed": computed_qty_total,
             "total_line_text": f"Azure receipt model total: {azure_total}" if azure_total else None,
             "total_line_confidence": 0.95 if azure_total else None,
-            "total_qty_match": (
-                azure_total is not None
-                and abs(float(azure_total) - computed_total) < 0.01
-            ),
+            "total_qty_match": None,
             "verification_status": "not_found",
+            "ocr_total": azure_total_float,
+            "computed_total": computed_monetary_total if computed_monetary_total > 0 else computed_qty_total,
         }
-        if azure_total is not None:
+        if azure_total_float is not None and computed_monetary_total > 0:
+            # Compare monetary totals
+            total_verification["total_qty_match"] = abs(azure_total_float - computed_monetary_total) < 0.01
             total_verification["verification_status"] = (
                 "verified" if total_verification["total_qty_match"] else "mismatch"
             )
+        elif azure_total_float is not None:
+            # No price data — fall back to qty comparison (may not match monetary total)
+            total_verification["verification_status"] = "mismatch"
+            total_verification["total_qty_match"] = False
 
         return {
             "receipt_id": receipt_number,

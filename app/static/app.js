@@ -635,8 +635,9 @@ function compressImage(file, maxDim = 1800, quality = 0.88) {
 
             canvas.toBlob((blob) => {
                 if (blob && blob.size < file.size) {
-                    // Use compressed version — create a File with original name
-                    const compressed = new File([blob], file.name, { type: 'image/jpeg' });
+                    // Use compressed version — rename extension to .jpg since content is JPEG
+                    const jpgName = file.name.replace(/\.[^.]+$/, '.jpg');
+                    const compressed = new File([blob], jpgName, { type: 'image/jpeg' });
                     resolve(compressed);
                 } else {
                     resolve(file);
@@ -989,9 +990,9 @@ async function processFile(file) {
                 const retryData = await retryRes.json();
                 if (retryRes.ok && (retryData.receipt_data?.items?.length || 0) > itemCount) {
                     // Delete the empty receipt from the first attempt to avoid duplicates
-                    const firstReceiptId = data.receipt_id || data.receipt_data?.receipt_id;
-                    if (firstReceiptId) {
-                        fetch(`/api/receipts/${firstReceiptId}`, { method: 'DELETE' }).catch(() => {});
+                    const firstDbId = data.receipt_data?.db_id;
+                    if (firstDbId) {
+                        fetch(`/api/receipts/${firstDbId}`, { method: 'DELETE' }).catch(() => {});
                     }
                     showToast('Retry succeeded with original image!', 'success');
                     displayResults(retryData, file);
@@ -2430,7 +2431,7 @@ $('#filterDateBtn').addEventListener('click', async () => {
         const data = await res.json();
 
         if (!data.receipts || data.receipts.length === 0) {
-            list.innerHTML = `<p class="placeholder">No receipts found for ${date}.</p>`;
+            list.innerHTML = `<p class="placeholder">No receipts found for ${escHtml(date)}.</p>`;
             return;
         }
 

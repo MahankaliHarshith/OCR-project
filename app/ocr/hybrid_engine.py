@@ -1207,10 +1207,10 @@ class HybridOCREngine:
                 catalog = product_service.get_product_code_map()
                 catalog = {k.upper(): v for k, v in catalog.items()}
             except Exception:
-                return 0.5  # Can't check — give benefit of the doubt
+                return 0.0  # Can't check catalog — pessimistic → route to Azure
 
         if not catalog:
-            return 0.5
+            return 0.0  # Empty catalog — can't verify, route to Azure
 
         matched = 0
         # Only consider detections that are likely product lines (3+ chars, has alpha)

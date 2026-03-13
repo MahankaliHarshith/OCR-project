@@ -624,8 +624,9 @@ async def get_all_products(
 @router.get("/api/products/search", tags=["Products"])
 async def search_products(q: str = Query(..., min_length=1, max_length=100)):
     """Search products by code or name."""
-    # Escape SQL LIKE wildcards so user input is treated as literal text
-    safe_q = q.replace("%", "\\%").replace("_", "\\_")
+    # Escape SQL LIKE wildcards so user input is treated as literal text.
+    # Backslash must be escaped first to avoid double-escaping.
+    safe_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     products = product_service.search_products(safe_q)
     return {"products": products, "count": len(products)}
 

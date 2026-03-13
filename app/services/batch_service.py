@@ -136,7 +136,8 @@ class BatchJob:
             result["started_at"] = datetime.fromtimestamp(self.started_at).isoformat()
         if self.completed_at:
             result["completed_at"] = datetime.fromtimestamp(self.completed_at).isoformat()
-            result["total_time_ms"] = int((self.completed_at - self.started_at) * 1000)
+            if self.started_at:
+                result["total_time_ms"] = int((self.completed_at - self.started_at) * 1000)
         if include_results:
             result["files"] = [f.to_dict() for f in self.files]
         return result
@@ -383,6 +384,14 @@ class BatchProcessingService:
             file_result.data = safe_result
             batch.success_count += 1
 
+        except asyncio.CancelledError:
+            # Batch was cancelled while this file was processing — mark as skipped
+            # so the API response doesn't show files stuck in "processing" state.
+            file_result.status = FileStatus.SKIPPED
+            file_result.error = "Batch cancelled"
+            file_result.processing_time_ms = int((time.time() - start) * 1000)
+            batch.processed_count += 1
+            raise
         except Exception as e:
             file_result.status = FileStatus.ERROR
             file_result.error = str(e)

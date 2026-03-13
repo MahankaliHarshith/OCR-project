@@ -268,5 +268,11 @@ API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
 if not API_SECRET_KEY and not os.getenv("API_DEBUG", "false").lower() in ("true", "1", "yes"):
     import secrets as _secrets
     API_SECRET_KEY = _secrets.token_urlsafe(32)
-    print(f"⚠️  API_SECRET_KEY not set — auto-generated: {API_SECRET_KEY}")
-    print(f"   Set API_SECRET_KEY env var in production to use a fixed key.")
+    # SECURITY: Never print the actual key — it would leak to Docker logs,
+    # CI/CD output, and log aggregators. Log a hint instead.
+    import logging as _cfg_logging
+    _cfg_logging.getLogger(__name__).warning(
+        "API_SECRET_KEY not set — auto-generated a random key. "
+        "Set API_SECRET_KEY env var in production to use a fixed key. "
+        "Key starts with: %s...", API_SECRET_KEY[:8]
+    )

@@ -280,6 +280,18 @@ $$('.nav-btn').forEach(btn => {
         $$('.tab-content').forEach(t => t.classList.remove('active'));
         $(`#tab-${tab}`).classList.add('active');
 
+        // Pause dashboard auto-refresh when on other tabs to save bandwidth/CPU.
+        // Resume when returning to dashboard.
+        if (tab === 'dashboard') {
+            if (!_dashboardTimer) {
+                loadDashboardStats();
+                _dashboardTimer = setInterval(loadDashboardStats, 30000);
+            }
+        } else if (_dashboardTimer) {
+            clearInterval(_dashboardTimer);
+            _dashboardTimer = null;
+        }
+
         // Load data for the tab
         if (tab === 'receipts') loadReceipts();
         if (tab === 'catalog') {
@@ -1594,11 +1606,12 @@ window.removeRow = function(idx) {
         // Refresh math verification panel after row removal
         const mathData = state.currentReceiptData.receipt_data.math_verification;
         if (mathData) {
-            // Recalculate line_checks to match remaining items
+            // Recalculate line_checks: remove the entry at the deleted index.
+            // Using index instead of code avoids the duplicate-code bug where
+            // removing one item with code "ABC" would keep ALL line_checks for "ABC".
             const remaining = state.currentReceiptData.receipt_data.items;
             if (mathData.line_checks) {
-                const remainingCodes = new Set(remaining.map(it => it.code));
-                mathData.line_checks = mathData.line_checks.filter(lc => remainingCodes.has(lc.code));
+                mathData.line_checks.splice(idx, 1);
                 // Recalculate computed grand total
                 mathData.computed_grand_total = mathData.line_checks.reduce(
                     (sum, lc) => sum + (lc.amount_expected || 0), 0
@@ -1609,7 +1622,9 @@ window.removeRow = function(idx) {
                 }
                 mathData.all_line_math_ok = mathData.line_checks.every(lc => lc.math_ok);
             }
-            displayMathVerification(mathData);
+            // displayMathVerification expects the full receipt response
+            // (it accesses .receipt_data.math_verification internally)
+            displayMathVerification(state.currentReceiptData);
         }
     }
 };
@@ -3103,14 +3118,12 @@ function useCapturedPhoto() {
             return;
         }
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        let file = new File([blob], `receipt_scan_${timestamp}.jpg`, { type: 'image/jpeg' });
+        const file = new File([blob], `receipt_scan_${timestamp}.jpg`, { type: 'image/jpeg' });
 
-        // Apply scanner-style enhancement before server upload
-        try {
-            file = await enhanceImageForOCR(file);
-        } catch (e) {
-            console.warn('Client-side enhancement failed, using original:', e);
-        }
+        // NOTE: Do NOT call enhanceImageForOCR here — the image was already
+        // auto-leveled during capturePhoto(), and processFile() will apply
+        // enhanceImageForOCR as part of its pipeline. Triple-enhancement
+        // destroys handwriting by over-saturating ink and over-sharpening.
 
         // Close camera and process the file
         closeCamera();

@@ -180,13 +180,20 @@ def optional_span(tracer, name: str, attributes: Optional[dict] = None):
 
     try:
         from opentelemetry import trace
+    except ImportError:
+        yield _NoOpSpan()
+        return
+
+    try:
         with tracer.start_as_current_span(name) as span:
             if attributes:
                 for k, v in attributes.items():
                     span.set_attribute(k, v)
             yield span
     except Exception:
-        yield _NoOpSpan()
+        # Let exceptions propagate naturally — never yield a second time
+        # (yielding twice from a @contextmanager causes RuntimeError).
+        raise
 
 
 def get_current_trace_id() -> Optional[str]:

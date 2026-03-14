@@ -164,7 +164,7 @@ class ExcelService:
                     item.get("product", ""),
                     item.get("quantity", 0),
                     item.get("unit", "Piece"),
-                    f"{item.get('confidence', 0):.1%}",
+                    item.get("confidence", 0),  # Numeric for sorting/formulas
                 ]
 
                 for col_num, value in enumerate(values, 1):
@@ -176,6 +176,9 @@ class ExcelService:
                         cell.alignment = self.center_align
                     else:
                         cell.alignment = self.left_align
+
+                # Apply percentage format to confidence column (col 8)
+                ws.cell(row=row_num, column=8).number_format = '0.0%'
 
                 # Alternating row colors
                 if row_num % 2 == 0:

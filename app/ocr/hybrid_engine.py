@@ -598,11 +598,25 @@ class HybridOCREngine:
             metadata["azure_pages_used"] = 1
 
             if len(azure_items) < AZURE_RECEIPT_MIN_ITEMS:
-                read_detections = self.azure_engine.extract_text_read(image_path)
-                if read_detections:
-                    azure_detections = read_detections
-                    model_used = "azure-read"
-                    metadata["azure_pages_used"] = 2
+                # Check usage limit before burning a second Azure page
+                can_call_read = True
+                try:
+                    if hasattr(self, 'usage_tracker') and self.usage_tracker:
+                        usage_check = self.usage_tracker.can_call_azure()
+                        can_call_read = usage_check.get("allowed", True) if isinstance(usage_check, dict) else bool(usage_check)
+                except Exception:
+                    pass
+                if can_call_read:
+                    try:
+                        read_detections = self.azure_engine.extract_text_read(image_path)
+                        if read_detections:
+                            azure_detections = read_detections
+                            model_used = "azure-read"
+                            metadata["azure_pages_used"] = 2
+                    except Exception as e:
+                        logger.warning("[Azure-Only] Read fallback failed: %s, using receipt model results", e)
+                else:
+                    logger.info("[Azure-Only] Skipping read fallback: Azure usage limit reached")
         else:
             # Default: read-only (cheapest)
             read_detections = self.azure_engine.extract_text_read(image_path)

@@ -1842,14 +1842,19 @@ $('#confirmBtn').addEventListener('click', async () => {
         confirmBtn.disabled = false;
     }
 
-    state.isDirty = false;
-    state.confirmed = true;
-    confirmBtn.innerHTML = '<i data-lucide="check-circle" style="width:15px;height:15px"></i> Confirmed';
-    confirmBtn.classList.add('btn-confirmed');
-    if (_saveFailures > 0) {
-        showToast(`Confirmed locally, but ${_saveFailures} item(s) could not be saved to server.`, 'warning');
-    } else {
+    if (_saveFailures === 0) {
+        state.isDirty = false;
+        state.confirmed = true;
+        confirmBtn.innerHTML = '<i data-lucide="check-circle" style="width:15px;height:15px"></i> Confirmed';
+        confirmBtn.classList.add('btn-confirmed');
         showToast('Receipt confirmed and saved!', 'success');
+    } else {
+        // Keep dirty so user can retry saving
+        state.isDirty = true;
+        state.confirmed = false;
+        confirmBtn.classList.remove('btn-confirmed');
+        confirmBtn.innerHTML = '<i data-lucide="check" style="width:15px;height:15px"></i> Retry Save';
+        showToast(`${_saveFailures} item(s) failed to save. Click Confirm to retry.`, 'warning');
     }
     $('#exportExcelBtn').style.display = 'inline-flex';
     // Show post-confirm panel with batch assignment + scan-next

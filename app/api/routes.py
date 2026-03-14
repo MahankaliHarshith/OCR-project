@@ -141,7 +141,25 @@ class ProductUpdate(BaseModel):
     @classmethod
     def sanitize_name(cls, v):
         if v is not None:
-            return re.sub(r'[<>{}\\]', '', v).strip()
+            v = re.sub(r'[<>{}\\]', '', v).strip()
+            if len(v) == 0:
+                raise ValueError('Product name cannot be empty')
+        return v
+
+    @field_validator('category')
+    @classmethod
+    def sanitize_category(cls, v):
+        if v is not None:
+            v = re.sub(r'[<>{}\\]', '', v).strip()
+        return v
+
+    @field_validator('unit')
+    @classmethod
+    def sanitize_unit(cls, v):
+        if v is not None:
+            v = v.strip()
+            if len(v) == 0:
+                raise ValueError('Unit cannot be empty')
         return v
 
 
@@ -750,6 +768,8 @@ async def generate_excel(data: ExcelGenerateRequest):
 @router.get("/api/export/daily", tags=["Export"])
 async def generate_daily_report(date: Optional[str] = None):
     """Generate an Excel report for all receipts on a given date."""
+    if date is not None and not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
     try:
         filepath = excel_service.generate_daily_report(date)
         return {

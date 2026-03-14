@@ -601,9 +601,21 @@ class ReceiptService:
         catalog = self.parser.product_catalog
         catalog_names = {v.upper(): k for k, v in catalog.items()}  # reverse: name → code
 
+        def _safe_price(val) -> float:
+            """Coerce Azure price/qty values to float (may be string, None, or dict)."""
+            if val is None:
+                return 0.0
+            if isinstance(val, (int, float)):
+                return float(val)
+            try:
+                cleaned = str(val).replace("$", "").replace("€", "").replace("£", "").replace("₹", "").replace(",", "").strip()
+                return float(cleaned)
+            except (ValueError, TypeError):
+                return 0.0
+
         for azure_item in azure_items:
             description = azure_item.get("description", "").strip()
-            quantity = azure_item.get("quantity", 1.0)
+            quantity = _safe_price(azure_item.get("quantity", 1.0)) or 1.0
             confidence = azure_item.get("confidence", 0.9)
 
             if not description:
@@ -648,18 +660,18 @@ class ReceiptService:
 
             # Look up unit and price from catalog
             unit = "Piece"
-            unit_price = azure_item.get("unit_price", 0.0) or azure_item.get("price", 0.0) or 0.0
-            line_total = azure_item.get("total_price", 0.0) or azure_item.get("amount", 0.0) or 0.0
+            unit_price = _safe_price(azure_item.get("unit_price")) or _safe_price(azure_item.get("price"))
+            line_total = _safe_price(azure_item.get("total_price")) or _safe_price(azure_item.get("amount"))
             if code and code in catalog:
                 product_info = product_service.get_product(code)
                 if product_info:
                     unit = product_info.get("unit", "Piece")
                     # Use catalog price if Azure didn't provide one
                     if unit_price == 0:
-                        unit_price = product_info.get("unit_price", 0.0) or 0.0
+                        unit_price = _safe_price(product_info.get("unit_price"))
 
             # Compute line_total if we have rate but no total
-            final_qty = max(1.0, min(9999.0, float(quantity)))
+            final_qty = max(1.0, min(9999.0, quantity))
             if line_total == 0 and unit_price > 0:
                 line_total = round(final_qty * unit_price, 2)
 

@@ -1004,6 +1004,12 @@ async function processFile(file) {
                     displayResults(retryData, file);
                     state._retryAttempted = false;
                     return;
+                } else {
+                    // Retry didn't improve — delete the retry's orphaned receipt
+                    const retryDbId = retryData?.receipt_data?.db_id;
+                    if (retryDbId) {
+                        fetch(`/api/receipts/${retryDbId}`, { method: 'DELETE' }).catch(() => {});
+                    }
                 }
             } catch (retryErr) {
                 console.warn('Auto-retry failed:', retryErr);

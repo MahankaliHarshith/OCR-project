@@ -58,12 +58,15 @@ class ConnectionPool:
         self._local = threading.local()
         self._lock = threading.Lock()
         self._all_connections: list[sqlite3.Connection] = []
+        self._closed = False
         logger.info(f"Connection pool initialised → {db_path}")
 
     # ── public API ────────────────────────────────────────────────────────
 
     def get(self) -> sqlite3.Connection:
         """Return the current thread's connection (creating one if needed)."""
+        if self._closed:
+            raise RuntimeError("Connection pool has been shut down")
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is not None:
             try:
@@ -92,6 +95,7 @@ class ConnectionPool:
 
     def close_all(self) -> None:
         """Close every connection in the pool (call at shutdown)."""
+        self._closed = True  # Prevent new connections from any thread
         with self._lock:
             for c in self._all_connections:
                 try:

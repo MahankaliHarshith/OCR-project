@@ -1157,36 +1157,16 @@ class ReceiptParser:
                     final_code = matched_code if matched_code else code_upper
 
                     # ── CATALOG PRICE GUARD ──
-                    # If the detected "quantity" matches a known catalog price
-                    # for this product, the parser probably grabbed the rate
-                    # or amount instead of the real qty. Reset to 1.
+                    # If the detected "quantity" is suspiciously high for a
+                    # 2-column receipt (no rate/amount columns), it's likely
+                    # an OCR misread (e.g. grabbed line total or price as qty).
+                    # The downstream clamp (qty > 50 → 1) handles this, but
+                    # we log it here for debugging.
                     if quantity > 50 and final_code in self.product_catalog:
-                        product_info_tmp = self._get_product_info(final_code)
-                        if product_info_tmp:
-                            from app.services.product_service import ProductService
-                            try:
-                                _ps = ProductService()
-                                _prod = _ps.get_product(final_code)
-                                if _prod and _prod.get('price'):
-                                    cat_price = float(_prod['price'])
-                                    # If qty matches the catalog price, it's the rate not qty
-                                    if abs(quantity - cat_price) < 1:
-                                        logger.warning(
-                                            f"    Qty={quantity} matches catalog price for {final_code}. "
-                                            f"Likely OCR picked up rate as qty. Resetting qty=1."
-                                        )
-                                        quantity = 1.0
-                                    # If qty is a multiple of the catalog price, it's the line total
-                                    elif cat_price > 0 and quantity >= cat_price:
-                                        inferred = quantity / cat_price
-                                        if abs(inferred - round(inferred)) < 0.05 and 1 <= round(inferred) <= 99:
-                                            logger.warning(
-                                                f"    Qty={quantity} looks like line total for {final_code} "
-                                                f"(price={cat_price}). Inferred qty={round(inferred)}."
-                                            )
-                                            quantity = float(round(inferred))
-                            except Exception:
-                                pass
+                        logger.warning(
+                            f"    Qty={quantity} too high for 2-col item {final_code}. "
+                            f"Will be clamped by downstream sanity check."
+                        )
 
                     # Note: Leading "N. " / "N) " line numbers are already
                     # stripped by LINE_NUMBER_RE in _clean_ocr_text().
@@ -1310,6 +1290,15 @@ class ReceiptParser:
         if re.search(r'[A-Za-z]{2,6}', remainder) and re.search(r'\d+', remainder):
             logger.debug(
                 f"    Skip recover: remainder {remainder!r} has both code and qty"
+            )
+            return 1.0
+        # If remainder is ONLY a product code (letters, no digits), the
+        # leading number is a line/serial number, not a quantity.
+        # e.g., "5 ABC" → 5=S.No, ABC=code → qty should be 1, not 5.
+        if re.search(r'[A-Za-z]{2,}', remainder) and not re.search(r'\d', remainder):
+            logger.debug(
+                f"    Skip recover: remainder {remainder!r} is code-only (no digits), "
+                f"leading {stripped_num} is likely S.No"
             )
             return 1.0
         logger.debug(f"    Recovered stripped qty: {stripped_num} from raw text {raw_text!r}")
@@ -2209,7 +2198,7 @@ class ReceiptParser:
 
         for code in self.product_catalog:
             # Find code as a word-boundary match (not part of a longer word)
-            for m in re.finditer(r'(?<![A-Za-z])' + re.escape(code) + r'(?![A-Za-z])', text_upper):
+            for m in re.finditer(r'(?<![A-Za-z0-9])' + re.escape(code) + r'(?![A-Za-z0-9])', text_upper):
                 positions.append((m.start(), m.end(), code))
 
         if len(positions) < 2:
@@ -2460,11 +2449,17 @@ class ReceiptParser:
                 new_rate = item.get("unit_price", 0)
                 if existing_rate == 0 and new_rate > 0:
                     aggregated[idx]["unit_price"] = new_rate
-                # Recalculate line_total after qty merge using best available rate
+                # Recalculate line_total after qty merge
                 rate = aggregated[idx].get("unit_price", 0)
                 if rate > 0:
+                    # Recalculate from qty × rate
                     aggregated[idx]["line_total"] = round(
                         aggregated[idx]["quantity"] * rate, 2
+                    )
+                else:
+                    # No rate available — sum the line_totals from both items
+                    aggregated[idx]["line_total"] = round(
+                        aggregated[idx].get("line_total", 0) + item.get("line_total", 0), 2
                     )
                 logger.info(
                     f"Aggregated duplicate '{code}': "

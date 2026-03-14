@@ -58,6 +58,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"   API Docs: http://localhost:8000/docs")
     logger.info(f"   Debug logs: tail -f {LOG_FILE}")
 
+    # ── Sentry Error Tracking (production) ──
+    from app.error_tracking import init_sentry
+    init_sentry(app)
+
     # Warn about security config
     if not API_SECRET_KEY:
         logger.warning("   ⚠️  API_SECRET_KEY is empty — admin/destructive endpoints are UNPROTECTED. "

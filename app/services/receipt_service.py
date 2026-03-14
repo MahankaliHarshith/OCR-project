@@ -31,6 +31,7 @@ except Exception:
         pass
 
 from app.tracing import get_tracer, optional_span
+from app.error_tracking import capture_exception, add_breadcrumb, track_operation
 _tracer = get_tracer(__name__)
 
 
@@ -291,10 +292,19 @@ class ReceiptService:
                 {"text": r["text"], "confidence": r["confidence"]}
                 for r in ocr_results
             ]
+            add_breadcrumb(
+                f"OCR complete: {len(ocr_results)} detections via {engine_used}",
+                category="ocr",
+                engine=engine_used,
+                detections=len(ocr_results),
+                avg_confidence=hybrid_result["confidence_avg"],
+            )
 
         except Exception as e:
             result["errors"].append(f"OCR extraction failed: {e}")
             logger.error(f"OCR extraction failed: {e}", exc_info=True)
+            capture_exception(e, stage="ocr_extraction", image_path=str(image_path),
+                             engine_mode=getattr(self.hybrid_engine, 'mode', 'unknown'))
             _end_pipeline_span()
             return result
 

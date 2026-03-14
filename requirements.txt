@@ -28,7 +28,10 @@ python-dotenv==1.2.1
 
 # ─── Observability ───────────────────────────────────────
 prometheus-fastapi-instrumentator==7.0.2
-
+# ─── Error Tracking (optional — set SENTRY_DSN env var) ───
+# pip install sentry-sdk[fastapi]
+# Catches unhandled exceptions in production and sends to Sentry.
+# Zero overhead when SENTRY_DSN is not set.
 # ─── Distributed Tracing (OpenTelemetry) ─────────────────
 # Enable with: OTEL_TRACING_ENABLED=true
 # Zero overhead when disabled (default).

@@ -212,10 +212,16 @@ try:
 except ImportError:
     logger.debug("   prometheus-fastapi-instrumentator not installed — metrics disabled")
 
-# ─── Request Logging Middleware ────────────────────────────────────────────
+# ─── Request Logging + Dynamic Observability ─────────────────────────────
+from app.observability import get_obs_manager
+_obs_mgr = get_obs_manager()
+_obs_eval_counter = 0  # Evaluate health every N requests (not every single one)
+_OBS_EVAL_INTERVAL = 10  # Check health every 10 requests
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log every HTTP request with method, path, status, and duration."""
+    """Log every HTTP request and feed metrics to the observability manager."""
+    global _obs_eval_counter
     start = time.time()
     logger.debug(f"→ {request.method} {request.url.path} (client={request.client.host if request.client else 'unknown'})")
 
@@ -224,6 +230,8 @@ async def log_requests(request: Request, call_next):
     except Exception as exc:
         elapsed = int((time.time() - start) * 1000)
         logger.error(f"✗ {request.method} {request.url.path} | EXCEPTION in {elapsed}ms | {exc}")
+        # Record as 500 for observability
+        _obs_mgr.record_request(500, elapsed)
         raise
 
     elapsed = int((time.time() - start) * 1000)
@@ -232,6 +240,16 @@ async def log_requests(request: Request, call_next):
         level,
         f"← {request.method} {request.url.path} | {response.status_code} | {elapsed}ms",
     )
+
+    # Feed to observability manager (skip health checks and metrics endpoints)
+    path = request.url.path
+    if path not in ("/api/health", "/internal/metrics", "/api/observability"):
+        _obs_mgr.record_request(response.status_code, elapsed)
+        _obs_eval_counter += 1
+        if _obs_eval_counter >= _OBS_EVAL_INTERVAL:
+            _obs_eval_counter = 0
+            _obs_mgr.check_and_adjust()
+
     return response
 
 # ─── Static File Cache Headers ────────────────────────────────────────────────

@@ -45,6 +45,21 @@ router = APIRouter()
 
 # ─── Health Check ─────────────────────────────────────────────────────────────
 
+@router.get("/api/observability", tags=["System"])
+async def observability_status():
+    """
+    Dynamic observability status dashboard.
+
+    Shows:
+    - Current health state (healthy / degraded / critical)
+    - Error rate and latency metrics from the sliding window
+    - Which observability components are active/inactive
+    - Dynamic adjustments (auto-DEBUG on error spikes)
+    """
+    from app.observability import get_obs_manager
+    return get_obs_manager().get_status()
+
+
 @router.get("/api/health", tags=["System"])
 async def health_check():
     """

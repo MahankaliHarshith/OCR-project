@@ -32,6 +32,7 @@ from app.config import (
     LOG_FILE_MAX_BYTES,
     LOG_FILE_BACKUP_COUNT,
 )
+from app.logging_config import WindowsSafeRotatingFileHandler
 
 # Env-var toggle: set JSON_LOGGING_ENABLED=false to disable
 JSON_LOGGING_ENABLED = os.getenv("JSON_LOGGING_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -135,7 +136,7 @@ def setup_json_logging() -> None:
 
     # ── 1. JSON rotating file handler ────────────────────────────────────
     LOG_DIR.mkdir(exist_ok=True)
-    json_file_handler = logging.handlers.RotatingFileHandler(
+    json_file_handler = WindowsSafeRotatingFileHandler(
         filename=str(JSON_LOG_FILE),
         maxBytes=LOG_FILE_MAX_BYTES,
         backupCount=LOG_FILE_BACKUP_COUNT,

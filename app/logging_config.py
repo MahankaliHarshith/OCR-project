@@ -10,7 +10,9 @@ Usage:
 
 import logging
 import logging.handlers
+import os
 import sys
+import time
 from pathlib import Path
 
 from app.config import (
@@ -23,6 +25,41 @@ from app.config import (
     LOG_DATE_FORMAT,
     LOG_CONSOLE_FORMAT,
 )
+
+
+class WindowsSafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """
+    RotatingFileHandler that handles Windows PermissionError during rotation.
+
+    On Windows, OneDrive sync, antivirus scanners, and other processes can
+    hold file locks that prevent os.rename() from succeeding.  This handler
+    retries with a short delay, and if rotation still fails, continues
+    logging to the current file instead of crashing.
+    """
+
+    def doRollover(self):
+        """Attempt log rotation with retries for Windows file locks."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                super().doRollover()
+                return  # Success
+            except PermissionError:
+                if attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))  # 100ms, 200ms
+                else:
+                    # Give up on rotation — continue logging to current file.
+                    # This is safe: the file grows past maxBytes until the
+                    # next successful rotation, but the app doesn't crash.
+                    if self.stream:
+                        self.stream.close()
+                        self.stream = self._open()
+            except OSError:
+                # Other OS errors (disk full, etc.) — don't crash
+                if self.stream:
+                    self.stream.close()
+                    self.stream = self._open()
+                return
 
 
 # ─── ANSI color codes for console output ──────────────────────────────────────
@@ -59,7 +96,7 @@ def setup_logging() -> None:
 
     # ── 1. Rotating File Handler (captures ALL levels) ────────────────────
     LOG_DIR.mkdir(exist_ok=True)
-    file_handler = logging.handlers.RotatingFileHandler(
+    file_handler = WindowsSafeRotatingFileHandler(
         filename=str(LOG_FILE),
         maxBytes=LOG_FILE_MAX_BYTES,
         backupCount=LOG_FILE_BACKUP_COUNT,

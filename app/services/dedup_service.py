@@ -58,10 +58,13 @@ class DedupService:
         # Build canonical representation: sorted (code, qty) pairs
         pairs = []
         for item in items:
-            code = item.get("code", "").upper().strip()
+            code = (item.get("code") or "").upper().strip()
             qty = round(item.get("quantity", 0), 1)
             if code:
                 pairs.append(f"{code}:{qty}")
+
+        if not pairs:
+            return ""  # all items had empty codes — no fingerprint
 
         pairs.sort()
         canonical = "|".join(pairs)
@@ -119,7 +122,7 @@ class DedupService:
             reasons = []
 
             # Check image hash similarity
-            existing_hash = receipt.get("image_hash", "")
+            existing_hash = receipt.get("image_hash") or ""
             if image_hash and existing_hash:
                 distance = self.hamming_distance(image_hash, existing_hash)
                 if distance <= self.PHASH_THRESHOLD:
@@ -128,7 +131,7 @@ class DedupService:
                     reasons.append(f"image_similarity={similarity}%")
 
             # Check content fingerprint (exact match)
-            existing_fp = receipt.get("content_fingerprint", "")
+            existing_fp = receipt.get("content_fingerprint") or ""
             if content_fingerprint and existing_fp and content_fingerprint == existing_fp:
                 score += 40
                 reasons.append("identical_items")

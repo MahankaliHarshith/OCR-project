@@ -657,8 +657,8 @@ class TestDatabaseSmartOCR(unittest.TestCase):
     """Tests for database methods added in migration v4."""
 
     def setUp(self):
-        from app.database import db
-        self.db = db
+        from app.database import Database
+        self.db = Database()
 
     def test_update_receipt_metadata(self):
         """update_receipt_metadata should update new columns."""

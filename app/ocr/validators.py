@@ -159,7 +159,7 @@ class ReceiptValidator:
                 })
 
         # ── Rule 4: Cross-Receipt Anomaly Detection ──────────────────────
-        if historical_stats and catalog:
+        if historical_stats:
             for item in items:
                 code = item.get("code", "")
                 qty = item.get("quantity", 0)

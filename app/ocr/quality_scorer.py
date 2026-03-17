@@ -48,7 +48,7 @@ class QualityScorer:
         breakdown = {}
 
         # 1. OCR Confidence (30 points)
-        avg_conf = metadata.get("ocr_avg_confidence", 0)
+        avg_conf = metadata.get("ocr_avg_confidence") or 0
         if avg_conf > 0:
             # Scale: 0.5 conf → 0 pts, 1.0 conf → 30 pts
             conf_score = max(0, min(30, (avg_conf - 0.5) * 60))
@@ -129,8 +129,8 @@ class QualityScorer:
         breakdown["image_quality"] = {
             "score": img_score,
             "max": 10,
-            "sharpness": round(sharpness, 1) if sharpness else None,
-            "brightness": round(brightness, 1) if brightness else None,
+            "sharpness": round(sharpness, 1) if sharpness is not None else None,
+            "brightness": round(brightness, 1) if brightness is not None else None,
         }
 
         # 6. Catalog Match Rate (10 points)
@@ -138,7 +138,7 @@ class QualityScorer:
             matched = sum(
                 1
                 for i in items
-                if i.get("match_type") not in ("unknown", "azure-unmatched")
+                if i.get("match_type") not in (None, "unknown", "azure-unmatched")
             )
             match_rate = matched / len(items)
             catalog_score = round(match_rate * 10, 1)

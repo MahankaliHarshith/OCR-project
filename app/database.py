@@ -315,6 +315,51 @@ def _migration_v3_add_prices(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_v4_smart_ocr(conn: sqlite3.Connection) -> None:
+    """Add smart OCR metadata columns and ocr_corrections table."""
+    # Receipt metadata for dedup, date/store extraction, quality scoring
+    for col, typedef in [
+        ("image_hash", "VARCHAR(64) DEFAULT ''"),
+        ("content_fingerprint", "VARCHAR(64) DEFAULT ''"),
+        ("receipt_date", "DATE"),
+        ("store_name", "VARCHAR(200)"),
+        ("quality_score", "INTEGER"),
+        ("quality_grade", "VARCHAR(1)"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE receipts ADD COLUMN {col} {typedef}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+    # Index on image_hash for fast dedup lookups
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_receipt_image_hash ON receipts(image_hash)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_receipt_fingerprint ON receipts(content_fingerprint)"
+    )
+
+    # OCR corrections feedback table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ocr_corrections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            receipt_id INTEGER,
+            item_id INTEGER,
+            original_code VARCHAR(10) NOT NULL,
+            corrected_code VARCHAR(10) NOT NULL,
+            original_qty REAL DEFAULT 0,
+            corrected_qty REAL DEFAULT 0,
+            raw_ocr_text TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE SET NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_corrections_codes "
+        "ON ocr_corrections(original_code, corrected_code)"
+    )
+
+
 class MigrationManager:
     """Tracks and applies numbered schema migrations.
 
@@ -332,6 +377,7 @@ class MigrationManager:
         (1, "baseline_schema", _migration_v1_baseline),
         (2, "composite_item_index", _migration_v2_composite_index),
         (3, "add_price_columns", _migration_v3_add_prices),
+        (4, "smart_ocr_metadata", _migration_v4_smart_ocr),
         # ── add future migrations here ──────────────────────────────────
     ]
 
@@ -1100,6 +1146,160 @@ class Database(DatabaseBackend):
             (receipt_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Smart OCR — Dedup, Corrections, Stats
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def update_receipt_metadata(self, receipt_id: int, **kwargs) -> None:
+        """Update receipt with smart OCR metadata (image_hash, quality_score, etc.)."""
+        allowed = {
+            "image_hash", "content_fingerprint", "receipt_date",
+            "store_name", "quality_score", "quality_grade",
+        }
+        fields = []
+        values = []
+        for key, value in kwargs.items():
+            if key in allowed:
+                fields.append(f"{key} = ?")
+                values.append(value)
+        if not fields:
+            return
+        values.append(receipt_id)
+        conn = self._conn()
+        try:
+            conn.execute(
+                f"UPDATE receipts SET {', '.join(fields)} WHERE id = ?",
+                values,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def get_recent_receipts_with_hashes(self, hours: int = 24) -> List[Dict]:
+        """Get recent receipts with their image hashes for duplicate detection."""
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT id, receipt_number, image_hash, content_fingerprint, created_at "
+            "FROM receipts "
+            "WHERE created_at >= datetime('now', ? || ' hours') "
+            "ORDER BY created_at DESC",
+            (f"-{hours}",),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_receipt_item(self, item_id: int) -> Optional[Dict]:
+        """Get a single receipt item by ID."""
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT * FROM receipt_items WHERE id = ?", (item_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def add_ocr_correction(
+        self,
+        receipt_id: int,
+        item_id: int,
+        original_code: str,
+        corrected_code: str,
+        original_qty: float = 0,
+        corrected_qty: float = 0,
+        raw_ocr_text: str = "",
+    ) -> None:
+        """Record an OCR correction for the feedback loop."""
+        self._before_write()
+        conn = self._conn()
+        try:
+            conn.execute(
+                "INSERT INTO ocr_corrections "
+                "(receipt_id, item_id, original_code, corrected_code, "
+                "original_qty, corrected_qty, raw_ocr_text) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (receipt_id, item_id, original_code, corrected_code,
+                 original_qty, corrected_qty, raw_ocr_text),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def get_ocr_corrections_map(self, min_count: int = 2) -> Dict[str, str]:
+        """Get the corrections lookup map: original_code → corrected_code.
+
+        Only returns corrections that have been made at least min_count times
+        (to filter out one-off typos).
+        """
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT original_code, corrected_code, COUNT(*) as cnt "
+            "FROM ocr_corrections "
+            "WHERE original_code != corrected_code "
+            "GROUP BY original_code, corrected_code "
+            "HAVING cnt >= ? "
+            "ORDER BY cnt DESC",
+            (min_count,),
+        ).fetchall()
+        result: Dict[str, str] = {}
+        for row in rows:
+            orig = row["original_code"]
+            if orig not in result:  # first entry has highest count
+                result[orig] = row["corrected_code"]
+        return result
+
+    def get_ocr_correction_stats(self) -> Dict:
+        """Get summary statistics about OCR corrections."""
+        conn = self._conn()
+        total = conn.execute("SELECT COUNT(*) FROM ocr_corrections").fetchone()[0]
+        unique = conn.execute(
+            "SELECT COUNT(DISTINCT original_code || '->' || corrected_code) "
+            "FROM ocr_corrections WHERE original_code != corrected_code"
+        ).fetchone()[0]
+        top = conn.execute(
+            "SELECT original_code, corrected_code, COUNT(*) as cnt "
+            "FROM ocr_corrections "
+            "WHERE original_code != corrected_code "
+            "GROUP BY original_code, corrected_code "
+            "ORDER BY cnt DESC LIMIT 10"
+        ).fetchall()
+        return {
+            "total_corrections": total,
+            "unique_patterns": unique,
+            "top_corrections": [
+                {
+                    "from": row["original_code"],
+                    "to": row["corrected_code"],
+                    "count": row["cnt"],
+                }
+                for row in top
+            ],
+        }
+
+    def get_item_quantity_stats(self) -> Dict[str, Dict]:
+        """Get historical quantity statistics per product code.
+
+        Returns: {code: {avg_quantity, max_quantity, min_quantity, count}}
+        """
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT product_code, "
+            "AVG(quantity) as avg_qty, "
+            "MAX(quantity) as max_qty, "
+            "MIN(quantity) as min_qty, "
+            "COUNT(*) as cnt "
+            "FROM receipt_items "
+            "GROUP BY product_code "
+            "HAVING cnt >= 2"
+        ).fetchall()
+        return {
+            row["product_code"]: {
+                "avg_quantity": round(row["avg_qty"], 1),
+                "max_quantity": row["max_qty"],
+                "min_quantity": row["min_qty"],
+                "count": row["cnt"],
+            }
+            for row in rows
+        }
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # Lifecycle

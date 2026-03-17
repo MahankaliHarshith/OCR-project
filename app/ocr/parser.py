@@ -342,6 +342,14 @@ class ReceiptParser:
                                 f"  CROSS-LINE GRAND TOTAL: '{raw_text}' + '{next_text}' → {val}"
                             )
 
+        # ── PRE-SCAN: extract receipt date and store name ──
+        receipt_date = self._extract_receipt_date(grouped_lines)
+        store_name = self._extract_store_name(grouped_lines)
+        if receipt_date:
+            logger.info(f"  RECEIPT DATE extracted: {receipt_date}")
+        if store_name:
+            logger.info(f"  STORE NAME extracted: {store_name}")
+
         for line_info in grouped_lines:
             raw_text = line_info["text"]
             confidence = line_info["confidence"]
@@ -731,6 +739,8 @@ class ReceiptParser:
             "processing_status": "success" if items else "no_items_found",
             "total_verification": total_verification,
             "math_verification": math_verification,
+            "receipt_date": receipt_date,
+            "store_name": store_name,
         }
 
     def _group_into_lines(self, ocr_results: List[Dict], is_structured: bool = False) -> List[Dict]:
@@ -2493,6 +2503,146 @@ class ReceiptParser:
         """Thread-safe cache lookup."""
         with self._cache_lock:
             return self._code_match_cache.get(code)
+
+    # ── Date & Store Extraction ─────────────────────────────────────────────
+
+    # Date formats commonly found on receipts
+    _DATE_PATTERNS = [
+        # DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+        re.compile(r'(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{4})'),
+        # YYYY-MM-DD (ISO)
+        re.compile(r'(\d{4})[/\-\.](\d{1,2})[/\-\.](\d{1,2})'),
+        # DD Mon YYYY or DD-Mon-YYYY (e.g. 15 Mar 2026, 15-Mar-2026)
+        re.compile(
+            r'(\d{1,2})[\s\-]*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
+            r'[\s\-,]*(\d{4})',
+            re.IGNORECASE,
+        ),
+        # Mon DD, YYYY (e.g. March 15, 2026)
+        re.compile(
+            r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
+            r'[\s\-]*(\d{1,2})[,\s]+(\d{4})',
+            re.IGNORECASE,
+        ),
+    ]
+
+    _MONTH_MAP = {
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+        'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+    }
+
+    # Quick-check: does the line contain a date-related keyword?
+    _DATE_KEYWORD_RE = re.compile(
+        r'(date|dated|dt|invoice\s*date)', re.IGNORECASE
+    )
+
+    def _extract_receipt_date(self, grouped_lines: List[Dict]) -> Optional[str]:
+        """Extract the receipt date from grouped OCR lines.
+
+        Scans all lines for date patterns.  Prefers lines with a "Date:" keyword.
+        Returns ISO format string (YYYY-MM-DD) or None.
+        """
+        candidates: list[tuple[str, float]] = []  # (iso_date, priority)
+
+        for line_info in grouped_lines:
+            text = line_info.get("text", "").strip()
+            if not text:
+                continue
+
+            has_keyword = bool(self._DATE_KEYWORD_RE.search(text))
+            priority = 2.0 if has_keyword else 1.0
+
+            for i, pattern in enumerate(self._DATE_PATTERNS):
+                m = pattern.search(text)
+                if not m:
+                    continue
+                try:
+                    groups = m.groups()
+                    if i == 0:  # DD/MM/YYYY
+                        day, month, year = int(groups[0]), int(groups[1]), int(groups[2])
+                    elif i == 1:  # YYYY-MM-DD
+                        year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+                    elif i == 2:  # DD Mon YYYY
+                        day = int(groups[0])
+                        month = self._MONTH_MAP.get(groups[1][:3].lower(), 0)
+                        year = int(groups[2])
+                    elif i == 3:  # Mon DD, YYYY
+                        month = self._MONTH_MAP.get(groups[0][:3].lower(), 0)
+                        day = int(groups[1])
+                        year = int(groups[2])
+                    else:
+                        continue
+
+                    # Validate ranges
+                    if not (1 <= month <= 12 and 1 <= day <= 31 and 1900 <= year <= 2100):
+                        continue
+
+                    iso = f"{year:04d}-{month:02d}-{day:02d}"
+                    candidates.append((iso, priority + (1.0 / (i + 1))))
+                    break  # one date per line is enough
+                except (ValueError, TypeError, IndexError):
+                    continue
+
+        if not candidates:
+            return None
+
+        # Return the highest-priority candidate
+        candidates.sort(key=lambda x: -x[1])
+        return candidates[0][0]
+
+    def _extract_store_name(self, grouped_lines: List[Dict]) -> Optional[str]:
+        """Extract the store/merchant name from grouped OCR lines.
+
+        Heuristic: the first 1–3 lines of a receipt are typically the store name
+        or header.  We take the first non-noise, non-date, non-item line.
+        """
+        if not grouped_lines:
+            return None
+
+        # Only look at the first 5 lines (store name is always near the top)
+        top_lines = grouped_lines[:5]
+
+        for line_info in top_lines:
+            text = line_info.get("text", "").strip()
+            if not text or len(text) < 3:
+                continue
+
+            # Skip lines that look like dates
+            if self._DATE_KEYWORD_RE.search(text):
+                continue
+            if re.match(r'^\s*\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}\s*$', text):
+                continue
+
+            # Skip lines that look like receipt numbers or item data
+            if re.match(r'^\s*(receipt|invoice|bill)\s*#', text, re.IGNORECASE):
+                continue
+            if re.match(r'^\s*\d{1,2}[.):]\s+', text):  # numbered item line
+                continue
+
+            # Skip column headers
+            header_words = {'item', 'code', 'qty', 'quantity', 'rate', 'amount',
+                           'price', 'unit', 's.no', 'sno', 'total'}
+            text_lower = text.lower()
+            text_tokens = set(re.split(r'\s+', text_lower))
+            if len(text_tokens) > 0 and text_tokens.issubset(header_words | {''}):
+                continue
+
+            # Skip separator lines
+            if re.match(r'^[\-=_*#]{3,}$', text):
+                continue
+
+            # Skip if the line matches a known product code pattern
+            # (store names are typically multi-word, not single codes)
+            upper = text.upper().strip()
+            if upper in self.product_catalog:
+                continue
+
+            # This line is likely the store name
+            # Clean up: capitalize properly, limit length
+            store = text.strip()[:200]
+            return store
+
+        return None
 
     def update_catalog(self, catalog: Dict[str, str]) -> None:
         """Update the product catalog and invalidate match cache."""

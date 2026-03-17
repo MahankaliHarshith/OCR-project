@@ -32,6 +32,10 @@ except Exception:
 
 from app.tracing import get_tracer, optional_span
 from app.error_tracking import capture_exception, add_breadcrumb, track_operation
+from app.services.dedup_service import dedup_service
+from app.ocr.quality_scorer import quality_scorer
+from app.ocr.validators import receipt_validator
+from app.services.correction_service import correction_service
 _tracer = get_tracer(__name__)
 
 
@@ -459,6 +463,69 @@ class ReceiptService:
         except Exception as e:
             logger.warning(f"[Step 4c] Math verification failed (non-fatal): {e}")
 
+        # ─── Step 4d: Smart Validation Rules ─────────────────────────────
+        validation_result = None
+        try:
+            historical_stats = receipt_validator.get_historical_stats(self.db)
+            validation_result = receipt_validator.validate(
+                items=receipt_data.get("items", []),
+                catalog=catalog_full or None,
+                historical_stats=historical_stats or None,
+            )
+            receipt_data["validation"] = validation_result
+            result["metadata"]["validation"] = validation_result.get("summary", {})
+            logger.info(
+                f"[Step 4d] Validation: valid={validation_result['valid']}, "
+                f"warnings={validation_result['summary']['total_warnings']}, "
+                f"corrections={validation_result['summary']['auto_corrections']}"
+            )
+        except Exception as e:
+            logger.warning(f"[Step 4d] Validation failed (non-fatal): {e}")
+
+        # ─── Step 4e: Quality Score ──────────────────────────────────────
+        quality_result = None
+        try:
+            quality_result = quality_scorer.score(
+                items=receipt_data.get("items", []),
+                metadata=result.get("metadata", {}),
+                total_verification=receipt_data.get("total_verification"),
+                math_verification=receipt_data.get("math_verification"),
+            )
+            receipt_data["quality"] = quality_result
+            result["metadata"]["quality_score"] = quality_result["score"]
+            result["metadata"]["quality_grade"] = quality_result["grade"]
+            logger.info(
+                f"[Step 4e] Quality: score={quality_result['score']}, "
+                f"grade={quality_result['grade']}"
+            )
+        except Exception as e:
+            logger.warning(f"[Step 4e] Quality scoring failed (non-fatal): {e}")
+
+        # ─── Step 4f: Compute Dedup Hashes ───────────────────────────────
+        _image_hash = ""
+        _content_fingerprint = ""
+        _dedup_result = None
+        try:
+            _image_hash = dedup_service.compute_image_hash(saved_path)
+            _content_fingerprint = dedup_service.compute_content_fingerprint(
+                receipt_data.get("items", [])
+            )
+            # Check for duplicates against recent receipts
+            _dedup_result = dedup_service.check_duplicate(
+                _image_hash, _content_fingerprint, self.db
+            )
+            if _dedup_result:
+                receipt_data["duplicate_warning"] = _dedup_result
+                result["metadata"]["duplicate_warning"] = _dedup_result
+                logger.info(
+                    f"[Step 4f] Duplicate warning: similar to receipt "
+                    f"#{_dedup_result.get('similar_receipt_id')}"
+                )
+            else:
+                logger.debug("[Step 4f] No duplicate detected")
+        except Exception as e:
+            logger.warning(f"[Step 4f] Dedup check failed (non-fatal): {e}")
+
         # ─── Step 5: Save to database ────────────────────────────────────
         try:
             logger.debug("[Step 5/5] Saving to database...")
@@ -485,6 +552,28 @@ class ReceiptService:
             if saved_receipt and saved_receipt.get("items"):
                 for item, saved_item in zip(receipt_data["items"], saved_receipt["items"]):
                     item["id"] = saved_item["id"]
+
+            # ── Save smart OCR metadata ──
+            try:
+                meta_kwargs = {}
+                if _image_hash:
+                    meta_kwargs["image_hash"] = _image_hash
+                if _content_fingerprint:
+                    meta_kwargs["content_fingerprint"] = _content_fingerprint
+                # Date extracted from OCR text
+                if receipt_data.get("receipt_date"):
+                    meta_kwargs["receipt_date"] = receipt_data["receipt_date"]
+                # Store name extracted from OCR text
+                if receipt_data.get("store_name"):
+                    meta_kwargs["store_name"] = receipt_data["store_name"]
+                # Quality score
+                if quality_result:
+                    meta_kwargs["quality_score"] = int(quality_result["score"])
+                    meta_kwargs["quality_grade"] = quality_result["grade"]
+                if meta_kwargs:
+                    self.db.update_receipt_metadata(receipt_id, **meta_kwargs)
+            except Exception as e:
+                logger.debug(f"Smart OCR metadata save failed (non-fatal): {e}")
 
             # Log processing stages (single batch insert — 1 round-trip)
             total_ms = int((time.time() - total_start) * 1000)
@@ -558,11 +647,39 @@ class ReceiptService:
         unit_price: float = 0.0,
         line_total: float = 0.0,
     ) -> bool:
-        """Update a receipt item (manual correction). Returns False if not found."""
-        return self.db.update_receipt_item(
+        """Update a receipt item (manual correction). Returns False if not found.
+
+        Also records the correction in the OCR feedback loop so future
+        parsing automatically fixes the same OCR misread.
+        """
+        # Capture original values before update for correction recording
+        try:
+            original = self.db.get_receipt_item(item_id)
+        except Exception:
+            original = None
+
+        success = self.db.update_receipt_item(
             item_id, product_code, product_name, quantity,
             unit_price=unit_price, line_total=line_total,
         )
+
+        # Record correction for feedback loop (non-blocking)
+        if success and original:
+            try:
+                correction_service.record_correction(
+                    db_instance=self.db,
+                    receipt_id=original.get("receipt_id", 0),
+                    item_id=item_id,
+                    original_code=original.get("product_code", ""),
+                    corrected_code=product_code,
+                    original_qty=original.get("quantity", 0),
+                    corrected_qty=quantity,
+                    raw_ocr_text="",
+                )
+            except Exception as e:
+                logger.debug(f"Correction recording failed (non-fatal): {e}")
+
+        return success
 
     def delete_receipt(self, receipt_id: int) -> bool:
         """Delete a receipt."""

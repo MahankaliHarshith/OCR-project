@@ -1038,3 +1038,48 @@ async def receive_alertmanager_webhook(request: Request):
     except Exception as e:
         logger.error("Failed to parse Alertmanager payload: %s", e)
     return {"status": "received"}
+
+
+# ─── Smart OCR Endpoints ─────────────────────────────────────────────────────
+
+@router.get("/api/corrections", tags=["Smart OCR"])
+async def get_correction_stats():
+    """
+    Get OCR correction statistics and the most common correction patterns.
+
+    Returns:
+        - Total corrections recorded
+        - Number of unique correction patterns
+        - Top 10 most frequent corrections (e.g., TEWI → TEW1)
+    """
+    from app.services.correction_service import correction_service
+    from app.database import db
+    stats = correction_service.get_correction_stats(db)
+    corrections_map = correction_service.get_corrections_map(db)
+    return {
+        "stats": stats,
+        "active_corrections": corrections_map,
+        "description": (
+            "When users manually edit items, corrections are recorded. "
+            "After 2+ identical corrections, the fix is auto-applied to future scans."
+        ),
+    }
+
+
+@router.get("/api/item-stats", tags=["Smart OCR"])
+async def get_item_quantity_stats():
+    """
+    Get historical quantity statistics per product code.
+
+    Shows the average, min, max, and count of each product's quantity
+    across all past receipts. Used for anomaly detection.
+    """
+    from app.database import db
+    try:
+        stats = db.get_item_quantity_stats()
+    except Exception:
+        stats = {}
+    return {
+        "product_stats": stats,
+        "total_products_with_history": len(stats),
+    }

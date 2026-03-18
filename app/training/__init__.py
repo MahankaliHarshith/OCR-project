@@ -6,4 +6,5 @@ Provides tools to:
     2. Benchmark OCR accuracy against known-correct data
     3. Auto-tune OCR parameters for maximum accuracy
     4. Learn receipt template layouts for faster processing
+    5. Real-world adaptive training with error pattern mining
 """

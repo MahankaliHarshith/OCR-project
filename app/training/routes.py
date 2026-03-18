@@ -18,15 +18,13 @@ REST API endpoints for the training pipeline:
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import List as TypingList
 
-from app.training.data_manager import training_data_manager, ALLOWED_EXTENSIONS
 from app.training.benchmark import benchmark_engine
+from app.training.data_manager import ALLOWED_EXTENSIONS, training_data_manager
 from app.training.optimizer import optimizer
 from app.training.template_learner import template_learner
 
@@ -42,10 +40,10 @@ class GroundTruthItem(BaseModel):
 
 
 class GroundTruthPayload(BaseModel):
-    items: TypingList[GroundTruthItem]
-    total_quantity: Optional[float] = None
-    receipt_type: Optional[str] = "unknown"
-    notes: Optional[str] = ""
+    items: list[GroundTruthItem]
+    total_quantity: float | None = None
+    receipt_type: str | None = "unknown"
+    notes: str | None = ""
 
 
 class OptimizeRequest(BaseModel):
@@ -68,7 +66,7 @@ async def upload_training_sample(
         ...,
         description='JSON string: {"items": [{"code": "ABC", "quantity": 2}]}',
     ),
-    receipt_id: Optional[str] = Form(None, description="Custom receipt ID"),
+    receipt_id: str | None = Form(None, description="Custom receipt ID"),
 ):
     """
     Upload a receipt image with ground truth labels for training.
@@ -85,7 +83,7 @@ async def upload_training_sample(
     try:
         gt_data = json.loads(ground_truth)
     except json.JSONDecodeError:
-        raise HTTPException(400, "Invalid ground_truth JSON.")
+        raise HTTPException(400, "Invalid ground_truth JSON.") from None
 
     # Read image bytes
     contents = await file.read()
@@ -105,12 +103,12 @@ async def upload_training_sample(
             "sample": sample,
         })
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from None
 
 
 @training_router.post("/upload-batch", summary="Upload ground truth for existing images")
 async def upload_ground_truth_batch(
-    payload: TypingList[dict],
+    payload: list[dict],
 ):
     """
     Add ground truth labels for images already in training_data/images/.
@@ -232,7 +230,7 @@ async def run_optimization(request: OptimizeRequest):
             f"Currently have {len(samples)}.",
         )
 
-    from app.training.optimizer import QUICK_SEARCH_SPACE, DEFAULT_SEARCH_SPACE
+    from app.training.optimizer import DEFAULT_SEARCH_SPACE, QUICK_SEARCH_SPACE
 
     space = QUICK_SEARCH_SPACE if request.quick else DEFAULT_SEARCH_SPACE
 
@@ -346,3 +344,103 @@ async def list_benchmark_results():
     """List all saved benchmark run results."""
     results = training_data_manager.list_benchmark_results()
     return {"total": len(results), "results": results}
+
+
+# ─── Real-World Trainer Endpoints ────────────────────────────────────────────
+
+@training_router.post("/trainer/scan", summary="Scan a receipt for training")
+async def trainer_scan(file: UploadFile = File(...)):
+    """Scan a receipt image and return OCR results for review."""
+    from app.training.real_world_trainer import real_world_trainer
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        result = real_world_trainer.scan_receipt(tmp_path)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Trainer scan failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from None
+
+
+@training_router.post("/trainer/save", summary="Save corrected training sample")
+async def trainer_save(
+    file: UploadFile = File(...),
+    corrected_items: str = Form(...),
+    receipt_type: str = Form("handwritten"),
+    notes: str = Form(""),
+):
+    """Save a user-corrected scan as a training sample."""
+    from app.training.real_world_trainer import real_world_trainer
+
+    items = json.loads(corrected_items)
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    ext = Path(file.filename).suffix.lower()
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        result = real_world_trainer.save_corrected_sample(
+            image_path=tmp_path,
+            corrected_items=items,
+            receipt_type=receipt_type,
+            notes=notes,
+        )
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from None
+
+
+@training_router.post("/trainer/analyze", summary="Mine error patterns")
+async def trainer_analyze():
+    """Mine OCR error patterns from benchmark results and corrections."""
+    from app.training.real_world_trainer import real_world_trainer
+    return real_world_trainer.mine_error_patterns()
+
+
+@training_router.post("/trainer/learn", summary="Generate learned rules")
+async def trainer_learn(min_occurrences: int = Query(2, ge=1)):
+    """Generate learned OCR substitution rules from mined patterns."""
+    from app.training.real_world_trainer import real_world_trainer
+    return real_world_trainer.generate_learned_rules(min_occurrences=min_occurrences)
+
+
+@training_router.get("/trainer/confusion", summary="Get confusion matrix")
+async def trainer_confusion():
+    """Get the character-level confusion matrix."""
+    from app.training.real_world_trainer import real_world_trainer
+    return real_world_trainer.build_confusion_matrix()
+
+
+@training_router.post("/trainer/auto-improve", summary="Run auto-improvement cycle")
+async def trainer_auto_improve():
+    """Run the full automatic improvement cycle."""
+    from app.training.real_world_trainer import real_world_trainer
+    return real_world_trainer.run_improvement_cycle(verbose=True)
+
+
+@training_router.get("/trainer/report", summary="Training progress report")
+async def trainer_report():
+    """Generate a comprehensive training progress report."""
+    from app.training.real_world_trainer import real_world_trainer
+    return real_world_trainer.generate_report()

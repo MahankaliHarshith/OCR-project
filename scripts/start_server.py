@@ -7,7 +7,10 @@ Usage:
     python start_server.py
 """
 
-import os, sys, subprocess, signal, time
+import os
+import signal
+import subprocess
+import sys
 
 
 def main():

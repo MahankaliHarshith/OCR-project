@@ -4,9 +4,9 @@ Tests deskew, white balance, upside-down detection, quality assessment,
 document scanning, and shadow normalization.
 """
 
-import pytest
-import numpy as np
 import cv2
+import numpy as np
+import pytest
 
 
 @pytest.fixture

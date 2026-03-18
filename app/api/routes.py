@@ -3,21 +3,16 @@ FastAPI API Routes.
 Defines all REST API endpoints for the Receipt Scanner application.
 """
 
-import os
 import json
 import logging
-import shutil
-from pathlib import Path
-from typing import Optional
+import re
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
-import re
-
-from fastapi import APIRouter, File, UploadFile, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
-from typing import List as TypingList
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -33,11 +28,13 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super().default(obj)
 
-from app.config import UPLOAD_DIR, EXPORT_DIR, ALLOWED_IMAGE_EXTENSIONS, MAX_FILE_SIZE_MB
-from app.services.receipt_service import receipt_service
-from app.services.product_service import product_service
-from app.services.excel_service import excel_service
-from app.ocr.hybrid_engine import get_hybrid_engine
+import contextlib  # noqa: E402
+
+from app.config import ALLOWED_IMAGE_EXTENSIONS, EXPORT_DIR, MAX_FILE_SIZE_MB, UPLOAD_DIR  # noqa: E402
+from app.ocr.hybrid_engine import get_hybrid_engine  # noqa: E402
+from app.services.excel_service import excel_service  # noqa: E402
+from app.services.product_service import product_service  # noqa: E402
+from app.services.receipt_service import receipt_service  # noqa: E402
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -67,7 +64,6 @@ async def health_check():
     Verifies actual readiness: database, disk, OCR engine.
     Returns 200 only if all subsystems are operational.
     """
-    import time as _time
     from app.ocr.hybrid_engine import get_hybrid_engine
 
     checks = {}
@@ -116,10 +112,55 @@ async def health_check():
         status_code=status_code,
         content={
             "status": "healthy" if healthy else "degraded",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "timestamp": datetime.now().isoformat(),
             "checks": checks,
         },
+    )
+
+
+@router.get("/api/health/live", tags=["System"])
+async def liveness_probe():
+    """
+    Kubernetes liveness probe — lightweight, confirms the process is alive.
+    Does NOT check dependencies (DB, disk) — that's the readiness probe.
+    Returns 200 if the application can serve HTTP responses.
+    """
+    return {"status": "alive"}
+
+
+@router.get("/api/health/ready", tags=["System"])
+async def readiness_probe():
+    """
+    Kubernetes readiness probe — confirms the app is ready to accept traffic.
+    Checks database connectivity and OCR engine availability.
+    Returns 503 if any critical subsystem is unavailable.
+    """
+    from app.ocr.hybrid_engine import get_hybrid_engine
+
+    ready = True
+    checks = {}
+
+    # Database connectivity
+    try:
+        from app.database import db
+        conn = db._conn()
+        conn.execute("SELECT 1")
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+        ready = False
+
+    # OCR engine loaded
+    hybrid = get_hybrid_engine()
+    checks["ocr_loaded"] = hybrid._local_engine is not None
+    if not hybrid._local_engine:
+        ready = False
+
+    status_code = 200 if ready else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "ready" if ready else "not_ready", "checks": checks},
     )
 
 
@@ -148,9 +189,9 @@ class ProductCreate(BaseModel):
 
 
 class ProductUpdate(BaseModel):
-    product_name: Optional[str] = None
-    category: Optional[str] = None
-    unit: Optional[str] = None
+    product_name: str | None = None
+    category: str | None = None
+    unit: str | None = None
 
     @field_validator('product_name')
     @classmethod
@@ -299,15 +340,13 @@ async def scan_receipt(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Receipt processing failed: {e}", exc_info=True)
         # Clean up orphaned upload file on failure
-        try:
+        with contextlib.suppress(OSError):
             upload_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise HTTPException(status_code=500, detail="Receipt processing failed. Please check the server logs.")
+        raise HTTPException(status_code=500, detail="Receipt processing failed. Please check the server logs.") from None
 
 
 @router.post("/api/receipts/scan-batch", tags=["Receipts"])
-async def scan_receipts_batch(files: TypingList[UploadFile] = File(...)):
+async def scan_receipts_batch(files: list[UploadFile] = File(...)):
     """
     Upload and process multiple receipt images in one request.
 
@@ -417,7 +456,7 @@ async def scan_receipts_batch(files: TypingList[UploadFile] = File(...)):
 # ─── Async Batch Processing Endpoints ─────────────────────────────────────────
 
 @router.post("/api/batch", tags=["Batch Processing"])
-async def create_batch(files: TypingList[UploadFile] = File(...)):
+async def create_batch(files: list[UploadFile] = File(...)):
     """
     Submit multiple receipt images for **asynchronous** background processing.
 
@@ -463,10 +502,8 @@ async def create_batch(files: TypingList[UploadFile] = File(...)):
             if len(contents) > max_bytes:
                 # Clean up already-saved files
                 for _, p in saved_paths:
-                    try:
+                    with contextlib.suppress(OSError):
                         Path(p).unlink(missing_ok=True)
-                    except OSError:
-                        pass
                 raise HTTPException(
                     status_code=400,
                     detail=f"File '{file.filename}' too large (>{MAX_FILE_SIZE_MB}MB).",
@@ -485,10 +522,8 @@ async def create_batch(files: TypingList[UploadFile] = File(...)):
         is_webp = (len(contents) >= 12 and contents[:4] == b'RIFF' and contents[8:12] == b'WEBP')
         if not is_webp and not any(contents[:len(sig)] == sig for sig in _MAGIC):
             for _, p in saved_paths:
-                try:
+                with contextlib.suppress(OSError):
                     Path(p).unlink(missing_ok=True)
-                except OSError:
-                    pass
             raise HTTPException(
                 status_code=400,
                 detail=f"File '{file.filename}' content does not match a valid image format.",
@@ -510,11 +545,9 @@ async def create_batch(files: TypingList[UploadFile] = File(...)):
     except ValueError as e:
         # Too many active batches
         for _, p in saved_paths:
-            try:
+            with contextlib.suppress(OSError):
                 Path(p).unlink(missing_ok=True)
-            except OSError:
-                pass
-        raise HTTPException(status_code=429, detail=str(e))
+        raise HTTPException(status_code=429, detail=str(e)) from None
 
     batch_id = batch.batch_id
     logger.info(f"Async batch created: batch_id={batch_id}, files={len(saved_paths)}")
@@ -597,7 +630,7 @@ async def delete_receipt(receipt_id: int):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to delete receipt: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete receipt: {exc}") from None
 
 
 @router.put("/api/receipts/items/{item_id}", tags=["Receipts"])
@@ -615,7 +648,7 @@ async def update_receipt_item(item_id: int, data: ItemUpdate):
         raise
     except Exception as e:
         logger.error(f"Update receipt item failed: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail="Failed to update item. Please try again.")
+        raise HTTPException(status_code=400, detail="Failed to update item. Please try again.") from None
 
 
 @router.post("/api/receipts/{receipt_id}/items", tags=["Receipts"])
@@ -628,10 +661,10 @@ async def add_receipt_item(receipt_id: int, data: ItemUpdate):
         )
         return {"message": "Item added.", "item_id": item_id}
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from None
     except Exception as e:
         logger.error(f"Add receipt item failed: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail="Failed to add item. Please try again.")
+        raise HTTPException(status_code=400, detail="Failed to add item. Please try again.") from None
 
 
 @router.delete("/api/receipts/items/{item_id}", tags=["Receipts"])
@@ -646,7 +679,7 @@ async def delete_receipt_item(item_id: int):
         raise
     except Exception as e:
         logger.error(f"Delete receipt item failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to delete item.")
+        raise HTTPException(status_code=500, detail="Failed to delete item.") from None
 
 
 @router.get("/api/receipts/date/{date}", tags=["Receipts"])
@@ -700,10 +733,10 @@ async def add_product(data: ProductCreate):
         )
         return {"message": "Product added successfully.", "product": product}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from None
     except Exception as e:
         logger.error(f"Add product failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to add product. Please try again.")
+        raise HTTPException(status_code=500, detail="Failed to add product. Please try again.") from None
 
 
 @router.put("/api/products/{code}", tags=["Products"])
@@ -714,7 +747,7 @@ async def update_product(code: str, data: ProductUpdate):
         product = product_service.update_product(code, **updates)
         return {"message": "Product updated successfully.", "product": product}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from None
 
 
 @router.delete("/api/products/{code}", tags=["Products"])
@@ -755,7 +788,7 @@ async def import_products_csv(file: UploadFile = File(...)):
     try:
         content = raw.decode("utf-8-sig")  # utf-8-sig auto-strips BOM from Excel CSVs
     except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="CSV file must be UTF-8 encoded.")
+        raise HTTPException(status_code=400, detail="CSV file must be UTF-8 encoded.") from None
     result = product_service.import_from_csv(content)
     return result
 
@@ -774,14 +807,14 @@ async def generate_excel(data: ExcelGenerateRequest):
             "download_url": f"/api/export/download/{Path(filepath).name}",
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from None
     except Exception as e:
         logger.error(f"Excel generation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Excel generation failed. Please try again.")
+        raise HTTPException(status_code=500, detail="Excel generation failed. Please try again.") from None
 
 
 @router.get("/api/export/daily", tags=["Export"])
-async def generate_daily_report(date: Optional[str] = None):
+async def generate_daily_report(date: str | None = None):
     """Generate an Excel report for all receipts on a given date."""
     if date is not None and not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
@@ -793,10 +826,10 @@ async def generate_daily_report(date: Optional[str] = None):
             "download_url": f"/api/export/download/{Path(filepath).name}",
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from None
     except Exception as e:
         logger.error(f"Daily report generation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Daily report generation failed. Please try again.")
+        raise HTTPException(status_code=500, detail="Daily report generation failed. Please try again.") from None
 
 
 @router.get("/api/export/download/{filename}", tags=["Export"])
@@ -814,7 +847,7 @@ async def download_file(filename: str):
     try:
         filepath.resolve().relative_to(EXPORT_DIR.resolve())
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid filename.")
+        raise HTTPException(status_code=400, detail="Invalid filename.") from None
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="File not found.")
 
@@ -843,7 +876,7 @@ async def serve_upload_image(filename: str):
     try:
         filepath.resolve().relative_to(UPLOAD_DIR.resolve())
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid filename.")
+        raise HTTPException(status_code=400, detail="Invalid filename.") from None
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="File not found.")
     return FileResponse(str(filepath))
@@ -969,8 +1002,8 @@ async def websocket_batch_updates(websocket: WebSocket, batch_id: str):
     The connection is kept open until the batch finishes or the client
     disconnects.
     """
-    from app.websocket import get_ws_manager
     from app.services.batch_service import get_batch_service
+    from app.websocket import get_ws_manager
 
     manager = get_ws_manager()
     await manager.connect(batch_id, websocket)
@@ -1052,8 +1085,8 @@ async def get_correction_stats():
         - Number of unique correction patterns
         - Top 10 most frequent corrections (e.g., TEWI → TEW1)
     """
-    from app.services.correction_service import correction_service
     from app.database import db
+    from app.services.correction_service import correction_service
     stats = correction_service.get_correction_stats(db)
     corrections_map = correction_service.get_corrections_map(db)
     return {

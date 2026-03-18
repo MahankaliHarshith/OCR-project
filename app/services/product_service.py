@@ -7,7 +7,6 @@ import/export, and fuzzy search capabilities.
 import csv
 import io
 import logging
-from typing import List, Dict, Optional
 
 from app.database import db
 
@@ -20,7 +19,7 @@ class ProductService:
     def __init__(self):
         self.db = db
 
-    def get_all_products(self, limit: int = 0, offset: int = 0) -> List[Dict]:
+    def get_all_products(self, limit: int = 0, offset: int = 0) -> list[dict]:
         """Get active products from the catalog (paginated)."""
         return self.db.get_all_products(active_only=True, limit=limit, offset=offset)
 
@@ -28,7 +27,7 @@ class ProductService:
         """Return total count of active products."""
         return self.db.count_products(active_only=True)
 
-    def get_product(self, code: str) -> Optional[Dict]:
+    def get_product(self, code: str) -> dict | None:
         """Get a single product by code."""
         return self.db.get_product_by_code(code.upper())
 
@@ -38,7 +37,7 @@ class ProductService:
         name: str,
         category: str = "",
         unit: str = "Piece",
-    ) -> Dict:
+    ) -> dict:
         """
         Add a new product to the catalog.
 
@@ -69,7 +68,7 @@ class ProductService:
         logger.info(f"Product added: {code} → {name}")
         return product
 
-    def update_product(self, code: str, **kwargs) -> Optional[Dict]:
+    def update_product(self, code: str, **kwargs) -> dict | None:
         """
         Update an existing product.
 
@@ -105,22 +104,22 @@ class ProductService:
             logger.info(f"Product deleted: {code}")
         return result
 
-    def search_products(self, query: str) -> List[Dict]:
+    def search_products(self, query: str) -> list[dict]:
         """Search products by code or name."""
         logger.debug(f"search_products(query={query!r})")
         results = self.db.search_products(query)
         logger.debug(f"search_products({query!r}) → {len(results)} results")
         return results
 
-    def get_product_code_map(self) -> Dict[str, str]:
+    def get_product_code_map(self) -> dict[str, str]:
         """Get simple code → name mapping for the parser."""
         return self.db.get_product_code_map()
 
-    def get_product_catalog_full(self) -> Dict[str, Dict]:
+    def get_product_catalog_full(self) -> dict[str, dict]:
         """Get full catalog keyed by product code."""
         return self.db.get_product_catalog_full()
 
-    def import_from_csv(self, csv_content: str) -> Dict:
+    def import_from_csv(self, csv_content: str) -> dict:
         """
         Import products from CSV content.
 

@@ -7,10 +7,9 @@ Scans all 5 generated test receipts and checks:
   4. Line math is all correct
 """
 
-import requests
-import json
-import sys
 from pathlib import Path
+
+import requests
 
 API = "http://localhost:8000/api/receipts/scan"
 TEST_DIR = Path("test_images")
@@ -46,7 +45,8 @@ def test_receipt(filename):
         print(f"  ❌ File not found: {filepath}")
         return False
 
-    resp = requests.post(API, files={"file": open(filepath, "rb")})
+    with open(filepath, "rb") as f:
+        resp = requests.post(API, files={"file": f})
     data = resp.json()
 
     if resp.status_code != 200 or not data.get("success"):
@@ -88,7 +88,7 @@ def test_receipt(filename):
         print(f"  Grand total: computed={computed_gt}, ocr={ocr_gt}, match={gt_match}")
         if mismatches:
             print(f"  ⚠ Catalog mismatches: {mismatches}")
-        all_ok = mv.get("all_line_math_ok", False)
+        mv.get("all_line_math_ok", False)
         return True  # We'll report details
     else:
         # If prices not detected from OCR, catalog fill should still produce math verification

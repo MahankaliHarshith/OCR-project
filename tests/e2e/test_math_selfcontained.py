@@ -2,8 +2,13 @@
 Self-contained math verification test.
 Starts the server itself, runs tests, then cleans up.
 """
-import subprocess, sys, time, os, json, requests
+import os
+import subprocess
+import sys
+import time
 from pathlib import Path
+
+import requests
 
 os.chdir(r"c:\Users\mahankali_harshith\OneDrive - EPAM\Desktop\OCR project")
 
@@ -34,7 +39,8 @@ for i in range(60):
         if r.status_code == 200:
             print(f"Server ready after {i+1}s")
             break
-    except: pass
+    except Exception:
+        pass
     time.sleep(1)
 else:
     print("TIMEOUT waiting for server")
@@ -50,12 +56,15 @@ try:
         fpath = Path("test_images") / fname
         print(f"\n📄 {fname}")
         if not fpath.exists():
-            print("  ❌ file not found"); continue
+            print("  ❌ file not found")
+            continue
 
-        resp = requests.post(API, files={"file": open(fpath,"rb")}, timeout=120)
+        with open(fpath, "rb") as f:
+            resp = requests.post(API, files={"file": f}, timeout=120)
         data = resp.json()
         if not data.get("success"):
-            print(f"  ❌ errors: {data.get('errors',[])}"); continue
+            print(f"  ❌ errors: {data.get('errors',[])}")
+            continue
 
         rd = data["receipt_data"]
         items = rd.get("items",[])
@@ -70,7 +79,8 @@ try:
         qty_ok = 0
         for ec, eq, _ in expected_items:
             found = [it for it in items if it["code"]==ec]
-            if found and abs(found[0]["quantity"]-eq)<0.5: qty_ok += 1
+            if found and abs(found[0]["quantity"]-eq)<0.5:
+                qty_ok += 1
         print(f"  Qty:   {qty_ok}/{len(expected_items)} ({qty_ok/len(expected_items)*100:.0f}%)")
 
         # Math verification
@@ -83,14 +93,16 @@ try:
             print(f"  Grand total: computed={mv.get('computed_grand_total')}, "
                   f"ocr={mv.get('ocr_grand_total')}, match={mv.get('grand_total_match')}")
             mm = mv.get("catalog_mismatches",[])
-            if mm: print(f"  ⚠ Catalog mismatches: {len(mm)}")
+            if mm:
+                print(f"  \u26a0 Catalog mismatches: {len(mm)}")
         else:
             iwp = sum(1 for it in items if it.get("unit_price",0)>0)
             print(f"  Prices: {iwp}/{len(items)} items got catalog prices (OCR didn't extract prices)")
 
         # Show each item
         for it in items:
-            r = it.get("unit_price",0); t = it.get("line_total",0)
+            r = it.get("unit_price",0)
+            t = it.get("line_total",0)
             s = it.get("price_source","")
             print(f"    {it['code']:8s} qty={it['quantity']:>2}  rate={r:>6}  total={t:>8}  [{s}]")
 

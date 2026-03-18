@@ -12,9 +12,8 @@ Validates:
   - Double-digit quantity handling
 """
 
-import sys
 import os
-import json
+import sys
 from pathlib import Path
 
 # Add project root to path
@@ -24,7 +23,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 os.environ["OCR_MODE"] = "local"
 
 from app.services.receipt_service import receipt_service
-
 
 # ── Test Definitions ──────────────────────────────────────────────────────────
 # Each test: (image_file, expected_items, expected_total, description, allow_mismatch)
@@ -71,7 +69,7 @@ def run_tests():
         print(f"  Expected: {exp_items} items, total={exp_total}{' (allow_mismatch)' if allow_mismatch else ''}")
 
         if not Path(img_file).exists():
-            print(f"  ⏭️  SKIP (image not found)")
+            print("  ⏭️  SKIP (image not found)")
             results.append(("SKIP", desc, img_file))
             continue
 
@@ -141,7 +139,7 @@ def run_tests():
                 print(f"  [DEBUG] parser_tv: ocr={parser_tv.get('total_qty_ocr')}, status={parser_tv.get('verification_status')}")
 
             if total_ok:
-                print(f"  Total verification: ✅")
+                print("  Total verification: ✅")
             else:
                 if exp_total is None:
                     print(f"  Total verification: ❌ (expected no total, got ocr_total={ocr_total})")
@@ -149,12 +147,12 @@ def run_tests():
                     print(f"  Total verification: ❌ (expected total={exp_total}, got ocr_total={ocr_total}, match={is_match})")
                     # Dump raw OCR for debugging
                     raw_ocr = result.get("metadata", {}).get("raw_ocr", [])
-                    print(f"  [DEBUG] Raw OCR texts:")
+                    print("  [DEBUG] Raw OCR texts:")
                     for r in raw_ocr:
                         print(f"    '{r['text']}' (conf={r['confidence']:.3f})")
 
             if all_ok:
-                print(f"\n  ✅ PASS")
+                print("\n  ✅ PASS")
                 passed += 1
                 results.append(("PASS", desc, None))
             else:
@@ -183,7 +181,7 @@ def run_tests():
 
     # ── Summary ──────────────────────────────────────────────────────────
     print(f"\n{'=' * 70}")
-    print(f"  RESULTS SUMMARY")
+    print("  RESULTS SUMMARY")
     print(f"{'=' * 70}")
     total_tests = passed + failed
     skipped = len([r for r in results if r[0] == "SKIP"])
@@ -193,7 +191,7 @@ def run_tests():
     print(f"  Skipped: {skipped}  ⏭️")
 
     if failed > 0:
-        print(f"\n  FAILURES:")
+        print("\n  FAILURES:")
         for desc, issue in errors_list:
             print(f"    ❌ {desc}: {issue}")
 

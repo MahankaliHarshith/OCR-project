@@ -12,25 +12,26 @@ This dramatically improves OCR speed (fewer pixels, no background noise)
 and accuracy (undistorted text, clean black-on-white input).
 """
 
-import cv2
-import numpy as np
+import contextlib
 import logging
 import time
 from pathlib import Path
-from typing import Tuple, Optional, Dict, List
-from PIL import Image, ExifTags
+
+import cv2
+import numpy as np
+from PIL import ExifTags, Image
 
 from app.config import (
-    GAUSSIAN_BLUR_KERNEL,
     ADAPTIVE_THRESH_BLOCK_SIZE,
     ADAPTIVE_THRESH_C,
     CLAHE_CLIP_LIMIT,
     CLAHE_TILE_GRID_SIZE,
+    GAUSSIAN_BLUR_KERNEL,
     IMAGE_MAX_DIMENSION,
-    IMAGE_MIN_WIDTH,
     IMAGE_MIN_HEIGHT,
+    IMAGE_MIN_WIDTH,
 )
-from app.tracing import get_tracer, optional_span
+from app.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer(__name__)
@@ -65,7 +66,7 @@ class ImagePreprocessor:
             tileGridSize=CLAHE_TILE_GRID_SIZE,
         )
 
-    def preprocess(self, image_path: str) -> Tuple[np.ndarray, Dict]:
+    def preprocess(self, image_path: str) -> tuple[np.ndarray, dict]:
         """
         Complete preprocessing pipeline for a receipt image.
         Optimized for HANDWRITTEN text on paper — avoids aggressive
@@ -91,14 +92,11 @@ class ImagePreprocessor:
 
         # Wrap entire pipeline in a span
         _preprocess_span = None
-        try:
-            from opentelemetry import trace as _otrace
+        with contextlib.suppress(Exception):
             _preprocess_span = _tracer.start_span(
                 "image_preprocessing",
                 attributes={"image.path": str(image_path)},
             )
-        except Exception:
-            pass
 
         # 1. Load image
         img = self._load_image(image_path)
@@ -487,7 +485,7 @@ class ImagePreprocessor:
             logger.debug(f"EXIF correction failed ({e}), falling back to cv2.imread")
             img = cv2.imread(image_path)
             if img is None:
-                raise ValueError(f"Cannot read image: {image_path}")
+                raise ValueError(f"Cannot read image: {image_path}") from e
             return img
 
     def _resize_if_needed(
@@ -503,7 +501,7 @@ class ImagePreprocessor:
             logger.debug(f"Image resized from {w}x{h} to {new_w}x{new_h}")
         return img
 
-    def _assess_quality(self, gray: np.ndarray) -> Dict:
+    def _assess_quality(self, gray: np.ndarray) -> dict:
         """
         Assess image quality (blur, brightness, contrast).
 
@@ -544,7 +542,7 @@ class ImagePreprocessor:
             "is_low_contrast": is_low_contrast,
         }
 
-    def _scan_document(self, color_img: np.ndarray) -> Optional[np.ndarray]:
+    def _scan_document(self, color_img: np.ndarray) -> np.ndarray | None:
         """
         Document scanner — detects receipt/document boundaries and applies
         perspective transform to produce a flat, top-down view.
@@ -567,7 +565,7 @@ class ImagePreprocessor:
         """
         try:
             h, w = color_img.shape[:2]
-            img_area = h * w
+            _img_area = h * w
 
             # ── Step 1: Downscale for fast contour detection ──
             # Scanner apps process at 500px, multiply points back to full-res
@@ -697,7 +695,7 @@ class ImagePreprocessor:
 
     def _perspective_correct(
         self, gray: np.ndarray, original: np.ndarray
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """
         Attempt to detect receipt edges and apply perspective correction.
 
@@ -819,7 +817,7 @@ class ImagePreprocessor:
         Assumes the average color of a receipt photo should be neutral gray.
         This neutralizes color casts from fluorescent/LED/warm lighting that
         reduce OCR contrast between ink and paper.
-        
+
         Only applied when the color channels are significantly imbalanced
         (channel means differ by >10) to avoid unnecessary processing on
         already-neutral images.
@@ -829,24 +827,24 @@ class ImagePreprocessor:
         b_mean = float(np.mean(b))
         g_mean = float(np.mean(g))
         r_mean = float(np.mean(r))
-        
+
         # Only correct if channels are significantly imbalanced
         channel_spread = max(b_mean, g_mean, r_mean) - min(b_mean, g_mean, r_mean)
         if channel_spread < 10:
             return img  # Already neutral enough
-        
+
         # Gray-world: scale each channel so its mean equals the overall average
         overall_mean = (b_mean + g_mean + r_mean) / 3.0
-        
+
         # Clamp scale factors to prevent extreme corrections
         b_scale = min(1.5, max(0.7, overall_mean / (b_mean + 1e-6)))
         g_scale = min(1.5, max(0.7, overall_mean / (g_mean + 1e-6)))
         r_scale = min(1.5, max(0.7, overall_mean / (r_mean + 1e-6)))
-        
+
         b_corrected = np.clip(b.astype(np.float32) * b_scale, 0, 255).astype(np.uint8)
         g_corrected = np.clip(g.astype(np.float32) * g_scale, 0, 255).astype(np.uint8)
         r_corrected = np.clip(r.astype(np.float32) * r_scale, 0, 255).astype(np.uint8)
-        
+
         logger.debug(
             f"    White balance: B={b_mean:.0f}→{overall_mean:.0f}, "
             f"G={g_mean:.0f}→{overall_mean:.0f}, R={r_mean:.0f}→{overall_mean:.0f}"
@@ -939,16 +937,16 @@ class ImagePreprocessor:
     def _detect_skew_by_projection(self, binary: np.ndarray) -> float:
         """
         Detect skew angle using horizontal projection profile analysis.
-        
+
         This is a robust fallback when Hough line detection fails (short
         receipts, sparse text, heavily handwritten content).
-        
+
         Method: Rotate the binarized image by small increments (-10° to +10°)
         and compute the variance of horizontal projection (row sums). The angle
         that maximizes variance aligns text rows into tight peaks and valleys.
-        
+
         Speed: Uses 1/4 downscaled image and coarse+fine search (~8ms total).
-        
+
         Returns:
             Skew angle in degrees, or 0.0 if no clear skew detected.
         """
@@ -960,11 +958,11 @@ class ImagePreprocessor:
                 small = cv2.resize(binary, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
             else:
                 small = binary
-            
+
             sh, sw = small.shape[:2]
             best_angle = 0.0
             best_variance = 0.0
-            
+
             # Coarse search: -10° to +10° in 2° steps (11 iterations)
             # Most receipts have <5° skew; fine search refines to 0.25° precision
             for angle_10x in range(-100, 101, 20):
@@ -978,7 +976,7 @@ class ImagePreprocessor:
                 if variance > best_variance:
                     best_variance = variance
                     best_angle = angle
-            
+
             # Fine search: ±1° around coarse best in 0.25° steps
             coarse_best = best_angle
             for angle_100x in range(int((coarse_best - 1.0) * 100), int((coarse_best + 1.0) * 100) + 1, 25):
@@ -991,7 +989,7 @@ class ImagePreprocessor:
                 if variance > best_variance:
                     best_variance = variance
                     best_angle = angle
-            
+
             # Only return if angle is significant and within correction range
             if abs(best_angle) > 0.5 and abs(best_angle) <= 15.0:
                 logger.debug(
@@ -999,7 +997,7 @@ class ImagePreprocessor:
                     f"(variance={best_variance:.0f})"
                 )
                 return best_angle
-            
+
             return 0.0
         except Exception as e:
             logger.debug(f"  Projection-profile deskew failed: {e}")
@@ -1008,20 +1006,20 @@ class ImagePreprocessor:
     def _is_upside_down(self, gray: np.ndarray) -> bool:
         """
         Detect if the image text is upside-down (rotated 180°).
-        
+
         Uses two complementary heuristics:
-        
+
         1. GRADIENT ASYMMETRY: Text characters have more ink density
            at the top of each line (capital letters, ascenders like b/d/h/k/l)
            than at the bottom (only descenders like g/p/q/y). When text is
            upside-down, this asymmetry is reversed.
-        
+
         2. TOP-HEAVY INK DISTRIBUTION: On receipts, headers and item lines
            are concentrated in the upper portion. An upside-down receipt will
            have more ink density in the lower half.
-        
+
         Speed: ~2ms on 1800px image (single gradient + split operations).
-        
+
         Returns:
             True if the image appears to be upside-down.
         """
@@ -1029,36 +1027,36 @@ class ImagePreprocessor:
             h, w = gray.shape[:2]
             if h < 200 or w < 200:
                 return False  # Too small to reliably detect
-            
+
             # Binarize with Otsu
             _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            
+
             # Heuristic 1: Vertical gradient of horizontal projection
             # Compute horizontal projection (row sums = ink per row)
             proj = np.sum(binary, axis=1, dtype=np.float64)
-            
+
             # Compute vertical gradient of the projection
             # Positive gradient = ink density increasing downward
             gradient = np.diff(proj)
-            
+
             # Split gradient into upper and lower halves
             mid = len(gradient) // 2
             upper_gradient_sum = float(np.sum(gradient[:mid]))
             lower_gradient_sum = float(np.sum(gradient[mid:]))
-            
+
             # Heuristic 2: Ink distribution (top vs bottom)
             upper_ink = float(np.sum(binary[:h // 2]))
             lower_ink = float(np.sum(binary[h // 2:]))
             total_ink = upper_ink + lower_ink
-            
+
             if total_ink < 1:
                 return False  # Blank image
-            
+
             # An upside-down receipt will have:
             # - More ink in the lower half (headers now at bottom)
             # - Reversed gradient asymmetry
             ink_ratio = lower_ink / (total_ink + 1e-6)
-            
+
             # Strong signal: lower half has >70% of ink AND gradient asymmetry is reversed
             # Threshold raised from 0.60 to 0.70 to prevent false flips on receipts
             # with large totals, stamps, or signatures at the bottom
@@ -1066,14 +1064,14 @@ class ImagePreprocessor:
                 ink_ratio > 0.70
                 and lower_gradient_sum > upper_gradient_sum * 1.5
             )
-            
+
             logger.debug(
                 f"    Upside-down check: ink_ratio={ink_ratio:.2f} "
                 f"(lower={lower_ink:.0f}, upper={upper_ink:.0f}), "
                 f"gradient=(upper={upper_gradient_sum:.0f}, lower={lower_gradient_sum:.0f}), "
                 f"inverted={is_inverted}"
             )
-            
+
             return is_inverted
         except Exception as e:
             logger.debug(f"    Upside-down check failed: {e}")

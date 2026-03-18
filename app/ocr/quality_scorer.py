@@ -14,7 +14,6 @@ Factors and weights:
 """
 
 import logging
-from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +28,11 @@ class QualityScorer:
 
     def score(
         self,
-        items: List[Dict],
-        metadata: Dict,
-        total_verification: Optional[Dict] = None,
-        math_verification: Optional[Dict] = None,
-    ) -> Dict:
+        items: list[dict],
+        metadata: dict,
+        total_verification: dict | None = None,
+        math_verification: dict | None = None,
+    ) -> dict:
         """Compute quality score for a scanned receipt.
 
         Args:
@@ -93,12 +92,11 @@ class QualityScorer:
 
         # 4. Math Verification (15 points)
         math_score = 7.0  # neutral default
-        if math_verification:
-            if math_verification.get("has_prices"):
-                if math_verification.get("all_line_math_ok"):
-                    math_score = 15.0
-                else:
-                    math_score = 8.0
+        if math_verification and math_verification.get("has_prices"):
+            if math_verification.get("all_line_math_ok"):
+                math_score = 15.0
+            else:
+                math_score = 8.0
         breakdown["math_verification"] = {"score": math_score, "max": 15}
 
         # 5. Image Quality (10 points)

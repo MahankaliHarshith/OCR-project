@@ -3,10 +3,9 @@ API Integration Tests — exercises FastAPI endpoints using TestClient.
 Tests scan validation, catalog CRUD, receipts, and dashboard endpoints.
 """
 
-import pytest
 import io
-import json
-from unittest.mock import patch, MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -190,7 +189,7 @@ class TestSecurityHeaders:
 
     def test_referrer_policy(self, client):
         res = client.get("/")
-        assert "referrer-policy" in {k.lower() for k in res.headers.keys()}
+        assert "referrer-policy" in {k.lower() for k in res.headers}
 
     def test_gzip_compression(self, client):
         """Verify GZip middleware compresses large responses."""

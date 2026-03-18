@@ -16,11 +16,12 @@ subscriber dict and is safe to call from any coroutine.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class ConnectionManager:
 
     def __init__(self):
         # batch_id → set of connected WebSocket clients
-        self._connections: Dict[str, Set[WebSocket]] = {}
+        self._connections: dict[str, set[WebSocket]] = {}
         self._lock = asyncio.Lock()
 
     async def connect(self, batch_id: str, websocket: WebSocket) -> None:
@@ -59,7 +60,7 @@ class ConnectionManager:
                     del self._connections[batch_id]
         logger.debug(f"WebSocket disconnected: batch={batch_id}")
 
-    async def broadcast(self, batch_id: str, message: Dict[str, Any]) -> None:
+    async def broadcast(self, batch_id: str, message: dict[str, Any]) -> None:
         """Send a JSON message to all clients subscribed to a batch."""
         async with self._lock:
             clients = list(self._connections.get(batch_id, set()))
@@ -68,7 +69,7 @@ class ConnectionManager:
             return
 
         payload = json.dumps(message)
-        dead: List[WebSocket] = []
+        dead: list[WebSocket] = []
 
         for ws in clients:
             try:
@@ -85,12 +86,10 @@ class ConnectionManager:
                     if not self._connections[batch_id]:
                         del self._connections[batch_id]
 
-    async def send_personal(self, websocket: WebSocket, message: Dict[str, Any]) -> None:
+    async def send_personal(self, websocket: WebSocket, message: dict[str, Any]) -> None:
         """Send a message to a single client."""
-        try:
+        with contextlib.suppress(Exception):
             await websocket.send_text(json.dumps(message))
-        except Exception:
-            pass
 
     def has_subscribers(self, batch_id: str) -> bool:
         """Check if any clients are listening for a batch."""
@@ -102,14 +101,12 @@ class ConnectionManager:
             clients = list(self._connections.pop(batch_id, set()))
 
         for ws in clients:
-            try:
+            with contextlib.suppress(Exception):
                 await ws.close()
-            except Exception:
-                pass
 
 
 # ─── Module-level singleton ──────────────────────────────────────────────────
-_ws_manager: Optional[ConnectionManager] = None
+_ws_manager: ConnectionManager | None = None
 
 
 def get_ws_manager() -> ConnectionManager:

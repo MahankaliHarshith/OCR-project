@@ -15,7 +15,6 @@ When disabled (no SENTRY_DSN), all functions are no-ops with zero overhead.
 import logging
 import os
 from contextlib import contextmanager
-from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +44,9 @@ def init_sentry(app=None) -> bool:
     try:
         import sentry_sdk
         from sentry_sdk.integrations.fastapi import FastApiIntegration
-        from sentry_sdk.integrations.starlette import StarletteIntegration
         from sentry_sdk.integrations.logging import LoggingIntegration
         from sentry_sdk.integrations.sqlite3 import Sqlite3Integration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
 
         sentry_sdk.init(
             dsn=SENTRY_DSN,
@@ -84,7 +83,7 @@ def init_sentry(app=None) -> bool:
         return False
 
 
-def _before_send(event: Dict, hint: Dict) -> Optional[Dict]:
+def _before_send(event: dict, hint: dict) -> dict | None:
     """Filter out noisy/expected errors before sending to Sentry."""
     exc_info = hint.get("exc_info")
     if exc_info:
@@ -100,7 +99,7 @@ def _before_send(event: Dict, hint: Dict) -> Optional[Dict]:
     return event
 
 
-def _before_send_transaction(event: Dict, hint: Dict) -> Optional[Dict]:
+def _before_send_transaction(event: dict, hint: dict) -> dict | None:
     """Filter out high-frequency low-value transactions."""
     transaction = event.get("transaction", "")
     # Skip health checks, metrics, and static files
@@ -111,7 +110,7 @@ def _before_send_transaction(event: Dict, hint: Dict) -> Optional[Dict]:
 
 # ─── Manual Error Capture ─────────────────────────────────────────────────────
 
-def capture_exception(error: Exception = None, **context) -> Optional[str]:
+def capture_exception(error: Exception = None, **context) -> str | None:
     """
     Manually report an exception to Sentry with extra context.
 
@@ -135,7 +134,7 @@ def capture_exception(error: Exception = None, **context) -> Optional[str]:
         return None
 
 
-def capture_message(message: str, level: str = "info", **context) -> Optional[str]:
+def capture_message(message: str, level: str = "info", **context) -> str | None:
     """
     Send a manual message event to Sentry (for non-exception issues).
 

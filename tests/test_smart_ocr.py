@@ -3,14 +3,12 @@ Tests for Phase 2: Smart OCR — Dedup, Quality Scoring, Validation,
 Correction Feedback, Date/Store Extraction.
 """
 
-import hashlib
 import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 # Ensure project root is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

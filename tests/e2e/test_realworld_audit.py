@@ -11,9 +11,15 @@ Tests the scanner against EVERY challenge it will face in production:
 
 Produces a comprehensive audit report with scores out of 100.
 """
-import subprocess, sys, time, os, json, requests, statistics
-from pathlib import Path
+import contextlib
+import os
+import statistics
+import subprocess
+import sys
+import time
 from collections import defaultdict
+
+import requests
 
 # ── Config ──────────────────────────────────────────────────────────
 PORT = 8772
@@ -75,7 +81,7 @@ def start_server():
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
-    for i in range(60):
+    for _i in range(60):
         try:
             r = requests.get(f"http://127.0.0.1:{PORT}/api/products", timeout=2)
             if r.status_code == 200:
@@ -370,7 +376,7 @@ def main():
         medium = sum(1 for t in all_times if 2 <= t < 10)
         slow = sum(1 for t in all_times if 10 <= t < 30)
         very_slow = sum(1 for t in all_times if t >= 30)
-        print(f"\n  Speed distribution:")
+        print("\n  Speed distribution:")
         print(f"     <2s (fast):     {fast} images")
         print(f"     2-10s (medium): {medium} images")
         print(f"     10-30s (slow):  {slow} images")
@@ -394,7 +400,7 @@ def main():
     for fname, result in ok_results.items():
         if result.get('confidences'):
             all_confs.extend(result['confidences'])
-        for i, it in enumerate(result.get('items', [])):
+        for _i, it in enumerate(result.get('items', [])):
             mt = it.get('match_type', '?')
             match_type_counts[mt] += 1
             if it.get('confidence', 1.0) < 0.5:
@@ -408,7 +414,7 @@ def main():
         print(f"  >0.9 confidence:       {sum(1 for c in all_confs if c > 0.9)}/{len(all_confs)}")
         print(f"  <0.5 confidence:       {sum(1 for c in all_confs if c < 0.5)}/{len(all_confs)}")
 
-    print(f"\n  Match type distribution:")
+    print("\n  Match type distribution:")
     for mt, count in sorted(match_type_counts.items(), key=lambda x: -x[1]):
         pct = 100 * count / max(sum(match_type_counts.values()), 1)
         bar = "█" * int(pct // 2)
@@ -465,19 +471,18 @@ def main():
     for fname, result in all_results.items():
         if result.get('status') != 'OK':
             continue
-        if result.get('bt_qty', 0) > 0 and result.get('computed_qty', 0) > 0:
-            if abs(result['bt_qty'] - result['computed_qty']) > 0.01:
-                failure_modes.append({
-                    'type': 'total_mismatch',
-                    'file': fname,
-                    'bt_qty': result['bt_qty'],
-                    'computed': result['computed_qty'],
-                    'severity': 'MEDIUM',
-                })
+        if result.get('bt_qty', 0) > 0 and result.get('computed_qty', 0) > 0 and abs(result['bt_qty'] - result['computed_qty']) > 0.01:
+            failure_modes.append({
+                'type': 'total_mismatch',
+                'file': fname,
+                'bt_qty': result['bt_qty'],
+                'computed': result['computed_qty'],
+                'severity': 'MEDIUM',
+            })
 
     # 4. Missing grand total
     gt_missing_count = 0
-    for fname, result in all_results.items():
+    for _fname, result in all_results.items():
         if result.get('status') != 'OK':
             continue
         if not result.get('grand_match', False):
@@ -531,7 +536,7 @@ def main():
     }
     overall = sum(category_scores.get(k, 0) * w for k, w in weights.items())
 
-    print(f"\n  CATEGORY SCORES:")
+    print("\n  CATEGORY SCORES:")
     print(f"  {'Category':<20s} {'Score':>6s} {'Weight':>8s} {'Weighted':>10s}")
     print(f"  {'─'*20} {'─'*6} {'─'*8} {'─'*10}")
     for cat, weight in weights.items():
@@ -547,8 +552,8 @@ def main():
     print(f"  {grade_emoji} OVERALL SCORE: {overall:.0f}/100  (Grade: {grade})")
 
     # Key findings
-    print(f"\n  KEY FINDINGS:")
-    print(f"  ┌─────────────────────────────────────────────────────────────────┐")
+    print("\n  KEY FINDINGS:")
+    print("  ┌─────────────────────────────────────────────────────────────────┐")
     print(f"  │ ✅ Code detection:  {synth_code_pct:.0f}% accurate on synthetic images          │")
     print(f"  │ {'✅' if synth_qty_pct >= 95 else '⚠️'} Qty accuracy:    {synth_qty_pct:.0f}% on synthetic (EasyOCR limitation on dark ink)│")
     print(f"  │ {'✅' if real_valid_pct >= 95 else '⚠️'} Real-world codes: {real_valid_pct:.0f}% valid catalog matches                   │")
@@ -556,7 +561,7 @@ def main():
         avg_t = statistics.mean(times_synthetic)
         print(f"  │ {'✅' if avg_t < 15 else '⚠️'} Scan speed:       {avg_t:.1f}s avg (CPU-only EasyOCR)              │")
     print(f"  │ {'✅' if high_failures == 0 else '⚠️'} HIGH failures:    {high_failures} critical issues                        │")
-    print(f"  └─────────────────────────────────────────────────────────────────┘")
+    print("  └─────────────────────────────────────────────────────────────────┘")
 
     print(f"\n{'═' * 75}")
     print("  AUDIT COMPLETE")
@@ -564,10 +569,8 @@ def main():
 
     # Kill server
     server.kill()
-    try:
+    with contextlib.suppress(Exception):
         server.wait(timeout=5)
-    except Exception:
-        pass
 
     return overall
 

@@ -1,6 +1,9 @@
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.ocr.parser import ReceiptParser
+
 p = ReceiptParser({"ABC":"P1","XYZ":"P2","PQR":"P3","MNO":"P4"})
 
 for code in ["DDD", "EEE", "FFF", "HHH", "LLL", "TTT"]:

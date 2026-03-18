@@ -25,12 +25,10 @@ Ground truth JSON schema:
 """
 
 import json
-import shutil
 import logging
-import hashlib
-from pathlib import Path
+import shutil
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
 
 from app.config import BASE_DIR
 
@@ -66,10 +64,10 @@ class TrainingDataManager:
     def add_sample(
         self,
         image_path: str,
-        ground_truth: Dict,
-        receipt_id: Optional[str] = None,
+        ground_truth: dict,
+        receipt_id: str | None = None,
         copy_image: bool = True,
-    ) -> Dict:
+    ) -> dict:
         """
         Add a labeled receipt image to the training set.
 
@@ -144,9 +142,9 @@ class TrainingDataManager:
         self,
         image_bytes: bytes,
         filename: str,
-        ground_truth: Dict,
-        receipt_id: Optional[str] = None,
-    ) -> Dict:
+        ground_truth: dict,
+        receipt_id: str | None = None,
+    ) -> dict:
         """
         Add a training sample from raw image bytes (for API uploads).
 
@@ -194,7 +192,7 @@ class TrainingDataManager:
 
     # ─── Query ───────────────────────────────────────────────────────────
 
-    def list_samples(self) -> List[Dict]:
+    def list_samples(self) -> list[dict]:
         """List all training samples with their labels."""
         samples = []
         for label_file in sorted(LABELS_DIR.glob("*.json")):
@@ -208,7 +206,7 @@ class TrainingDataManager:
                 logger.warning(f"Skipping invalid label {label_file}: {e}")
         return samples
 
-    def get_sample(self, receipt_id: str) -> Optional[Dict]:
+    def get_sample(self, receipt_id: str) -> dict | None:
         """Get a single training sample by ID."""
         label_file = LABELS_DIR / f"{receipt_id}.json"
         if not label_file.exists():
@@ -219,7 +217,7 @@ class TrainingDataManager:
         label["image_path"] = str(image_path)
         return label
 
-    def get_sample_pairs(self) -> List[Tuple[str, Dict]]:
+    def get_sample_pairs(self) -> list[tuple[str, dict]]:
         """
         Get all valid (image_path, ground_truth) pairs for benchmarking.
 
@@ -270,7 +268,7 @@ class TrainingDataManager:
     # ─── Validation ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _validate_ground_truth(gt: Dict):
+    def _validate_ground_truth(gt: dict):
         """Validate ground truth structure."""
         if "items" not in gt:
             raise ValueError("Ground truth must contain 'items' list.")
@@ -302,7 +300,7 @@ class TrainingDataManager:
 
     # ─── Results Storage ─────────────────────────────────────────────────
 
-    def save_benchmark_result(self, result: Dict) -> str:
+    def save_benchmark_result(self, result: dict) -> str:
         """Save a benchmark run result to disk."""
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"benchmark_{ts}.json"
@@ -311,7 +309,7 @@ class TrainingDataManager:
         logger.info(f"Benchmark result saved: {filename}")
         return str(path)
 
-    def list_benchmark_results(self) -> List[Dict]:
+    def list_benchmark_results(self) -> list[dict]:
         """List all saved benchmark results."""
         results = []
         for f in sorted(RESULTS_DIR.glob("benchmark_*.json"), reverse=True):
@@ -323,21 +321,21 @@ class TrainingDataManager:
                 pass
         return results
 
-    def save_profile(self, profile: Dict, name: str = "optimized") -> str:
+    def save_profile(self, profile: dict, name: str = "optimized") -> str:
         """Save an optimized parameter profile."""
         path = PROFILES_DIR / f"{name}.json"
         path.write_text(json.dumps(profile, indent=2, default=str), encoding="utf-8")
         logger.info(f"Profile saved: {name}")
         return str(path)
 
-    def load_profile(self, name: str = "optimized") -> Optional[Dict]:
+    def load_profile(self, name: str = "optimized") -> dict | None:
         """Load a saved parameter profile."""
         path = PROFILES_DIR / f"{name}.json"
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def list_profiles(self) -> List[str]:
+    def list_profiles(self) -> list[str]:
         """List available profile names."""
         return [f.stem for f in PROFILES_DIR.glob("*.json")]
 

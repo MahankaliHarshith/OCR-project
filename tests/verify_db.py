@@ -1,6 +1,6 @@
 """Quick verification of all 4 production database features."""
-import sqlite3
 import os
+import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -27,7 +27,7 @@ conn.close()
 
 # 3. Test connection pooling
 print("\n=== CONNECTION POOL ===")
-from app.database import db
+from app.database import db  # noqa: E402
 
 conn1_id = id(db._conn())
 conn2_id = id(db._conn())
@@ -48,7 +48,8 @@ product = db.get_product_by_code("ABC")
 print(f"  ABC product: {product['product_name'] if product else 'NOT FOUND'}")
 
 # Test abstract interface
-from app.database import DatabaseBackend
+from app.database import DatabaseBackend  # noqa: E402
+
 print(f"  db is DatabaseBackend: {isinstance(db, DatabaseBackend)}")
 
 print("\n✅ ALL 4 PRODUCTION FEATURES VERIFIED")

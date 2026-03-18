@@ -193,7 +193,7 @@ def get_adaptive_fuzzy_cutoff(code_length: int) -> float:
     """Length-adaptive fuzzy match cutoff.
     Short codes need stricter matching to avoid false positives.
     Long codes can tolerate more OCR errors.
-    
+
     Tightened for ≤4 chars to prevent single-char-difference false matches
     (e.g. TEW1→TEW4, MNO→MN0)."""
     if code_length <= 3:
@@ -216,7 +216,7 @@ EXCEL_MAX_COLUMN_WIDTH = 50
 
 # ─── Application Settings ────────────────────────────────────────────────────
 APP_TITLE = "Handwritten Receipt Scanner"
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.0.0"
 MAX_RECEIPTS_PER_BATCH = 50
 MAX_FILE_SIZE_MB = 20
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
@@ -236,7 +236,7 @@ LOG_CONSOLE_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 
 
 # ─── API Settings ────────────────────────────────────────────────────────────
-API_HOST = os.getenv("API_HOST", "0.0.0.0")
+API_HOST = os.getenv("API_HOST", "0.0.0.0")  # nosec B104 — intentional for Docker; override via API_HOST env var
 API_PORT = int(os.getenv("API_PORT", "8000"))
 API_DEBUG = os.getenv("API_DEBUG", "false").lower() in ("true", "1", "yes")
 # API docs: disabled by default in production for security.

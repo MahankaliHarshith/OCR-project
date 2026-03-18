@@ -17,17 +17,18 @@ Features
 
 from __future__ import annotations
 
+import contextlib
 import logging
-import shutil
 import sqlite3
 import threading
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
 from datetime import date, datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from app.config import DATABASE_PATH, DB_BACKUP_DIR, DB_BACKUP_KEEP_DAYS
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +99,8 @@ class ConnectionPool:
         self._closed = True  # Prevent new connections from any thread
         with self._lock:
             for c in self._all_connections:
-                try:
+                with contextlib.suppress(Exception):
                     c.close()
-                except Exception:
-                    pass
             closed = len(self._all_connections)
             self._all_connections.clear()
             _set_db_connections(0)
@@ -112,15 +111,11 @@ class ConnectionPool:
 
     def _discard(self, conn: sqlite3.Connection) -> None:
         with self._lock:
-            try:
+            with contextlib.suppress(ValueError):
                 self._all_connections.remove(conn)
-            except ValueError:
-                pass
             _set_db_connections(len(self._all_connections))
-        try:
+        with contextlib.suppress(Exception):
             conn.close()
-        except Exception:
-            pass
         self._local.conn = None
 
 
@@ -279,26 +274,18 @@ def _migration_v2_composite_index(conn: sqlite3.Connection) -> None:
 def _migration_v3_add_prices(conn: sqlite3.Connection) -> None:
     """Add price columns to products, receipt_items, and receipts tables."""
     # Products: unit price for catalog-based price lookup
-    try:
+    with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE products ADD COLUMN unit_price REAL DEFAULT 0.0")
-    except sqlite3.OperationalError:
-        pass  # column already exists
 
     # Receipt items: price per unit and line total (qty × price)
-    try:
+    with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE receipt_items ADD COLUMN unit_price REAL DEFAULT 0.0")
-    except sqlite3.OperationalError:
-        pass
-    try:
+    with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE receipt_items ADD COLUMN line_total REAL DEFAULT 0.0")
-    except sqlite3.OperationalError:
-        pass
 
     # Receipts: bill total (monetary grand total)
-    try:
+    with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE receipts ADD COLUMN bill_total REAL DEFAULT 0.0")
-    except sqlite3.OperationalError:
-        pass
 
     # Seed default prices for existing products
     price_map = {
@@ -326,10 +313,8 @@ def _migration_v4_smart_ocr(conn: sqlite3.Connection) -> None:
         ("quality_score", "INTEGER"),
         ("quality_grade", "VARCHAR(1)"),
     ]:
-        try:
+        with contextlib.suppress(sqlite3.OperationalError):
             conn.execute(f"ALTER TABLE receipts ADD COLUMN {col} {typedef}")
-        except sqlite3.OperationalError:
-            pass  # column already exists
 
     # Index on image_hash for fast dedup lookups
     conn.execute(
@@ -469,31 +454,31 @@ class DatabaseBackend(ABC):
     # ── Products ──────────────────────────────────────────────────────────
 
     @abstractmethod
-    def get_all_products(self, active_only: bool = True, limit: int = 0, offset: int = 0) -> List[Dict]: ...
+    def get_all_products(self, active_only: bool = True, limit: int = 0, offset: int = 0) -> list[dict]: ...
 
     @abstractmethod
     def count_products(self, active_only: bool = True) -> int: ...
 
     @abstractmethod
-    def get_product_by_code(self, code: str) -> Optional[Dict]: ...
+    def get_product_by_code(self, code: str) -> dict | None: ...
 
     @abstractmethod
-    def add_product(self, code: str, name: str, category: str = "", unit: str = "Piece") -> Dict: ...
+    def add_product(self, code: str, name: str, category: str = "", unit: str = "Piece") -> dict: ...
 
     @abstractmethod
-    def update_product(self, code: str, **kwargs) -> Optional[Dict]: ...
+    def update_product(self, code: str, **kwargs) -> dict | None: ...
 
     @abstractmethod
     def delete_product(self, code: str) -> bool: ...
 
     @abstractmethod
-    def search_products(self, query: str) -> List[Dict]: ...
+    def search_products(self, query: str) -> list[dict]: ...
 
     @abstractmethod
-    def get_product_code_map(self) -> Dict[str, str]: ...
+    def get_product_code_map(self) -> dict[str, str]: ...
 
     @abstractmethod
-    def get_product_catalog_full(self) -> Dict[str, Dict]: ...
+    def get_product_catalog_full(self) -> dict[str, dict]: ...
 
     # ── Receipts ──────────────────────────────────────────────────────────
 
@@ -501,19 +486,19 @@ class DatabaseBackend(ABC):
     def create_receipt(self, receipt_number: str, image_path: str = "", processed_image_path: str = "") -> int: ...
 
     @abstractmethod
-    def add_receipt_items(self, receipt_id: int, items: List[Dict]) -> None: ...
+    def add_receipt_items(self, receipt_id: int, items: list[dict]) -> None: ...
 
     @abstractmethod
-    def get_receipt(self, receipt_id: int) -> Optional[Dict]: ...
+    def get_receipt(self, receipt_id: int) -> dict | None: ...
 
     @abstractmethod
-    def get_recent_receipts(self, limit: int = 10, offset: int = 0) -> List[Dict]: ...
+    def get_recent_receipts(self, limit: int = 10, offset: int = 0) -> list[dict]: ...
 
     @abstractmethod
     def count_receipts(self) -> int: ...
 
     @abstractmethod
-    def get_receipts_by_date(self, date_str: str) -> List[Dict]: ...
+    def get_receipts_by_date(self, date_str: str) -> list[dict]: ...
 
     @abstractmethod
     def update_receipt_item(self, item_id: int, product_code: str, product_name: str, quantity: float,
@@ -523,7 +508,7 @@ class DatabaseBackend(ABC):
     def delete_receipt(self, receipt_id: int) -> bool: ...
 
     @abstractmethod
-    def get_receipts_batch(self, receipt_ids: List[int]) -> List[Dict]: ...
+    def get_receipts_batch(self, receipt_ids: list[int]) -> list[dict]: ...
 
     @abstractmethod
     def add_receipt_item(self, receipt_id: int, product_code: str, product_name: str, quantity: float,
@@ -538,10 +523,10 @@ class DatabaseBackend(ABC):
     def add_processing_log(self, receipt_id: int, stage: str, status: str, duration_ms: int = 0, error_message: str = "") -> None: ...
 
     @abstractmethod
-    def add_processing_logs_batch(self, logs: List[Tuple]) -> None: ...
+    def add_processing_logs_batch(self, logs: list[tuple]) -> None: ...
 
     @abstractmethod
-    def get_processing_logs(self, receipt_id: int) -> List[Dict]: ...
+    def get_processing_logs(self, receipt_id: int) -> list[dict]: ...
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -640,7 +625,7 @@ class Database(DatabaseBackend):
     # Product CRUD
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    def get_all_products(self, active_only: bool = True, limit: int = 0, offset: int = 0) -> List[Dict]:
+    def get_all_products(self, active_only: bool = True, limit: int = 0, offset: int = 0) -> list[dict]:
         """Get products from catalog with optional pagination.
 
         Args:
@@ -671,7 +656,7 @@ class Database(DatabaseBackend):
             q += " WHERE is_active = 1"
         return conn.execute(q).fetchone()[0]
 
-    def get_product_by_code(self, code: str) -> Optional[Dict]:
+    def get_product_by_code(self, code: str) -> dict | None:
         """Get a single product by its code."""
         logger.debug("get_product_by_code(code=%r)", code)
         conn = self._conn()
@@ -683,7 +668,7 @@ class Database(DatabaseBackend):
         logger.debug("get_product_by_code(%r) → %s", code, "found" if result else "NOT found")
         return result
 
-    def add_product(self, code: str, name: str, category: str = "", unit: str = "Piece") -> Dict:
+    def add_product(self, code: str, name: str, category: str = "", unit: str = "Piece") -> dict:
         """Add a new product to the catalog. Reactivates soft-deleted products."""
         self._before_write()
         conn = self._conn()
@@ -721,7 +706,7 @@ class Database(DatabaseBackend):
             conn.rollback()
             raise
 
-    def update_product(self, code: str, **kwargs) -> Optional[Dict]:
+    def update_product(self, code: str, **kwargs) -> dict | None:
         """Update an existing product."""
         self._before_write()
         conn = self._conn()
@@ -741,7 +726,7 @@ class Database(DatabaseBackend):
             values.append(code.upper())
 
             conn.execute(
-                f"UPDATE products SET {', '.join(fields)} WHERE product_code = ?",
+                f"UPDATE products SET {', '.join(fields)} WHERE product_code = ?",  # nosec B608 — fields from hardcoded names, values parameterized
                 values,
             )
             conn.commit()
@@ -758,7 +743,7 @@ class Database(DatabaseBackend):
         self.update_product(code, is_active=0)
         return True
 
-    def search_products(self, query: str) -> List[Dict]:
+    def search_products(self, query: str) -> list[dict]:
         """Search products by code or name."""
         conn = self._conn()
         rows = conn.execute(
@@ -769,12 +754,12 @@ class Database(DatabaseBackend):
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_product_code_map(self) -> Dict[str, str]:
+    def get_product_code_map(self) -> dict[str, str]:
         """Get a dict mapping product codes → product names."""
         products = self.get_all_products()
         return {p["product_code"]: p["product_name"] for p in products}
 
-    def get_product_catalog_full(self) -> Dict[str, Dict]:
+    def get_product_catalog_full(self) -> dict[str, dict]:
         """Get full product catalog keyed by code."""
         products = self.get_all_products()
         return {
@@ -818,7 +803,7 @@ class Database(DatabaseBackend):
             conn.rollback()
             raise
 
-    def add_receipt_items(self, receipt_id: int, items: List[Dict]) -> None:
+    def add_receipt_items(self, receipt_id: int, items: list[dict]) -> None:
         """Add items to a receipt (batch insert)."""
         logger.debug("add_receipt_items(receipt_id=%d, items_count=%d)", receipt_id, len(items))
         self._before_write()
@@ -858,7 +843,7 @@ class Database(DatabaseBackend):
             conn.rollback()
             raise
 
-    def get_receipt(self, receipt_id: int) -> Optional[Dict]:
+    def get_receipt(self, receipt_id: int) -> dict | None:
         """Get a receipt with its items."""
         conn = self._conn()
         receipt = conn.execute(
@@ -876,7 +861,7 @@ class Database(DatabaseBackend):
         result["items"] = [dict(item) for item in items]
         return result
 
-    def get_recent_receipts(self, limit: int = 10, offset: int = 0) -> List[Dict]:
+    def get_recent_receipts(self, limit: int = 10, offset: int = 0) -> list[dict]:
         """Get most recent receipts with pagination."""
         conn = self._conn()
         rows = conn.execute(
@@ -890,25 +875,25 @@ class Database(DatabaseBackend):
         conn = self._conn()
         return conn.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
 
-    def get_receipts_batch(self, receipt_ids: List[int]) -> List[Dict]:
+    def get_receipts_batch(self, receipt_ids: list[int]) -> list[dict]:
         """Get multiple receipts with items in 2 queries (no N+1)."""
         if not receipt_ids:
             return []
         conn = self._conn()
         placeholders = ",".join("?" * len(receipt_ids))
         rows = conn.execute(
-            f"SELECT * FROM receipts WHERE id IN ({placeholders}) ORDER BY created_at DESC",
+            f"SELECT * FROM receipts WHERE id IN ({placeholders}) ORDER BY created_at DESC",  # nosec B608
             receipt_ids,
         ).fetchall()
         if not rows:
             return []
 
         items_rows = conn.execute(
-            f"SELECT * FROM receipt_items WHERE receipt_id IN ({placeholders}) ORDER BY receipt_id, id",
+            f"SELECT * FROM receipt_items WHERE receipt_id IN ({placeholders}) ORDER BY receipt_id, id",  # nosec B608
             receipt_ids,
         ).fetchall()
 
-        items_by_receipt: Dict[int, List[Dict]] = {}
+        items_by_receipt: dict[int, list[dict]] = {}
         for item in items_rows:
             rid = item["receipt_id"]
             items_by_receipt.setdefault(rid, []).append(dict(item))
@@ -920,7 +905,7 @@ class Database(DatabaseBackend):
             results.append(receipt)
         return results
 
-    def get_receipts_by_date(self, date_str: str) -> List[Dict]:
+    def get_receipts_by_date(self, date_str: str) -> list[dict]:
         """Get all receipts for a given date (YYYY-MM-DD).
 
         Uses a single batched IN (...) query for items rather than N+1
@@ -938,11 +923,11 @@ class Database(DatabaseBackend):
         placeholders = ",".join("?" * len(receipt_ids))
         items_rows = conn.execute(
             f"SELECT * FROM receipt_items "
-            f"WHERE receipt_id IN ({placeholders}) ORDER BY receipt_id, id",
+            f"WHERE receipt_id IN ({placeholders}) ORDER BY receipt_id, id",  # nosec B608
             receipt_ids,
         ).fetchall()
 
-        items_by_receipt: Dict[int, List[Dict]] = {}
+        items_by_receipt: dict[int, list[dict]] = {}
         for item in items_rows:
             rid = item["receipt_id"]
             items_by_receipt.setdefault(rid, []).append(dict(item))
@@ -1116,7 +1101,7 @@ class Database(DatabaseBackend):
             conn.rollback()
             raise
 
-    def add_processing_logs_batch(self, logs: List[Tuple]) -> None:
+    def add_processing_logs_batch(self, logs: list[tuple]) -> None:
         """Batch-insert multiple processing log rows in a single DB round-trip.
 
         Args:
@@ -1138,7 +1123,7 @@ class Database(DatabaseBackend):
             conn.rollback()
             raise
 
-    def get_processing_logs(self, receipt_id: int) -> List[Dict]:
+    def get_processing_logs(self, receipt_id: int) -> list[dict]:
         """Get processing logs for a receipt."""
         conn = self._conn()
         rows = conn.execute(
@@ -1169,7 +1154,7 @@ class Database(DatabaseBackend):
         conn = self._conn()
         try:
             conn.execute(
-                f"UPDATE receipts SET {', '.join(fields)} WHERE id = ?",
+                f"UPDATE receipts SET {', '.join(fields)} WHERE id = ?",  # nosec B608
                 values,
             )
             conn.commit()
@@ -1177,7 +1162,7 @@ class Database(DatabaseBackend):
             conn.rollback()
             raise
 
-    def get_recent_receipts_with_hashes(self, hours: int = 24) -> List[Dict]:
+    def get_recent_receipts_with_hashes(self, hours: int = 24) -> list[dict]:
         """Get recent receipts with their image hashes for duplicate detection."""
         conn = self._conn()
         rows = conn.execute(
@@ -1189,7 +1174,7 @@ class Database(DatabaseBackend):
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_receipt_item(self, item_id: int) -> Optional[Dict]:
+    def get_receipt_item(self, item_id: int) -> dict | None:
         """Get a single receipt item by ID."""
         conn = self._conn()
         row = conn.execute(
@@ -1224,7 +1209,7 @@ class Database(DatabaseBackend):
             conn.rollback()
             raise
 
-    def get_ocr_corrections_map(self, min_count: int = 2) -> Dict[str, str]:
+    def get_ocr_corrections_map(self, min_count: int = 2) -> dict[str, str]:
         """Get the corrections lookup map: original_code → corrected_code.
 
         Only returns corrections that have been made at least min_count times
@@ -1240,14 +1225,14 @@ class Database(DatabaseBackend):
             "ORDER BY cnt DESC",
             (min_count,),
         ).fetchall()
-        result: Dict[str, str] = {}
+        result: dict[str, str] = {}
         for row in rows:
             orig = row["original_code"]
             if orig not in result:  # first entry has highest count
                 result[orig] = row["corrected_code"]
         return result
 
-    def get_ocr_correction_stats(self) -> Dict:
+    def get_ocr_correction_stats(self) -> dict:
         """Get summary statistics about OCR corrections."""
         conn = self._conn()
         total = conn.execute("SELECT COUNT(*) FROM ocr_corrections").fetchone()[0]
@@ -1275,7 +1260,7 @@ class Database(DatabaseBackend):
             ],
         }
 
-    def get_item_quantity_stats(self) -> Dict[str, Dict]:
+    def get_item_quantity_stats(self) -> dict[str, dict]:
         """Get historical quantity statistics per product code.
 
         Returns: {code: {avg_quantity, max_quantity, min_quantity, count}}

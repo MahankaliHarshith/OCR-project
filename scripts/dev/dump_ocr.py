@@ -1,12 +1,16 @@
 """Dump all OCR detections for Media (2).jpg to diagnose qty accuracy."""
-import sys, io, warnings, os
+import io
+import os
+import sys
+import warnings
+
 warnings.filterwarnings("ignore")
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
-from app.ocr.engine import OCREngine
-from app.ocr.preprocessor import ImagePreprocessor
+from app.ocr.engine import OCREngine  # noqa: E402
+from app.ocr.preprocessor import ImagePreprocessor  # noqa: E402
 
 prep = ImagePreprocessor()
 eng = OCREngine()

@@ -6,9 +6,7 @@ Tests for OCR accuracy improvements:
     - Azure confidence defaults
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
-
+from unittest.mock import MagicMock, patch
 
 # ─── Confidence Calibration Tests ─────────────────────────────────────────────
 
@@ -105,6 +103,7 @@ class TestConfigDefaults:
     def test_azure_model_strategy_default(self):
         """Default Azure model should be receipt-only (structured extraction)."""
         import importlib
+
         import app.config
         importlib.reload(app.config)
         # When AZURE_MODEL_STRATEGY env var is not set, default should be "receipt-only"
@@ -197,11 +196,10 @@ class TestHybridRouting:
 
         mock_receipt_service = MagicMock()
         mock_receipt_service.parser.product_catalog = mock_catalog
-        with patch.dict("sys.modules", {}):
-            with patch("app.services.receipt_service.receipt_service", mock_receipt_service):
-                rate = engine._catalog_match_rate(detections)
-                # ABC and XYZ should match, TOTAL should not
-                assert rate > 0.5  # At least 2/3 matched
+        with patch.dict("sys.modules", {}), patch("app.services.receipt_service.receipt_service", mock_receipt_service):
+            rate = engine._catalog_match_rate(detections)
+            # ABC and XYZ should match, TOTAL should not
+            assert rate > 0.5  # At least 2/3 matched
 
     def test_catalog_match_rate_empty(self):
         """Empty detections should return 0.0 match rate."""

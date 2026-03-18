@@ -4,10 +4,10 @@ Run with: python test_all_flows.py
 """
 import os
 import sys
-import time
-import json
-import requests
 import threading
+import time
+
+import requests
 import uvicorn
 
 BASE = "http://127.0.0.1:8765"
@@ -39,7 +39,7 @@ def wait_for_server(timeout=30):
             r = requests.get(f"{BASE}/", timeout=2)
             if r.status_code == 200:
                 return True
-        except:
+        except Exception:
             pass
         time.sleep(0.5)
     return False
@@ -173,7 +173,7 @@ def test_7_scan_receipt():
     check("POST /api/scan (200)", r.status_code == 200)
     data = r.json()
     check("Response has 'success'", "success" in data, str(list(data.keys())))
-    check("Scan succeeded", data.get("success") == True, data.get("error", ""))
+    check("Scan succeeded", data.get("success"), data.get("error", ""))
 
     if data.get("success"):
         receipt_data = data.get("receipt_data", {})

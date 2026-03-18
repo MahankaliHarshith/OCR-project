@@ -4,21 +4,20 @@ Generates formatted .xlsx files from receipt data using OpenPyXL.
 """
 
 import logging
-from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
+from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from app.config import (
-    EXPORT_DIR,
+    EXCEL_ALT_ROW_COLOR,
     EXCEL_HEADER_COLOR,
     EXCEL_HEADER_FONT_COLOR,
-    EXCEL_ALT_ROW_COLOR,
     EXCEL_LOW_CONFIDENCE_COLOR,
     EXCEL_MAX_COLUMN_WIDTH,
+    EXPORT_DIR,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,8 +66,8 @@ class ExcelService:
 
     def generate_report(
         self,
-        receipts: List[Dict],
-        output_path: Optional[str] = None,
+        receipts: list[dict],
+        output_path: str | None = None,
     ) -> str:
         """
         Generate a formatted Excel report from receipt data.
@@ -112,7 +111,7 @@ class ExcelService:
 
     # ─── Data Sheet ───────────────────────────────────────────────────────
 
-    def _build_data_sheet(self, ws, receipts: List[Dict]) -> None:
+    def _build_data_sheet(self, ws, receipts: list[dict]) -> None:
         """Populate the main data sheet with all receipt items."""
 
         # Title row
@@ -201,7 +200,7 @@ class ExcelService:
 
     # ─── Summary Sheet ────────────────────────────────────────────────────
 
-    def _build_summary_sheet(self, ws, receipts: List[Dict]) -> None:
+    def _build_summary_sheet(self, ws, receipts: list[dict]) -> None:
         """Build the summary sheet with product totals."""
 
         # Title
@@ -238,7 +237,7 @@ class ExcelService:
             cell.border = self.border
 
         # Calculate totals by product
-        product_totals: Dict[str, Dict] = {}
+        product_totals: dict[str, dict] = {}
         for receipt in receipts:
             for item in receipt.get("items", []):
                 code = item.get("code", "")
@@ -300,7 +299,7 @@ class ExcelService:
             ws.column_dimensions[column_letter].width = max(adjusted, 10)
 
     def generate_from_db_receipts(
-        self, receipt_ids: List[int], output_path: Optional[str] = None
+        self, receipt_ids: list[int], output_path: str | None = None
     ) -> str:
         """
         Generate report from receipt IDs stored in the database.
@@ -344,7 +343,7 @@ class ExcelService:
         return self.generate_report(receipts, output_path)
 
     def generate_daily_report(
-        self, date: Optional[str] = None, output_path: Optional[str] = None
+        self, date: str | None = None, output_path: str | None = None
     ) -> str:
         """
         Generate a report for all receipts on a given date.

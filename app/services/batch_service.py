@@ -39,6 +39,7 @@ Batch States:
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -46,9 +47,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from enum import StrEnum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ BATCH_RESULT_TTL = 3600        # Seconds to keep completed batch results (1 hour
 MAX_STORED_BATCHES = 50        # Maximum stored batch results before cleanup
 
 
-class BatchStatus(str, Enum):
+class BatchStatus(StrEnum):
     """Batch processing lifecycle states."""
     PENDING = "pending"
     PROCESSING = "processing"
@@ -69,7 +69,7 @@ class BatchStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class FileStatus(str, Enum):
+class FileStatus(StrEnum):
     """Individual file processing states."""
     PENDING = "pending"
     PROCESSING = "processing"
@@ -84,11 +84,11 @@ class FileResult:
     filename: str
     index: int
     status: FileStatus = FileStatus.PENDING
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    data: dict[str, Any] | None = None
+    error: str | None = None
     processing_time_ms: int = 0
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         result = {
             "filename": self.filename,
             "index": self.index,
@@ -107,18 +107,18 @@ class BatchJob:
     """Tracks the state of a batch processing job."""
     batch_id: str
     created_at: float
-    files: List[FileResult] = field(default_factory=list)
+    files: list[FileResult] = field(default_factory=list)
     status: BatchStatus = BatchStatus.PENDING
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
+    started_at: float | None = None
+    completed_at: float | None = None
     total_files: int = 0
     processed_count: int = 0
     success_count: int = 0
     error_count: int = 0
-    _task: Optional[asyncio.Task] = field(default=None, repr=False)
+    _task: asyncio.Task | None = field(default=None, repr=False)
     _counter_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
-    def to_dict(self, include_results: bool = True) -> Dict:
+    def to_dict(self, include_results: bool = True) -> dict:
         """Serialize batch job to dict for API response."""
         result = {
             "batch_id": self.batch_id,
@@ -155,13 +155,13 @@ class BatchProcessingService:
     """
 
     def __init__(self):
-        self._batches: Dict[str, BatchJob] = {}
+        self._batches: dict[str, BatchJob] = {}
         self._executor = ThreadPoolExecutor(
             max_workers=MAX_CONCURRENT_SCANS,
             thread_name_prefix="batch-ocr",
         )
         self._lock = asyncio.Lock()
-        self._cleanup_task: Optional[asyncio.Task] = None
+        self._cleanup_task: asyncio.Task | None = None
         logger.info(
             f"BatchProcessingService initialized: "
             f"max_concurrent={MAX_CONCURRENT_SCANS}, "
@@ -180,10 +180,8 @@ class BatchProcessingService:
         # Cancel cleanup loop
         if self._cleanup_task and not self._cleanup_task.done():
             self._cleanup_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
 
         # Cancel active batch tasks
         async with self._lock:
@@ -198,7 +196,7 @@ class BatchProcessingService:
 
     async def create_batch(
         self,
-        file_paths: List[tuple],  # List of (filename, upload_path)
+        file_paths: list[tuple],  # List of (filename, upload_path)
     ) -> BatchJob:
         """
         Create a new batch processing job.
@@ -247,7 +245,6 @@ class BatchProcessingService:
             self._batches[batch_id] = batch
 
         # Spawn background task
-        loop = asyncio.get_event_loop()
         paths_only = [path for _, path in file_paths]
         batch._task = asyncio.create_task(
             self._process_batch(batch, paths_only)
@@ -259,11 +256,11 @@ class BatchProcessingService:
         )
         return batch
 
-    async def get_batch(self, batch_id: str) -> Optional[BatchJob]:
+    async def get_batch(self, batch_id: str) -> BatchJob | None:
         """Get batch status and results by ID."""
         return self._batches.get(batch_id)
 
-    async def list_batches(self, limit: int = 20) -> List[Dict]:
+    async def list_batches(self, limit: int = 20) -> list[dict]:
         """List recent batches (summary only, no file results)."""
         sorted_batches = sorted(
             self._batches.values(),
@@ -289,7 +286,7 @@ class BatchProcessingService:
 
     # ─── Background Processing ────────────────────────────────────────────
 
-    async def _process_batch(self, batch: BatchJob, file_paths: List[str]):
+    async def _process_batch(self, batch: BatchJob, file_paths: list[str]):
         """Background worker: process all files in a batch."""
         batch.status = BatchStatus.PROCESSING
         batch.started_at = time.time()
@@ -396,7 +393,7 @@ class BatchProcessingService:
                 batch.processed_count += 1
             # Send WebSocket notification BEFORE re-raising so the UI sees
             # the skip instead of stalling with a frozen progress bar.
-            try:
+            with contextlib.suppress(Exception):  # Don't let WS failure block cancellation
                 await self._ws_broadcast(batch.batch_id, {
                     "type": "file_completed",
                     "batch_id": batch.batch_id,
@@ -412,8 +409,6 @@ class BatchProcessingService:
                         1,
                     ),
                 })
-            except Exception:
-                pass  # Don't let WS failure block cancellation
             raise
         except Exception as e:
             file_result.status = FileStatus.ERROR
@@ -448,7 +443,7 @@ class BatchProcessingService:
 
     # ─── WebSocket Notifications ──────────────────────────────────────────
 
-    async def _ws_broadcast(self, batch_id: str, message: Dict[str, Any]) -> None:
+    async def _ws_broadcast(self, batch_id: str, message: dict[str, Any]) -> None:
         """Send a progress message to all WebSocket subscribers for a batch."""
         try:
             from app.websocket import get_ws_manager
@@ -479,9 +474,12 @@ class BatchProcessingService:
 
         async with self._lock:
             for batch_id, batch in self._batches.items():
-                if batch.status in (BatchStatus.COMPLETED, BatchStatus.FAILED, BatchStatus.CANCELLED):
-                    if batch.completed_at and (now - batch.completed_at) > BATCH_RESULT_TTL:
-                        expired.append(batch_id)
+                if (
+                    batch.status in (BatchStatus.COMPLETED, BatchStatus.FAILED, BatchStatus.CANCELLED)
+                    and batch.completed_at
+                    and (now - batch.completed_at) > BATCH_RESULT_TTL
+                ):
+                    expired.append(batch_id)
 
             # Also enforce max stored batches (FIFO eviction)
             if len(self._batches) > MAX_STORED_BATCHES:
@@ -502,7 +500,7 @@ class BatchProcessingService:
 
 
 # ─── Module-level singleton ──────────────────────────────────────────────────
-_batch_service: Optional[BatchProcessingService] = None
+_batch_service: BatchProcessingService | None = None
 
 
 def get_batch_service() -> BatchProcessingService:

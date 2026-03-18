@@ -19,26 +19,25 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 
 try:
-    import psycopg2
+    import psycopg2  # noqa: F401 — availability check
     from psycopg2.extras import RealDictCursor
     from psycopg2.pool import ThreadedConnectionPool
 except ImportError:
     raise ImportError(
         "PostgreSQL backend requires psycopg2.\n"
         "Install it with:  pip install psycopg2-binary"
-    )
+    ) from None
 
 from app.config import (
-    POSTGRES_HOST,
-    POSTGRES_PORT,
     POSTGRES_DB,
-    POSTGRES_USER,
-    POSTGRES_PASSWORD,
-    POSTGRES_MIN_CONN,
+    POSTGRES_HOST,
     POSTGRES_MAX_CONN,
+    POSTGRES_MIN_CONN,
+    POSTGRES_PASSWORD,
+    POSTGRES_PORT,
+    POSTGRES_USER,
 )
 from app.database import DatabaseBackend
 
@@ -250,21 +249,21 @@ class PostgreSQLDatabase(DatabaseBackend):
     # Product CRUD
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    def get_all_products(self, active_only: bool = True) -> List[Dict]:
+    def get_all_products(self, active_only: bool = True) -> list[dict]:
         query = "SELECT * FROM products"
         if active_only:
             query += " WHERE is_active = TRUE"
         query += " ORDER BY product_code"
         return self._execute(query, fetch_all=True)
 
-    def get_product_by_code(self, code: str) -> Optional[Dict]:
+    def get_product_by_code(self, code: str) -> dict | None:
         return self._execute(
             "SELECT * FROM products WHERE product_code = %s AND is_active = TRUE",
             (code.upper(),),
             fetch_one=True,
         )
 
-    def add_product(self, code: str, name: str, category: str = "", unit: str = "Piece") -> Dict:
+    def add_product(self, code: str, name: str, category: str = "", unit: str = "Piece") -> dict:
         # Try reactivating a soft-deleted product first
         reactivated = self._execute(
             "UPDATE products SET product_name = %s, category = %s, unit = %s, "
@@ -283,7 +282,7 @@ class PostgreSQLDatabase(DatabaseBackend):
         )
         return self.get_product_by_code(code)
 
-    def update_product(self, code: str, **kwargs) -> Optional[Dict]:
+    def update_product(self, code: str, **kwargs) -> dict | None:
         fields, values = [], []
         for key, val in kwargs.items():
             if key in ("product_name", "category", "unit", "is_active"):
@@ -295,7 +294,7 @@ class PostgreSQLDatabase(DatabaseBackend):
         fields.append("updated_at = NOW()")
         values.append(code.upper())
         self._execute(
-            f"UPDATE products SET {', '.join(fields)} WHERE product_code = %s",
+            f"UPDATE products SET {', '.join(fields)} WHERE product_code = %s",  # nosec B608
             tuple(values),
         )
         return self.get_product_by_code(code)
@@ -306,7 +305,7 @@ class PostgreSQLDatabase(DatabaseBackend):
         self.update_product(code, is_active=False)
         return True
 
-    def search_products(self, query: str) -> List[Dict]:
+    def search_products(self, query: str) -> list[dict]:
         return self._execute(
             "SELECT * FROM products WHERE is_active = TRUE "
             "AND (product_code ILIKE %s ESCAPE '\\' OR product_name ILIKE %s ESCAPE '\\') "
@@ -315,11 +314,11 @@ class PostgreSQLDatabase(DatabaseBackend):
             fetch_all=True,
         )
 
-    def get_product_code_map(self) -> Dict[str, str]:
+    def get_product_code_map(self) -> dict[str, str]:
         products = self.get_all_products()
         return {p["product_code"]: p["product_name"] for p in products}
 
-    def get_product_catalog_full(self) -> Dict[str, Dict]:
+    def get_product_catalog_full(self) -> dict[str, dict]:
         products = self.get_all_products()
         return {
             p["product_code"]: {
@@ -350,7 +349,7 @@ class PostgreSQLDatabase(DatabaseBackend):
             returning_id=True,
         )
 
-    def add_receipt_items(self, receipt_id: int, items: List[Dict]) -> None:
+    def add_receipt_items(self, receipt_id: int, items: list[dict]) -> None:
         self._executemany(
             "INSERT INTO receipt_items "
             "(receipt_id, product_code, product_name, quantity, unit, ocr_confidence) "
@@ -374,7 +373,7 @@ class PostgreSQLDatabase(DatabaseBackend):
             (len(items), avg_conf, receipt_id),
         )
 
-    def get_receipt(self, receipt_id: int) -> Optional[Dict]:
+    def get_receipt(self, receipt_id: int) -> dict | None:
         receipt = self._execute(
             "SELECT * FROM receipts WHERE id = %s", (receipt_id,), fetch_one=True
         )
@@ -388,14 +387,14 @@ class PostgreSQLDatabase(DatabaseBackend):
         receipt["items"] = items
         return receipt
 
-    def get_recent_receipts(self, limit: int = 10) -> List[Dict]:
+    def get_recent_receipts(self, limit: int = 10) -> list[dict]:
         return self._execute(
             "SELECT * FROM receipts ORDER BY created_at DESC LIMIT %s",
             (limit,),
             fetch_all=True,
         )
 
-    def get_receipts_by_date(self, date_str: str) -> List[Dict]:
+    def get_receipts_by_date(self, date_str: str) -> list[dict]:
         rows = self._execute(
             "SELECT * FROM receipts WHERE scan_date = %s ORDER BY scan_time",
             (date_str,),
@@ -408,12 +407,12 @@ class PostgreSQLDatabase(DatabaseBackend):
         placeholders = ",".join(["%s"] * len(receipt_ids))
         items_rows = self._execute(
             f"SELECT * FROM receipt_items "
-            f"WHERE receipt_id IN ({placeholders}) ORDER BY receipt_id, id",
+            f"WHERE receipt_id IN ({placeholders}) ORDER BY receipt_id, id",  # nosec B608
             tuple(receipt_ids),
             fetch_all=True,
         )
 
-        items_by_receipt: Dict[int, List[Dict]] = {}
+        items_by_receipt: dict[int, list[dict]] = {}
         for item in items_rows:
             items_by_receipt.setdefault(item["receipt_id"], []).append(item)
 
@@ -485,7 +484,7 @@ class PostgreSQLDatabase(DatabaseBackend):
             (receipt_id, stage, status, duration_ms, error_message),
         )
 
-    def add_processing_logs_batch(self, logs: List[Tuple]) -> None:
+    def add_processing_logs_batch(self, logs: list[tuple]) -> None:
         if not logs:
             return
         self._executemany(
@@ -495,7 +494,7 @@ class PostgreSQLDatabase(DatabaseBackend):
             logs,
         )
 
-    def get_processing_logs(self, receipt_id: int) -> List[Dict]:
+    def get_processing_logs(self, receipt_id: int) -> list[dict]:
         return self._execute(
             "SELECT * FROM processing_logs WHERE receipt_id = %s ORDER BY timestamp",
             (receipt_id,),

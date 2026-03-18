@@ -7,7 +7,8 @@ Tests the same code path as the /api/receipts/scan endpoint:
 Reports per-image and aggregate accuracy, speed, and detection rates.
 """
 
-import time, sys
+import sys
+import time
 from pathlib import Path
 
 # -- Expected items per receipt ------------------------------------------------

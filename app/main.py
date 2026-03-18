@@ -11,34 +11,35 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-from app.logging_config import setup_logging
+from app.api.routes import router
 from app.config import (
+    API_DOCS_ENABLED,
+    API_SECRET_KEY,
     APP_TITLE,
     APP_VERSION,
     CORS_ORIGINS,
-    UPLOAD_DIR,
     EXPORT_DIR,
     RATE_LIMIT_RPM,
     RATE_LIMIT_SCAN_RPM,
-    API_SECRET_KEY,
-    API_DOCS_ENABLED,
+    UPLOAD_DIR,
 )
-from app.api.routes import router
+from app.logging_config import setup_logging
 from app.middleware import (
-    SecurityHeadersMiddleware,
-    RateLimitMiddleware,
     APIKeyMiddleware,
     DevTunnelCORSMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
 )
 
 # ─── Logging Setup ────────────────────────────────────────────────────────────
 setup_logging()
 
 # ─── Structured JSON Logging (for Loki / ELK) ────────────────────────────────
-from app.json_logging import setup_json_logging
+from app.json_logging import setup_json_logging  # noqa: E402
+
 setup_json_logging()
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"   Uploads : {UPLOAD_DIR}")
     logger.info(f"   Exports : {EXPORT_DIR}")
     logger.info(f"   Log file: {LOG_FILE}")
-    logger.info(f"   API Docs: http://localhost:8000/docs")
+    logger.info("   API Docs: http://localhost:8000/docs")
     logger.info(f"   Debug logs: tail -f {LOG_FILE}")
 
     # ── Sentry Error Tracking (production) ──
@@ -95,8 +96,8 @@ async def lifespan(app: FastAPI):
         logger.debug(f"   Export cleanup skipped: {e}")
 
     # Pre-initialize OCR engine at startup (includes model loading + warmup)
+    from app.config import AZURE_DOC_INTEL_AVAILABLE, OCR_ENGINE_MODE
     from app.ocr.hybrid_engine import get_hybrid_engine
-    from app.config import OCR_ENGINE_MODE, AZURE_DOC_INTEL_AVAILABLE
 
     hybrid = get_hybrid_engine()
     logger.info(f"   OCR Mode : {OCR_ENGINE_MODE}")
@@ -213,7 +214,8 @@ except ImportError:
     logger.debug("   prometheus-fastapi-instrumentator not installed — metrics disabled")
 
 # ─── Request Logging + Dynamic Observability ─────────────────────────────
-from app.observability import get_obs_manager
+from app.observability import get_obs_manager  # noqa: E402
+
 _obs_mgr = get_obs_manager()
 _obs_eval_counter = 0  # Evaluate health every N requests (not every single one)
 _OBS_EVAL_INTERVAL = 10  # Check health every 10 requests
@@ -277,7 +279,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(router)
 
 # ─── Training Pipeline Routes ─────────────────────────────────────────────────
-from app.training.routes import training_router
+from app.training.routes import training_router  # noqa: E402
+
 app.include_router(training_router)
 
 

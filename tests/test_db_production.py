@@ -13,9 +13,9 @@ Tests:
 """
 
 import os
-import sys
 import shutil
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -64,7 +64,7 @@ print(f"Backup dir: {BACKUP_DIR}\n")
 
 print("── 1. CONNECTION POOL ──")
 
-from app.database import ConnectionPool
+from app.database import ConnectionPool  # noqa: E402
 
 pool = ConnectionPool(TEST_DB)
 
@@ -83,8 +83,10 @@ def _():
 
     t1 = threading.Thread(target=worker, args=("A",))
     t2 = threading.Thread(target=worker, args=("B",))
-    t1.start(); t2.start()
-    t1.join(); t2.join()
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
 
     assert results["A"] != results["B"], "Threads should have different connections"
 
@@ -115,7 +117,8 @@ pool.close_all()
 
 print("\n── 2. SCHEMA MIGRATIONS ──")
 
-from app.database import MigrationManager, ConnectionPool as CP
+from app.database import ConnectionPool as CP  # noqa: E402
+from app.database import MigrationManager  # noqa: E402
 
 # Fresh DB for migration tests
 mig_db = TEMP_DIR / "mig_test.db"
@@ -123,7 +126,7 @@ mig_pool = CP(mig_db)
 
 @test("Migration manager creates schema_migrations table")
 def _():
-    mm = MigrationManager(mig_pool)
+    MigrationManager(mig_pool)
     conn = mig_pool.get()
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
@@ -175,7 +178,7 @@ mig_pool.close_all()
 
 print("\n── 3. DAILY BACKUP ──")
 
-from app.database import BackupManager
+from app.database import BackupManager  # noqa: E402
 
 # Create a small test DB file to back up
 backup_src = TEMP_DIR / "backup_src.db"
@@ -244,7 +247,10 @@ def _():
 
 print("\n── 4. ABSTRACTION & FACTORY ──")
 
-from app.database import DatabaseBackend, Database, get_database
+import contextlib  # noqa: E402
+
+from app.database import Database, DatabaseBackend, get_database  # noqa: E402
+
 
 @test("Database implements DatabaseBackend ABC")
 def _():
@@ -436,7 +442,7 @@ def _():
 def _():
     try:
         crud_db.add_receipt_item(999999, "X", "X", 1)
-        assert False, "Should have raised ValueError"
+        raise AssertionError("Should have raised ValueError")
     except ValueError:
         pass
 
@@ -500,7 +506,7 @@ def _():
             ])
             with lock:
                 results["ok"] += 1
-        except Exception as e:
+        except Exception:
             with lock:
                 results["err"] += 1
 
@@ -529,7 +535,7 @@ def _():
     rb_db.create_receipt("DUPE-001")
     try:
         rb_db.create_receipt("DUPE-001")  # duplicate
-        assert False, "Should have raised"
+        raise AssertionError("Should have raised")
     except Exception:
         pass
     # DB should still be usable
@@ -579,10 +585,8 @@ def _():
 crud_db.shutdown()
 
 # Clean up temp files
-try:
+with contextlib.suppress(Exception):
     shutil.rmtree(TEMP_DIR)
-except Exception:
-    pass
 
 print(f"\n{'='*50}")
 print(f"  PASSED: {passed}")

@@ -29,6 +29,7 @@ models/
 tests/
 scripts/
 docs/
+training_data/
 *.md
 !README.md
 LICENSE
@@ -43,6 +44,14 @@ LICENSE
 pyproject.toml
 Dockerfile
 docker-compose.yml
+
+# ─── Coverage & Security Reports ────────────────
+htmlcov/
+.coverage
+coverage.xml
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
 
 # ─── OS Files ───────────────────────────────────
 Thumbs.db

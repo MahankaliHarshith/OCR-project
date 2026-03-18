@@ -4,24 +4,25 @@ Handles text extraction from preprocessed receipt images
 with confidence scoring and fallback support.
 """
 
+import contextlib
+import logging
+import threading
+import time
+
 import easyocr
 import numpy as np
-import logging
-import time
-import threading
-from typing import List, Dict, Optional
 
 from app.config import (
-    OCR_LANGUAGE,
-    OCR_USE_GPU,
-    OCR_TEXT_THRESHOLD,
-    OCR_LOW_TEXT,
-    OCR_LINK_THRESHOLD,
+    MODEL_DIR,
     OCR_CANVAS_SIZE,
+    OCR_CONFIDENCE_THRESHOLD,
+    OCR_LANGUAGE,
+    OCR_LINK_THRESHOLD,
+    OCR_LOW_TEXT,
     OCR_MAG_RATIO,
     OCR_MIN_SIZE,
-    OCR_CONFIDENCE_THRESHOLD,
-    MODEL_DIR,
+    OCR_TEXT_THRESHOLD,
+    OCR_USE_GPU,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,14 +73,12 @@ class OCREngine:
         # the warmup image must be close to real scan dimensions.
         warmup_start = time.time()
         dummy = np.full((768, 1024), 200, dtype=np.uint8)  # realistic receipt size
-        try:
+        with contextlib.suppress(Exception):
             self.reader.readtext(dummy, detail=0, canvas_size=1024, mag_ratio=1.0)
-        except Exception:
-            pass  # Warmup errors are harmless
         warmup_ms = int((time.time() - warmup_start) * 1000)
         logger.info(f"OCR warmup completed in {warmup_ms}ms")
 
-    def extract_text(self, image: np.ndarray, quality_info: dict = None) -> List[Dict]:
+    def extract_text(self, image: np.ndarray, quality_info: dict = None) -> list[dict]:
         """
         Extract text from a preprocessed image.
 
@@ -185,7 +184,7 @@ class OCREngine:
 
         return detections
 
-    def extract_text_fast(self, image: np.ndarray) -> List[Dict]:
+    def extract_text_fast(self, image: np.ndarray) -> list[dict]:
         """
         Fast-path OCR with optimized canvas & mag_ratio for speed.
         Tuned to capture enough detail on the FIRST pass that a second
@@ -220,7 +219,7 @@ class OCREngine:
 
         elapsed_ms = int((time.time() - start) * 1000)
         detections = []
-        for idx, (bbox, text, confidence) in enumerate(results):
+        for _idx, (bbox, text, confidence) in enumerate(results):
             conf_float = round(float(confidence), 4)
             if hasattr(bbox, 'tolist'):
                 bbox_native = bbox.tolist()
@@ -239,7 +238,7 @@ class OCREngine:
         logger.info(f"OCR fast-pass extracted {len(detections)} elements in {elapsed_ms}ms")
         return detections
 
-    def extract_text_turbo(self, image: np.ndarray) -> List[Dict]:
+    def extract_text_turbo(self, image: np.ndarray) -> list[dict]:
         """
         Turbo-speed OCR for structured / printed receipts with large clear text.
         Uses aggressive downscaling and minimal processing for 3-5× speedup.
@@ -273,7 +272,7 @@ class OCREngine:
 
         elapsed_ms = int((time.time() - start) * 1000)
         detections = []
-        for idx, (bbox, text, confidence) in enumerate(results):
+        for _idx, (bbox, text, confidence) in enumerate(results):
             conf_float = round(float(confidence), 4)
             if hasattr(bbox, 'tolist'):
                 bbox_native = bbox.tolist()
@@ -368,7 +367,7 @@ class OCREngine:
 
         return round(min(cal, raw_confidence), 4)  # Never exceed raw confidence
 
-    def extract_text_simple(self, image: np.ndarray) -> List[str]:
+    def extract_text_simple(self, image: np.ndarray) -> list[str]:
         """
         Extract text and return only the text strings (no metadata).
 
@@ -381,14 +380,14 @@ class OCREngine:
         detections = self.extract_text(image)
         return [d["text"] for d in detections if d["text"]]
 
-    def get_avg_confidence(self, detections: List[Dict]) -> float:
+    def get_avg_confidence(self, detections: list[dict]) -> float:
         """Calculate average confidence across all detections."""
         if not detections:
             return 0.0
         confidences = [d["confidence"] for d in detections]
         return round(sum(confidences) / len(confidences), 4)
 
-    def get_calibrated_avg_confidence(self, detections: List[Dict]) -> float:
+    def get_calibrated_avg_confidence(self, detections: list[dict]) -> float:
         """Calculate average CALIBRATED confidence across all detections.
 
         Uses calibrate_confidence() to adjust each detection's raw score
@@ -404,15 +403,15 @@ class OCREngine:
         return round(sum(cal_confs) / len(cal_confs), 4)
 
     def get_low_confidence_items(
-        self, detections: List[Dict], threshold: float = OCR_CONFIDENCE_THRESHOLD
-    ) -> List[Dict]:
+        self, detections: list[dict], threshold: float = OCR_CONFIDENCE_THRESHOLD
+    ) -> list[dict]:
         """Get detections below the confidence threshold."""
         return [d for d in detections if d["confidence"] < threshold]
 
 
 # ─── Lazy singleton ──────────────────────────────────────────────────────────
 
-_engine: Optional[OCREngine] = None
+_engine: OCREngine | None = None
 _engine_lock = threading.Lock()
 
 

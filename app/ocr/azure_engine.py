@@ -7,15 +7,10 @@ This module is the PRIMARY engine in the hybrid architecture.
 Falls back to local EasyOCR when Azure is unavailable (offline, quota, errors).
 """
 
-import os
-import io
 import logging
-import time
+import os
 import threading
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-
-import numpy as np
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +20,10 @@ except Exception:
     def _record_azure_call(model="", success=True):
         pass
 
-from app.tracing import get_tracer, optional_span
+import contextlib  # noqa: E402
+
+from app.tracing import get_tracer, optional_span  # noqa: E402
+
 _tracer = get_tracer(__name__)
 
 # ── Lazy imports — only loaded when Azure is actually used ──────────────────
@@ -39,8 +37,8 @@ def _check_azure_available() -> bool:
         return _azure_available
 
     try:
-        from azure.ai.documentintelligence import DocumentIntelligenceClient
-        from azure.core.credentials import AzureKeyCredential
+        from azure.ai.documentintelligence import DocumentIntelligenceClient  # noqa: F401
+        from azure.core.credentials import AzureKeyCredential  # noqa: F401
 
         endpoint = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "").strip()
         key = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY", "").strip()
@@ -118,6 +116,7 @@ class AzureOCREngine:
             - 3-5× faster upload, same accuracy
         """
         import cv2
+
         from app.config import AZURE_IMAGE_MAX_DIMENSION, AZURE_IMAGE_QUALITY
 
         img = cv2.imread(image_path)
@@ -149,7 +148,7 @@ class AzureOCREngine:
 
         return optimized
 
-    def extract_receipt_structured(self, image_path: str, image_bytes: bytes = None) -> Dict:
+    def extract_receipt_structured(self, image_path: str, image_bytes: bytes = None) -> dict:
         """
         Extract structured receipt data using Azure's prebuilt-receipt model.
 
@@ -215,7 +214,7 @@ class AzureOCREngine:
 
         return parsed
 
-    def extract_text_read(self, image_path: str, image_bytes: bytes = None) -> List[Dict]:
+    def extract_text_read(self, image_path: str, image_bytes: bytes = None) -> list[dict]:
         """
         Extract raw text using Azure's prebuilt-read model.
 
@@ -276,7 +275,7 @@ class AzureOCREngine:
 
         return detections
 
-    def extract_text_from_bytes(self, image_bytes: bytes, model: str = "prebuilt-read") -> List[Dict]:
+    def extract_text_from_bytes(self, image_bytes: bytes, model: str = "prebuilt-read") -> list[dict]:
         """
         Extract text from in-memory image bytes.
 
@@ -374,7 +373,7 @@ class AzureOCREngine:
             # Fallback: try content (raw text), always available
             return field.content
 
-    def _parse_receipt_result(self, result) -> Dict:
+    def _parse_receipt_result(self, result) -> dict:
         """
         Parse Azure prebuilt-receipt result into our application format.
 
@@ -415,15 +414,13 @@ class AzureOCREngine:
             total_val = self._get_field_value(fields.get(total_field))
             if total_val is not None:
                 key = total_field.lower()
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     parsed[key] = float(total_val)
-                except (ValueError, TypeError):
-                    pass
 
         # ── Extract line items ──
         items_list = self._get_field_value(fields.get("Items"))
         if items_list:
-            for idx, item_field in enumerate(items_list):
+            for _idx, item_field in enumerate(items_list):
                 item_data = self._get_field_value(item_field) or {}
 
                 description = ""
@@ -445,17 +442,13 @@ class AzureOCREngine:
 
                 price_val = self._get_field_value(item_data.get("Price"))
                 if price_val is not None:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         price = float(price_val)
-                    except (ValueError, TypeError):
-                        pass
 
                 tp_val = self._get_field_value(item_data.get("TotalPrice"))
                 if tp_val is not None:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         total_price = float(tp_val)
-                    except (ValueError, TypeError):
-                        pass
 
                 if description:
                     parsed["items"].append({
@@ -478,7 +471,7 @@ class AzureOCREngine:
 
         return parsed
 
-    def _extract_page_text(self, result) -> List[Dict]:
+    def _extract_page_text(self, result) -> list[dict]:
         """
         Extract all text blocks from Azure result pages.
         Returns EasyOCR-compatible detection format.
@@ -550,7 +543,7 @@ class AzureOCREngine:
 
         return detections
 
-    def _convert_read_to_detections(self, result) -> List[Dict]:
+    def _convert_read_to_detections(self, result) -> list[dict]:
         """
         Convert Azure Read model result to EasyOCR-compatible detection list.
         Uses word-level detections for maximum granularity.
@@ -667,11 +660,11 @@ class AzureOCREngine:
 
 # ─── Lazy singleton ──────────────────────────────────────────────────────────
 
-_azure_engine: Optional[AzureOCREngine] = None
+_azure_engine: AzureOCREngine | None = None
 _azure_engine_lock = threading.Lock()
 
 
-def get_azure_engine() -> Optional[AzureOCREngine]:
+def get_azure_engine() -> AzureOCREngine | None:
     """
     Get or create the Azure OCR engine singleton.
     Returns None if Azure is not available (SDK not installed or no credentials).

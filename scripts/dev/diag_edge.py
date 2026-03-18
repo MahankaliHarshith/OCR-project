@@ -1,5 +1,8 @@
 """Quick diagnostic: run full API pipeline on problem edge images."""
-import sys, os, logging
+import logging
+import os
+import sys
+
 sys.path.insert(0, '.')
 
 # Enable parser debug logging to file
@@ -8,10 +11,10 @@ logging.basicConfig(level=logging.DEBUG, format='%(name)s: %(message)s',
 logging.getLogger('app.ocr.parser').setLevel(logging.DEBUG)
 logging.getLogger('app.ocr.hybrid_engine').setLevel(logging.DEBUG)
 
-from app.ocr.hybrid_engine import HybridOCREngine
-from app.ocr.preprocessor import ImagePreprocessor
-from app.ocr.parser import ReceiptParser
-from app.services.product_service import ProductService
+from app.ocr.hybrid_engine import HybridOCREngine  # noqa: E402
+from app.ocr.parser import ReceiptParser  # noqa: E402
+from app.ocr.preprocessor import ImagePreprocessor  # noqa: E402
+from app.services.product_service import ProductService  # noqa: E402
 
 pre = ImagePreprocessor()
 hybrid = HybridOCREngine()
@@ -48,9 +51,9 @@ for fname in ['edge_all_qty1.jpg', 'edge_total_items_confusion.jpg', 'receipt_de
         x = int((bbox[0][0] + bbox[2][0]) / 2)
         print(f'  x={x:4d} y={y:4d}  conf={conf:.2f}  "{text}"')
 
-    print(f'\n  PARSING...')
+    print('\n  PARSING...')
     parsed = parser.parse(ocr_results, is_structured=is_structured)
-    print(f'\n  ITEMS:')
+    print('\n  ITEMS:')
     for it in parsed.get('items', []):
         print(f"    {it['code']}: qty={it['quantity']}, match={it.get('match_type','?')}")
     tv = parsed.get('total_verification', {})

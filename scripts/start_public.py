@@ -22,11 +22,11 @@ Notes:
 """
 
 import os
+import signal
+import subprocess
 import sys
 import time
-import signal
-import threading
-import subprocess
+
 
 def main():
     port = int(os.getenv("API_PORT", "8000"))
@@ -53,7 +53,6 @@ def main():
 
     # Wait for server to be ready
     import urllib.request
-    import socket
     for i in range(60):  # Wait up to 60 seconds for model loading
         try:
             req = urllib.request.Request(f"http://127.0.0.1:{port}/api/health")
@@ -61,8 +60,7 @@ def main():
             if resp.status == 200:
                 print(f"  ✅ Server is running on http://localhost:{port}")
                 break
-        except (urllib.error.URLError, socket.timeout, ConnectionRefusedError,
-                TimeoutError, OSError):
+        except (urllib.error.URLError, ConnectionRefusedError, TimeoutError, OSError):
             if i % 5 == 0 and i > 0:
                 print(f"  ⏳ Still waiting for server... ({i}s)")
             time.sleep(1)
@@ -73,7 +71,7 @@ def main():
     print("\n  🌐 Creating public tunnel...")
 
     try:
-        from pyngrok import ngrok, conf
+        from pyngrok import ngrok
 
         # Set auth token if provided
         auth_token = os.getenv("NGROK_AUTH_TOKEN", "")
@@ -96,8 +94,8 @@ def main():
         print(f"  🏠 Local URL   : http://localhost:{port}")
         print(f"  📄 API Docs    : {public_url}/docs")
         print(f"  ❤️  Health Check: {public_url}/api/health")
-        print(f"\n  📱 Open on your phone or share with testers!")
-        print(f"  ⏱  Session will stay active while this script runs.")
+        print("\n  📱 Open on your phone or share with testers!")
+        print("  ⏱  Session will stay active while this script runs.")
         print("=" * 60)
         print("\n  Press Ctrl+C to stop.\n")
 
@@ -108,7 +106,7 @@ def main():
     except Exception as e:
         print(f"  ❌ Tunnel creation failed: {e}")
         print(f"\n  💡 You can still access locally: http://localhost:{port}")
-        print(f"  💡 To fix: sign up at https://ngrok.com and set NGROK_AUTH_TOKEN")
+        print("  💡 To fix: sign up at https://ngrok.com and set NGROK_AUTH_TOKEN")
         print("\n  Press Ctrl+C to stop.\n")
 
     # ── Step 3: Keep running until Ctrl+C ──

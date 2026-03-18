@@ -14,10 +14,10 @@ Usage:
     pytest tests/test_azure_integration.py -v
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
-from typing import Dict, List, Any
+from typing import Any
+from unittest.mock import patch
 
+import pytest
 
 # ─── Fixture: Mock Azure Responses ────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ def _make_azure_item(
     unit_price: Any = 0.0,
     total_price: Any = 0.0,
     confidence: float = 0.92,
-) -> Dict:
+) -> dict:
     """Build a single Azure receipt item in the format our code expects."""
     return {
         "description": description,
@@ -266,8 +266,9 @@ class TestAPIValidation:
 
     @pytest.fixture(scope="class")
     def client(self):
-        from app.main import app
         from fastapi.testclient import TestClient
+
+        from app.main import app
         with TestClient(app) as c:
             yield c
 
@@ -394,9 +395,8 @@ class TestErrorTracking:
     def test_track_operation_propagates_exceptions(self):
         """track_operation re-raises exceptions (doesn't swallow them)."""
         from app.error_tracking import track_operation
-        with pytest.raises(ValueError, match="test error"):
-            with track_operation("test.failing"):
-                raise ValueError("test error")
+        with pytest.raises(ValueError, match="test error"), track_operation("test.failing"):
+            raise ValueError("test error")
 
     def test_init_sentry_without_dsn(self):
         """init_sentry returns False when SENTRY_DSN is empty."""

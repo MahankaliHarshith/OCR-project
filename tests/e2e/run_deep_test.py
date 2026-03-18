@@ -1,5 +1,10 @@
 """Deep audit test: validates codes, quantities, math, and grand totals."""
-import subprocess, sys, time, requests, os
+import os
+import subprocess
+import sys
+import time
+
+import requests
 
 PORT = 8769
 proc = subprocess.Popen(
@@ -79,7 +84,7 @@ for fname in FILES:
     tc += len(exp_codes)
 
     qty_ok = 0
-    for c, q in zip(exp_codes, exp_qtys):
+    for c, q in zip(exp_codes, exp_qtys, strict=False):
         if c in parsed_qtys and abs(parsed_qtys[c] - q) < 0.1:
             qty_ok += 1
     tq_ok += qty_ok
@@ -93,7 +98,7 @@ for fname in FILES:
     gt = math.get('grand_total_match', False)
 
     wrong = []
-    for c, q in zip(exp_codes, exp_qtys):
+    for c, q in zip(exp_codes, exp_qtys, strict=False):
         a = parsed_qtys.get(c)
         if a is None:
             wrong.append(f'{c} MISSING')

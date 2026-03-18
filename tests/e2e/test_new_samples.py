@@ -3,8 +3,13 @@ Test new sample images in tests/sample_inputs for accuracy and speed.
 Scans each image, reports: parse time, items found, codes, quantities,
 math verification status, and overall summary.
 """
-import subprocess, sys, time, os, json, requests
-from pathlib import Path
+import contextlib
+import os
+import subprocess
+import sys
+import time
+
+import requests
 
 # ── Config ──────────────────────────────────────────────────────────
 PORT = 8769
@@ -129,7 +134,7 @@ for idx, fname in enumerate(sample_files, 1):
 
     if not rd:
         errors = data.get('metadata', {}).get('errors', [])
-        print(f"    ❌ No receipt_data returned")
+        print("    ❌ No receipt_data returned")
         if errors:
             print(f"       Errors: {errors}")
         results.append({
@@ -182,7 +187,7 @@ for idx, fname in enumerate(sample_files, 1):
     lines_ok = sum(1 for lc in line_checks if lc.get('math_ok'))
     lines_total = len(line_checks)
 
-    print(f"\n    🔢 Math Verification:")
+    print("\n    🔢 Math Verification:")
     print(f"       has_prices:       {has_prices}")
     print(f"       line math:        {lines_ok}/{lines_total} OK")
     print(f"       all_line_math_ok: {all_line_ok}")
@@ -193,7 +198,7 @@ for idx, fname in enumerate(sample_files, 1):
     if line_checks:
         bad_lines = [lc for lc in line_checks if not lc.get('math_ok')]
         if bad_lines:
-            print(f"       ❌ Failed lines:")
+            print("       ❌ Failed lines:")
             for lc in bad_lines:
                 print(f"          {lc.get('code','?')}: {lc.get('qty','?')} × {lc.get('rate','?')} = expected {lc.get('amount_expected','?')}, got OCR {lc.get('amount_ocr','?')}")
 
@@ -208,7 +213,7 @@ for idx, fname in enumerate(sample_files, 1):
     computed_qty = bill_total.get('computed_total') or bill_total.get('total_qty_computed') or sum(it.get('quantity', 0) for it in items)
     total_found = bt_qty > 0
     total_status = "✅ MATCH" if (bt_qty > 0 and bt_qty == computed_qty) else ("⚠️ MISMATCH" if bt_qty > 0 else "— no total line")
-    print(f"\n    📝 Bill Total:")
+    print("\n    📝 Bill Total:")
     print(f"       OCR total qty: {bt_qty}  |  Computed from items: {computed_qty}  |  {total_status}")
     print(f"       Verified: {bt_verified}")
 
@@ -237,10 +242,8 @@ for idx, fname in enumerate(sample_files, 1):
 
 # ── Kill server ─────────────────────────────────────────────────────
 server.kill()
-try:
+with contextlib.suppress(Exception):
     server.wait(timeout=5)
-except Exception:
-    pass
 
 # ── Summary ─────────────────────────────────────────────────────────
 print(f"\n{'=' * 70}")
@@ -257,7 +260,7 @@ if ok_results:
     min_time = min(times)
     max_time = max(times)
     total_time = sum(times)
-    print(f"\n  ⏱️  SPEED:")
+    print("\n  ⏱️  SPEED:")
     print(f"     Total scan time:  {total_time:.1f}s")
     print(f"     Average per image: {avg_time:.1f}s")
     print(f"     Fastest:          {min_time:.1f}s")
@@ -274,7 +277,7 @@ total_qty_found = sum(1 for r in ok_results if r.get('total_found'))
 total_qty_match = sum(1 for r in ok_results if r.get('qty_match') is True)
 total_has_prices = sum(1 for r in ok_results if r.get('has_prices'))
 
-print(f"\n  📊 ACCURACY:")
+print("\n  📊 ACCURACY:")
 print(f"     Images scanned OK:   {len(ok_results)}/{len(results)}")
 print(f"     Total items parsed:  {total_items}")
 print(f"     Valid catalog codes: {total_valid}/{total_all_codes} ({100*total_valid/max(total_all_codes,1):.0f}%)")
@@ -285,12 +288,12 @@ print(f"     Bill total detected: {total_qty_found}/{len(ok_results)} images hav
 print(f"     Bill qty match:      {total_qty_match}/{total_qty_found} (of detected) ({100*total_qty_match/max(total_qty_found,1):.0f}%)")
 
 if failed_results:
-    print(f"\n  ❌ FAILED SCANS:")
+    print("\n  ❌ FAILED SCANS:")
     for r in failed_results:
         print(f"     {r['file']}: {r['status']} ({r['time']:.1f}s)")
 
 # Per-image summary table
-print(f"\n  📋 PER-IMAGE BREAKDOWN:")
+print("\n  📋 PER-IMAGE BREAKDOWN:")
 print(f"  {'File':<45} {'Time':>6} {'Items':>5} {'Codes':>8} {'LineMath':>10} {'GrandT':>7} {'QtyOK':>6}")
 print(f"  {'─'*45} {'─'*6} {'─'*5} {'─'*8} {'─'*10} {'─'*7} {'─'*6}")
 
@@ -308,5 +311,5 @@ for r in results:
     print(f"  {fname:<45} {t:>6} {items_s:>5} {codes_s:>8} {lm:>10} {gt:>7} {qt:>6}")
 
 print(f"\n{'=' * 70}")
-print(f"  TEST COMPLETE")
+print("  TEST COMPLETE")
 print(f"{'=' * 70}")

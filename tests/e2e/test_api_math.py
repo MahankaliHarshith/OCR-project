@@ -1,5 +1,10 @@
 """Quick API test: verify math_verification data flows through correctly."""
-import subprocess, sys, time, os, json, requests
+import os
+import subprocess
+import sys
+import time
+
+import requests
 
 os.chdir(r"c:\Users\mahankali_harshith\OneDrive - EPAM\Desktop\OCR project")
 
@@ -19,14 +24,17 @@ for i in range(20):
     except Exception:
         pass
 else:
-    print("Server failed to start"); server.kill(); sys.exit(1)
+    print("Server failed to start")
+    server.kill()
+    sys.exit(1)
 
 try:
-    r = requests.post(
-        "http://127.0.0.1:8000/api/receipts/scan",
-        files={"file": open("test_images/receipt_neat.jpg", "rb")},
-        timeout=120,
-    )
+    with open("test_images/receipt_neat.jpg", "rb") as f:
+        r = requests.post(
+            "http://127.0.0.1:8000/api/receipts/scan",
+            files={"file": f},
+            timeout=120,
+        )
     d = r.json()
     mv = d.get("receipt_data", {}).get("math_verification", {})
 
@@ -55,11 +63,11 @@ try:
         for m in mismatches:
             print(f"    {m['code']}: OCR ₹{m['ocr_price']} vs Catalog ₹{m['catalog_price']}")
     else:
-        print(f"\n  Catalog mismatches: none")
+        print("\n  Catalog mismatches: none")
 
     # Check items have prices
     items = d.get("receipt_data", {}).get("items", [])
-    print(f"\n  Items with price data:")
+    print("\n  Items with price data:")
     for it in items:
         code = it.get("code", "?")
         qty = it.get("quantity", 0)

@@ -7,13 +7,12 @@ Provides:
   3. Dynamic CORS for Dev Tunnels URLs
 """
 
-import time
 import logging
 import threading
+import time
 from collections import defaultdict
-from typing import Dict, List, Tuple
 
-from fastapi import Request, HTTPException
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
@@ -30,7 +29,8 @@ logger = logging.getLogger(__name__)
 # Only these IPs' X-Forwarded-For headers are trusted; all others use
 # the direct connection IP.  Prevents rate-limit bypass via header spoofing.
 # Configure via TRUSTED_PROXIES env var (comma-separated) or defaults below.
-import os as _os
+import os as _os  # noqa: E402
+
 _trusted_env = _os.getenv("TRUSTED_PROXIES", "")
 TRUSTED_PROXY_IPS: set[str] = (
     {ip.strip() for ip in _trusted_env.split(",") if ip.strip()}
@@ -84,11 +84,11 @@ class RateLimiter:
 
     def __init__(self):
         # {ip: [(timestamp, ...), ...]}
-        self._requests: Dict[str, List[float]] = defaultdict(list)
+        self._requests: dict[str, list[float]] = defaultdict(list)
         self._cleanup_counter = 0
         self._lock = threading.Lock()
 
-    def is_allowed(self, client_ip: str, limit: int, window_seconds: int = 60) -> Tuple[bool, int]:
+    def is_allowed(self, client_ip: str, limit: int, window_seconds: int = 60) -> tuple[bool, int]:
         """
         Check if a request from client_ip is within rate limits.
 
@@ -225,16 +225,11 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 
         if is_protected:
             # Allow same-origin requests from the browser frontend without API key.
-            # Browsers set Sec-Fetch-Site automatically; external tools (curl, scripts) don't.
+            # SECURITY: Only trust Sec-Fetch-Site header — it is set by the browser
+            # and cannot be spoofed by JavaScript. Referer/Origin headers CAN be
+            # spoofed by attackers, so we do NOT rely on them for auth bypass.
             fetch_site = request.headers.get("Sec-Fetch-Site", "")
-            referer = request.headers.get("Referer", "")
-            origin = request.headers.get("Origin", "")
-            host = request.headers.get("Host", "")
-            is_same_origin = (
-                fetch_site == "same-origin"
-                or (referer and host and host in referer)
-                or (origin and host and host in origin)
-            )
+            is_same_origin = fetch_site == "same-origin"
             if not is_same_origin:
                 provided_key = request.headers.get("X-API-Key", "")
                 if provided_key != self.api_key:

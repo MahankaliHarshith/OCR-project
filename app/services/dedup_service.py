@@ -12,7 +12,6 @@ Three-layer approach:
 
 import hashlib
 import logging
-from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ class DedupService:
             logger.warning(f"Image hash computation failed: {e}")
             return ""
 
-    def compute_content_fingerprint(self, items: List[Dict]) -> str:
+    def compute_content_fingerprint(self, items: list[dict]) -> str:
         """Compute a content fingerprint from parsed receipt items.
 
         Creates a deterministic hash from sorted item codes and quantities.
@@ -94,7 +93,7 @@ class DedupService:
         image_hash: str,
         content_fingerprint: str,
         db_instance,
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """Check if a receipt is a duplicate of an existing one.
 
         Checks both image hash similarity and content fingerprint match

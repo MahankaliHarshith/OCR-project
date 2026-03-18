@@ -31,7 +31,7 @@ gray_results = [
     {'text': 'Io1f .', 'confidence': 0.4108, 'bbox': [[170,1010],[300,1010],[300,1058],[170,1058]]},
 ]
 
-# Color OCR detections  
+# Color OCR detections
 color_results = [
     {'text': '[tu',    'confidence': 0.6892, 'bbox': [[0,220],[100,220],[100,268],[0,268]]},
     {'text': 'Awtlz',  'confidence': 0.2649, 'bbox': [[120,171],[250,171],[250,219],[120,219]]},

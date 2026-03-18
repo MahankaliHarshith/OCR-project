@@ -1,5 +1,11 @@
 """Edge case regression test: validates codes, quantities, and total verification."""
-import subprocess, sys, time, requests, os
+import contextlib
+import os
+import subprocess
+import sys
+import time
+
+import requests
 
 PORT = 8771
 proc = subprocess.Popen(
@@ -106,13 +112,11 @@ for fname, expected in sorted(EDGE_EXPECTED.items()):
         print(f'    Issues: {", ".join(wrong)}')
 
 proc.kill()
-try:
+with contextlib.suppress(Exception):
     proc.wait(timeout=5)
-except Exception:
-    pass
 
 print(f'\n{"="*70}')
-print(f'  EDGE CASE SUMMARY')
+print('  EDGE CASE SUMMARY')
 print(f'{"="*70}')
 print(f'  CODES: {tc_ok}/{tc} ({100*tc_ok//max(tc,1)}%)')
 print(f'  QTY:   {tq_ok}/{tq} ({100*tq_ok//max(tq,1)}%)')

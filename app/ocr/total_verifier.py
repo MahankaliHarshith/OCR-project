@@ -22,10 +22,8 @@ Layer 4 — Dispute Resolution:
     Azure cross-verification (if available).
 """
 
-import re
 import logging
-from typing import Dict, List, Optional, Tuple
-from collections import Counter
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +35,11 @@ TOTAL_LINE_PATTERNS = [
     # "Total Qty 11" / "Total Qty: 11" / "Total_Qty 11" / garbled duplicates
     re.compile(rf"(?:total|totai|tota1|t0tal|totd){_SEP}(?:qty|quantity|qtv|qly|qtyt|qiy|qtt){_SEP}(\d+\.?\d*)", re.IGNORECASE),
     # "Total: 11" / "Total 11" / "Total = 11"
-    re.compile(rf"(?:total|totai|tota1|t0tal|totd)[\s:=\-_]+(\d+\.?\d*)", re.IGNORECASE),
+    re.compile(r"(?:total|totai|tota1|t0tal|totd)[\s:=\-_]+(\d+\.?\d*)", re.IGNORECASE),
     # "Sub Total 11"
     re.compile(rf"(?:sub{_SEP}total|subtotal){_SEP}(\d+\.?\d*)", re.IGNORECASE),
     # "Sum: 11"
-    re.compile(rf"(?:sum)[\s:=\-_]+(\d+\.?\d*)", re.IGNORECASE),
+    re.compile(r"(?:sum)[\s:=\-_]+(\d+\.?\d*)", re.IGNORECASE),
     # Tolerant: "Total Qty" anywhere, then a number near the end of the line
     # Handles OCR duplication like "Total Qty_ Total Qty_ 24"
     re.compile(r"(?:total|totai|tota1|t0tal|totd).*?(?:qty|quantity|qtv|qly|qtyt|qiy|qtt).*?(\d+\.?\d*)\s*$", re.IGNORECASE),
@@ -107,10 +105,10 @@ class BillTotalVerifier:
 
     def verify(
         self,
-        ocr_detections: List[Dict],
-        parsed_items: List[Dict],
-        azure_structured: Optional[Dict] = None,
-    ) -> Dict:
+        ocr_detections: list[dict],
+        parsed_items: list[dict],
+        azure_structured: dict | None = None,
+    ) -> dict:
         """
         Run the full 4-layer verification pipeline.
 
@@ -209,8 +207,8 @@ class BillTotalVerifier:
     # ─────────────────────────────────────────────────────────────────────
 
     def _extract_total_from_detections(
-        self, detections: List[Dict]
-    ) -> Tuple[Optional[float], Optional[str], Optional[float]]:
+        self, detections: list[dict]
+    ) -> tuple[float | None, str | None, float | None]:
         """
         Find the "Total" line in OCR detections using spatial + keyword analysis.
 
@@ -376,8 +374,8 @@ class BillTotalVerifier:
         return None, None, None
 
     def _group_bottom_detections(
-        self, detections: List[Dict], y_threshold: float
-    ) -> List[Dict]:
+        self, detections: list[dict], y_threshold: float
+    ) -> list[dict]:
         """Group OCR detections from the bottom of the receipt into lines."""
         bottom_dets = []
         for d in detections:
@@ -432,8 +430,8 @@ class BillTotalVerifier:
         return result
 
     def _recover_total_digits(
-        self, text: str, words: List[str]
-    ) -> Optional[float]:
+        self, text: str, words: list[str]
+    ) -> float | None:
         """
         Recover digits from OCR-mangled total text.
 
@@ -476,7 +474,7 @@ class BillTotalVerifier:
     # Layer 1b: Azure Structured Total
     # ─────────────────────────────────────────────────────────────────────
 
-    def _extract_azure_total(self, azure_data: Dict) -> Optional[float]:
+    def _extract_azure_total(self, azure_data: dict) -> float | None:
         """Extract QUANTITY total from Azure receipt model structured data.
 
         Azure's receipt model only provides MONETARY totals (Total, Subtotal),
@@ -504,9 +502,9 @@ class BillTotalVerifier:
     def _verify_digit_reading(
         self,
         ocr_total: float,
-        total_text: Optional[str],
-        total_conf: Optional[float],
-        azure_total: Optional[float],
+        total_text: str | None,
+        total_conf: float | None,
+        azure_total: float | None,
     ) -> float:
         """
         Cross-verify the total digit reading using multiple signals.
@@ -537,7 +535,7 @@ class BillTotalVerifier:
     # Layer 3: Arithmetic Reconciliation
     # ─────────────────────────────────────────────────────────────────────
 
-    def _compute_quantity_total(self, parsed_items: List[Dict]) -> float:
+    def _compute_quantity_total(self, parsed_items: list[dict]) -> float:
         """Sum all parsed item quantities."""
         total = sum(item.get("quantity", 0) for item in parsed_items)
         return round(total, 1)
@@ -548,10 +546,10 @@ class BillTotalVerifier:
 
     def verify_math(
         self,
-        parsed_items: List[Dict],
-        catalog: Optional[Dict] = None,
-        ocr_grand_total: Optional[float] = None,
-    ) -> Dict:
+        parsed_items: list[dict],
+        catalog: dict | None = None,
+        ocr_grand_total: float | None = None,
+    ) -> dict:
         """
         Validate receipt math: qty × unit_price = line_total for each item,
         and sum(line_totals) = grand_total.
@@ -658,9 +656,9 @@ class BillTotalVerifier:
         ocr_total: float,
         computed_total: float,
         total_conf: float,
-        parsed_items: List[Dict],
-        azure_total: Optional[float],
-    ) -> Dict:
+        parsed_items: list[dict],
+        azure_total: float | None,
+    ) -> dict:
         """
         When OCR total != computed total, determine which is correct.
 
@@ -786,7 +784,7 @@ class BillTotalVerifier:
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
-_verifier: Optional[BillTotalVerifier] = None
+_verifier: BillTotalVerifier | None = None
 
 
 def get_total_verifier() -> BillTotalVerifier:

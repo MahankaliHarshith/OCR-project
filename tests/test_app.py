@@ -2,10 +2,7 @@
 Unit tests for the Receipt Scanner application.
 """
 
-import pytest
-import re
 from app.ocr.parser import ReceiptParser
-
 
 # ─── Test Product Catalog ─────────────────────────────────────────────────────
 TEST_CATALOG = {

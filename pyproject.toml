@@ -4,21 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "receipt-scanner"
-version = "1.0.0"
+version = "2.0.0"
 description = "OCR-powered handwritten receipt scanner with hybrid EasyOCR + Azure Document Intelligence"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [
     {name = "Mahankali Harshith"},
 ]
 keywords = ["ocr", "receipt", "scanner", "easyocr", "azure", "fastapi"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Framework :: FastAPI",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Image Recognition",
 ]
@@ -47,9 +46,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest==9.0.2",
+    "pytest-cov==6.1.1",
     "httpx==0.28.1",
     "pre-commit>=3.6",
     "ruff>=0.8",
+    "mypy>=1.13",
+    "bandit>=1.8",
+    "pip-audit>=2.7",
 ]
 postgres = [
     "psycopg2-binary>=2.9",
@@ -62,7 +65,7 @@ Issues = "https://github.com/MahankaliHarshith/OCR-project/issues"
 
 # ─── Ruff (linter + formatter) ──────────────────────────────────────────────
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 120
 fix = true
 
@@ -96,3 +99,54 @@ addopts = "-v --tb=short"
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+
+# ─── Coverage ────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "app/__pycache__/*",
+    "app/static/*",
+    "app/ocr/engine.py",
+    "app/ocr/azure_engine.py",
+    "app/ocr/hybrid_engine.py",
+    "app/ocr/preprocessor.py",
+    "app/ocr/total_verifier.py",
+    "app/ocr/quality_scorer.py",
+    "app/ocr/usage_tracker.py",
+    "app/ocr/image_cache.py",
+    "app/ocr/validators.py",
+    "app/services/receipt_service.py",
+    "app/services/batch_service.py",
+    "app/services/product_service.py",
+    "app/training/*",
+    "app/db_postgres.py",
+    "app/error_tracking.py",
+    "app/observability.py",
+    "app/main.py",
+    "app/api/routes.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 70
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+    "pass",
+]
+
+# ─── Mypy (type checking) ───────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+
+# ─── Bandit (security linter) ───────────────────────────────────────────────
+[tool.bandit]
+exclude_dirs = ["tests", "scripts"]
+skips = ["B101", "B601"]

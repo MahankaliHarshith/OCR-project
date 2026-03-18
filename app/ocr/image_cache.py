@@ -10,19 +10,20 @@ Cache is in-memory (LRU with max size) with disk persistence
 so cached results survive server restarts.
 """
 
+import contextlib
 import hashlib
 import json
 import logging
-import time
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 try:
-    from app.metrics import record_cache_hit as _record_cache_hit, record_cache_miss as _record_cache_miss
+    from app.metrics import record_cache_hit as _record_cache_hit
+    from app.metrics import record_cache_miss as _record_cache_miss
 except Exception:
     def _record_cache_hit():
         pass
@@ -45,7 +46,7 @@ class ImageCache:
 
     DISK_WRITE_DEBOUNCE_SECONDS = 30  # Min interval between disk writes
 
-    def __init__(self, max_size: int = 100, ttl_seconds: int = 3600, persist_path: Optional[str] = None):
+    def __init__(self, max_size: int = 100, ttl_seconds: int = 3600, persist_path: str | None = None):
         """
         Args:
             max_size: Maximum number of cached results (default: 100 images)
@@ -78,7 +79,7 @@ class ImageCache:
                 sha256.update(chunk)
         return sha256.hexdigest()
 
-    def get(self, image_hash: str) -> Optional[Dict]:
+    def get(self, image_hash: str) -> dict | None:
         """
         Look up cached OCR result by image hash.
 
@@ -110,7 +111,7 @@ class ImageCache:
             _record_cache_miss()
             return None
 
-    def put(self, image_hash: str, result: Dict, meta: Optional[Dict] = None) -> None:
+    def put(self, image_hash: str, result: dict, meta: dict | None = None) -> None:
         """
         Store an OCR result in the cache.
 
@@ -161,7 +162,7 @@ class ImageCache:
                 return self._cache[image_hash].get("meta", {}).get(key, default)
             return default
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Get cache performance statistics."""
         total = self.hits + self.misses
         return {
@@ -184,10 +185,8 @@ class ImageCache:
             logger.info("[Cache] Cleared all cached entries")
         # Clear disk file too
         if self._persist_path and self._persist_path.exists():
-            try:
+            with contextlib.suppress(Exception):
                 self._persist_path.unlink()
-            except Exception:
-                pass
 
     def flush(self) -> None:
         """Force-persist all cached entries to disk (call on shutdown).
@@ -241,7 +240,7 @@ class ImageCache:
         if not self._persist_path or not self._persist_path.exists():
             return
         try:
-            with open(self._persist_path, "r") as f:
+            with open(self._persist_path) as f:
                 data = json.load(f)
             now = time.time()
             loaded = 0
@@ -282,7 +281,7 @@ class ImageCache:
 
 # ─── Singleton ───────────────────────────────────────────────────────────────
 
-_cache: Optional[ImageCache] = None
+_cache: ImageCache | None = None
 _cache_lock = threading.Lock()
 
 
@@ -293,7 +292,7 @@ def get_image_cache() -> ImageCache:
         return _cache
     with _cache_lock:
         if _cache is None:
-            from app.config import IMAGE_CACHE_MAX_SIZE, IMAGE_CACHE_TTL, BASE_DIR
+            from app.config import BASE_DIR, IMAGE_CACHE_MAX_SIZE, IMAGE_CACHE_TTL
             persist_path = str(BASE_DIR / "data" / "image_cache.json")
             _cache = ImageCache(
                 max_size=IMAGE_CACHE_MAX_SIZE,

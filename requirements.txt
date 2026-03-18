@@ -1,5 +1,5 @@
 # Handwritten Receipt Scanner - Dependencies
-# Python 3.11+
+# Python 3.12+
 # Pinned to exact versions for reproducible builds.
 # To upgrade, edit versions here and run: pip install -r requirements.txt
 
@@ -41,7 +41,3 @@ opentelemetry-exporter-otlp-proto-grpc==1.29.0
 opentelemetry-instrumentation-fastapi==0.50b0
 opentelemetry-instrumentation-requests==0.50b0
 opentelemetry-instrumentation-sqlite3==0.50b0
-
-# ─── Testing (dev) ───────────────────────────────────────
-pytest==9.0.2
-httpx==0.28.1

@@ -5,7 +5,7 @@ Covers boundary conditions, type safety, concurrency, malformed input,
 and real-world OCR quirks that the happy-path tests don't reach.
 """
 
-import hashlib
+import contextlib
 import os
 import sys
 import tempfile
@@ -13,7 +13,7 @@ import threading
 import unittest
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -190,7 +190,6 @@ class TestDedupEdgeCases(unittest.TestCase):
         """Different images should produce different hashes."""
         try:
             from PIL import Image
-            import numpy as np
         except ImportError:
             self.skipTest("Pillow not installed")
 
@@ -216,14 +215,10 @@ class TestDedupEdgeCases(unittest.TestCase):
             h2 = self.svc.compute_image_hash(tmp2)
             self.assertNotEqual(h1, h2)
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp1)
-            except OSError:
-                pass
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp2)
-            except OSError:
-                pass
 
     def test_image_hash_corrupted_file(self):
         """Corrupted/non-image file should return empty string."""
@@ -1142,6 +1137,7 @@ class TestSmartOCREndpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from fastapi.testclient import TestClient
+
         from app.main import app
         cls.client = TestClient(app)
 

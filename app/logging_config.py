@@ -10,20 +10,18 @@ Usage:
 
 import logging
 import logging.handlers
-import os
 import sys
 import time
-from pathlib import Path
 
 from app.config import (
-    LOG_LEVEL,
+    LOG_CONSOLE_FORMAT,
+    LOG_DATE_FORMAT,
     LOG_DIR,
     LOG_FILE,
-    LOG_FILE_MAX_BYTES,
     LOG_FILE_BACKUP_COUNT,
+    LOG_FILE_MAX_BYTES,
     LOG_FORMAT,
-    LOG_DATE_FORMAT,
-    LOG_CONSOLE_FORMAT,
+    LOG_LEVEL,
 )
 
 
@@ -140,7 +138,7 @@ def setup_logging() -> None:
     log.info("=" * 60)
     log.info("Logging initialised")
     log.info(f"  Console level : {LOG_LEVEL.upper()}")
-    log.info(f"  File level    : DEBUG")
+    log.info("  File level    : DEBUG")
     log.info(f"  Log file      : {LOG_FILE}")
     log.info(f"  Max size      : {LOG_FILE_MAX_BYTES // (1024*1024)} MB x {LOG_FILE_BACKUP_COUNT} backups")
     log.info("=" * 60)

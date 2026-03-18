@@ -50,6 +50,20 @@ data/*
 htmlcov/
 .coverage
 *.cover
+coverage.xml
+
+# ─── Dev Tool Caches ────────────────────────────────────
+.mypy_cache/
+.ruff_cache/
+
+# ─── Training Data (large files) ────────────────────────
+training_data/images/*
+training_data/results/*
+!training_data/images/.gitkeep
+!training_data/results/.gitkeep
+
+# ─── Model Weights (anywhere) ──────────────────────────
+*.pth
 
 # ─── OS Files ───────────────────────────────────────────
 Thumbs.db

@@ -14,11 +14,9 @@ enhancement strategy per receipt type.
 
 import json
 import logging
-import numpy as np
-from typing import Dict, List, Optional, Tuple
 from pathlib import Path
-from datetime import datetime
-from collections import defaultdict
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +48,7 @@ class ReceiptTemplate:
         self.preferred_clahe_clip = 2.0
         self.preferred_max_dimension = 1800
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "template_id": self.template_id,
             "samples_used": self.samples_used,
@@ -77,7 +75,7 @@ class ReceiptTemplate:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "ReceiptTemplate":
+    def from_dict(cls, data: dict) -> "ReceiptTemplate":
         t = cls(data["template_id"])
         t.samples_used = data.get("samples_used", 0)
         layout = data.get("layout", {})
@@ -129,7 +127,7 @@ class TemplateLearner:
 
     def learn_template(
         self,
-        samples: List[Tuple[str, Dict]],
+        samples: list[tuple[str, dict]],
         template_id: str = "default",
     ) -> ReceiptTemplate:
         """
@@ -226,15 +224,16 @@ class TemplateLearner:
     def _extract_layout_features(
         self,
         image_path: str,
-        label: Dict,
-    ) -> Optional[Dict]:
+        label: dict,
+    ) -> dict | None:
         """
         Extract layout features from a single image using OCR detections.
 
         Returns normalized (0-1) positions of product codes and quantities.
         """
-        import cv2
         import re
+
+        import cv2
 
         img = cv2.imread(image_path)
         if img is None:
@@ -334,7 +333,7 @@ class TemplateLearner:
         return str(path)
 
     @staticmethod
-    def load_template(template_id: str, directory: str = None) -> Optional[ReceiptTemplate]:
+    def load_template(template_id: str, directory: str = None) -> ReceiptTemplate | None:
         """Load a template from disk."""
         from app.training.data_manager import PROFILES_DIR
         load_dir = Path(directory) if directory else PROFILES_DIR
@@ -347,7 +346,7 @@ class TemplateLearner:
         return ReceiptTemplate.from_dict(data)
 
     @staticmethod
-    def list_templates(directory: str = None) -> List[str]:
+    def list_templates(directory: str = None) -> list[str]:
         """List available template IDs."""
         from app.training.data_manager import PROFILES_DIR
         load_dir = Path(directory) if directory else PROFILES_DIR

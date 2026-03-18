@@ -1,5 +1,7 @@
 """Quick health check of all API endpoints."""
-import requests, sys
+import sys
+
+import requests
 
 base = 'http://localhost:8000'
 ok = 0

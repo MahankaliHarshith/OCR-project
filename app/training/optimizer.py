@@ -21,11 +21,9 @@ Tunable parameters:
     - LOCAL_CONFIDENCE_SKIP_THRESHOLD: [0.75, 0.80, 0.85, 0.90]
 """
 
-import json
-import time
-import logging
 import itertools
-from typing import Dict, List, Optional, Tuple
+import logging
+import time
 from datetime import datetime
 
 from app.training.benchmark import BenchmarkEngine
@@ -80,12 +78,12 @@ class Optimizer:
 
     def smart_tune(
         self,
-        samples: List[Tuple[str, Dict]],
-        search_space: Optional[Dict] = None,
+        samples: list[tuple[str, dict]],
+        search_space: dict | None = None,
         metric: str = "f1_score",
         max_rounds: int = 3,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """
         Smart parameter tuning using coordinate descent.
 
@@ -199,12 +197,12 @@ class Optimizer:
 
     def grid_search(
         self,
-        samples: List[Tuple[str, Dict]],
-        search_space: Optional[Dict] = None,
+        samples: list[tuple[str, dict]],
+        search_space: dict | None = None,
         metric: str = "f1_score",
         max_combinations: int = 50,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """
         Exhaustive grid search over parameter combinations.
 
@@ -249,7 +247,7 @@ class Optimizer:
         results_log = []
 
         for i, combo in enumerate(all_combos, 1):
-            params = dict(zip(param_names, combo))
+            params = dict(zip(param_names, combo, strict=False))
             logger.info(f"  [{i}/{len(all_combos)}] Testing: {params}")
 
             try:
@@ -290,7 +288,7 @@ class Optimizer:
     # ─── Apply Optimized Parameters ──────────────────────────────────────
 
     @staticmethod
-    def apply_profile(params: Dict) -> Dict:
+    def apply_profile(params: dict) -> dict:
         """
         Apply optimized parameters to the running config.
 
@@ -329,7 +327,7 @@ class Optimizer:
         return changes
 
     @staticmethod
-    def get_current_params() -> Dict:
+    def get_current_params() -> dict:
         """Get current OCR parameters from config."""
         import app.config as cfg
 

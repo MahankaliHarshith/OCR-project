@@ -1,10 +1,13 @@
 """Quick API test for total verification."""
-import requests, json, sys
+import json
 
-r = requests.post(
-    "http://localhost:8000/api/receipts/scan",
-    files={"file": open("test_images/receipt_neat.jpg", "rb")}
-)
+import requests
+
+with open("test_images/receipt_neat.jpg", "rb") as f:
+    r = requests.post(
+        "http://localhost:8000/api/receipts/scan",
+        files={"file": f}
+    )
 d = r.json()
 tv = d.get("receipt_data", {}).get("total_verification", {})
 with open("test_api_output.txt", "w") as f:

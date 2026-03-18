@@ -14,10 +14,10 @@ Usage:
     python scripts/train.py add-folder <folder_path> --labels <labels.json>
 """
 
-import sys
-import os
-import json
 import argparse
+import json
+import os
+import sys
 
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -40,8 +40,9 @@ def cmd_add(args):
 
 def cmd_add_folder(args):
     """Add all images in a folder with a labels JSON file."""
-    from app.training.data_manager import training_data_manager
     from pathlib import Path
+
+    from app.training.data_manager import training_data_manager
 
     folder = Path(args.folder)
     if not folder.exists():
@@ -100,8 +101,8 @@ def cmd_list(args):
 
 def cmd_benchmark(args):
     """Run accuracy benchmark."""
-    from app.training.data_manager import training_data_manager
     from app.training.benchmark import benchmark_engine
+    from app.training.data_manager import training_data_manager
 
     samples = training_data_manager.get_sample_pairs()
     if not samples:
@@ -158,7 +159,7 @@ def cmd_benchmark(args):
 def cmd_optimize(args):
     """Run parameter optimization."""
     from app.training.data_manager import training_data_manager
-    from app.training.optimizer import optimizer, QUICK_SEARCH_SPACE, DEFAULT_SEARCH_SPACE
+    from app.training.optimizer import DEFAULT_SEARCH_SPACE, QUICK_SEARCH_SPACE, optimizer
 
     samples = training_data_manager.get_sample_pairs()
     if len(samples) < 2:
@@ -171,7 +172,7 @@ def cmd_optimize(args):
         combos *= len(v)
 
     print(f"\n{'='*60}")
-    print(f"  AUTO-TUNING OCR PARAMETERS")
+    print("  AUTO-TUNING OCR PARAMETERS")
     print(f"{'='*60}")
     print(f"  Strategy:     {args.strategy}")
     print(f"  Metric:       {args.metric}")
@@ -213,7 +214,7 @@ def cmd_optimize(args):
     path = training_data_manager.save_profile(profile, "optimized")
     training_data_manager.save_benchmark_result(result)
     print(f"\n  Profile saved: {path}")
-    print(f"  Apply with: python scripts/train.py apply")
+    print("  Apply with: python scripts/train.py apply")
 
 
 def cmd_apply(args):

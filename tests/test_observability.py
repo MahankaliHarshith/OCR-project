@@ -9,17 +9,13 @@ Covers:
   - Alertmanager config: valid YAML, route/receiver structure
 """
 
-import asyncio
 import json
 import logging
-import os
-import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
-
 
 # ─── WebSocket ConnectionManager Tests ────────────────────────────────────────
 
@@ -240,7 +236,7 @@ class TestAlertRules:
 
     def setup_method(self):
         rules_path = Path(__file__).resolve().parent.parent / "monitoring" / "alert_rules.yml"
-        with open(rules_path, "r", encoding="utf-8") as f:
+        with open(rules_path, encoding="utf-8") as f:
             self.rules = yaml.safe_load(f)
 
     def test_valid_yaml(self):
@@ -298,7 +294,7 @@ class TestAlertmanagerConfig:
 
     def setup_method(self):
         config_path = Path(__file__).resolve().parent.parent / "monitoring" / "alertmanager.yml"
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
     def test_valid_yaml(self):
@@ -327,7 +323,7 @@ class TestPrometheusConfig:
 
     def setup_method(self):
         config_path = Path(__file__).resolve().parent.parent / "monitoring" / "prometheus.yml"
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
     def test_alerting_configured(self):
@@ -348,7 +344,7 @@ class TestLokiConfig:
 
     def setup_method(self):
         config_path = Path(__file__).resolve().parent.parent / "monitoring" / "loki.yml"
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
     def test_valid_yaml(self):
@@ -369,7 +365,7 @@ class TestPromtailConfig:
 
     def setup_method(self):
         config_path = Path(__file__).resolve().parent.parent / "monitoring" / "promtail.yml"
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
     def test_valid_yaml(self):

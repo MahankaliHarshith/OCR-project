@@ -28,11 +28,11 @@ Usage:
 """
 
 import logging
-import time
 import threading
+import time
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Any
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,8 @@ class ObsSnapshot:
     request_count: int
     requests_in_window: int
     log_level: str
-    components: Dict[str, bool]
-    last_state_change: Optional[str]
+    components: dict[str, bool]
+    last_state_change: str | None
     uptime_seconds: float
 
 
@@ -101,10 +101,10 @@ class ObservabilityManager:
         # Current state
         self._state = HealthState.HEALTHY
         self._last_state_change = time.time()
-        self._original_log_level: Optional[int] = None
+        self._original_log_level: int | None = None
 
         # Component status cache (computed once at startup, updated lazily)
-        self._components: Dict[str, bool] = {}
+        self._components: dict[str, bool] = {}
         self._components_checked = False
 
     # ─── Record a request ─────────────────────────────────────────────────
@@ -201,7 +201,7 @@ class ObservabilityManager:
                 self._original_log_level = None
             logger.info("✅ HEALTHY: error rate and latency back to normal — log level restored")
 
-    def _get_console_handler(self) -> Optional[logging.Handler]:
+    def _get_console_handler(self) -> logging.Handler | None:
         """Find the console StreamHandler on the root logger."""
         import sys
         for handler in logging.getLogger().handlers:
@@ -211,7 +211,7 @@ class ObservabilityManager:
 
     # ─── Component detection ──────────────────────────────────────────────
 
-    def get_components(self) -> Dict[str, Any]:
+    def get_components(self) -> dict[str, Any]:
         """
         Detect which observability components are available and active.
         Cached after first call (components don't change at runtime).
@@ -223,7 +223,7 @@ class ObservabilityManager:
 
         # Sentry
         try:
-            from app.error_tracking import _sentry_available, SENTRY_DSN
+            from app.error_tracking import SENTRY_DSN, _sentry_available
             components["sentry"] = {
                 "installed": True,
                 "configured": bool(SENTRY_DSN),
@@ -239,7 +239,7 @@ class ObservabilityManager:
 
         # Prometheus
         try:
-            from prometheus_fastapi_instrumentator import Instrumentator
+            from prometheus_fastapi_instrumentator import Instrumentator  # noqa: F401
             components["prometheus"] = {
                 "installed": True,
                 "active": True,
@@ -269,7 +269,7 @@ class ObservabilityManager:
 
         # JSON Logging
         try:
-            from app.json_logging import JSON_LOGGING_ENABLED, JSON_LOG_FILE
+            from app.json_logging import JSON_LOG_FILE, JSON_LOGGING_ENABLED
             components["json_logging"] = {
                 "active": JSON_LOGGING_ENABLED,
                 "file": str(JSON_LOG_FILE) if JSON_LOGGING_ENABLED else None,
@@ -290,7 +290,7 @@ class ObservabilityManager:
 
     # ─── Status snapshot ──────────────────────────────────────────────────
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """
         Full observability status for the /api/observability endpoint.
         Returns current state, metrics, and component status.
@@ -378,7 +378,7 @@ class ObservabilityManager:
 
 # ─── Singleton ────────────────────────────────────────────────────────────────
 
-_instance: Optional[ObservabilityManager] = None
+_instance: ObservabilityManager | None = None
 _instance_lock = threading.Lock()
 
 

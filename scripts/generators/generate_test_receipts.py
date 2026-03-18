@@ -10,10 +10,9 @@ Each image simulates different handwriting styles:
 """
 
 import random
-import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 OUTPUT_DIR = Path("test_images")
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -24,7 +23,7 @@ def get_font(size: int):
     for name in ["comic.ttf", "comicbd.ttf", "segoesc.ttf", "calibri.ttf"]:
         try:
             return ImageFont.truetype(name, size)
-        except (OSError, IOError):
+        except OSError:
             continue
     return ImageFont.load_default()
 
@@ -45,7 +44,6 @@ def _draw_wavy_line(draw, y, width, color, thickness=1):
 
 def _add_paper_texture(img, intensity=8):
     """Add subtle noise to simulate paper grain."""
-    import struct
     pixels = img.load()
     w, h = img.size
     for _ in range(w * h // 6):
@@ -83,7 +81,6 @@ def _add_coffee_stain(img):
     cy = random.randint(h // 4, 3 * h // 4)
     r = random.randint(30, 60)
     for i in range(r - 3, r + 3):
-        color = (210, 195, 170, 40)  # light brown, very faint
         draw.ellipse([cx - i, cy - i, cx + i, cy + i], outline=(215, 200, 180))
 
 
@@ -171,7 +168,7 @@ def generate_receipt(
     y += 12
 
     # Draw each item
-    for idx, item_tuple in enumerate(items, 1):
+    for _idx, item_tuple in enumerate(items, 1):
         if ruled:
             _draw_wavy_line(draw, y + int(line_spacing * 0.85), w - 60,
                             (200, 195, 185), 1)

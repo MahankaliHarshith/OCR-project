@@ -4,9 +4,10 @@ Uses random slight offsets, varying font sizes, and a slightly rotated/noisy
 background to simulate real handwriting on paper.
 """
 
-import random
 import math
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageTransform
+import random
+
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 # ── Receipt content (new TE/PEP products) ──
 RECEIPT_ITEMS = [
@@ -36,14 +37,13 @@ def create_handwritten_receipt(output_path: str):
         draw.point((x, y), fill=(shade, shade, shade - 5))
 
     # Try to use a handwriting-like font, fall back to default
-    fonts = []
     font_names = [
         "C:/Windows/Fonts/comic.ttf",       # Comic Sans (handwriting-ish)
         "C:/Windows/Fonts/segoepr.ttf",      # Segoe Print
         "C:/Windows/Fonts/segoesc.ttf",      # Segoe Script
         "C:/Windows/Fonts/arial.ttf",        # Fallback
     ]
-    
+
     main_font = None
     title_font = None
     for fn in font_names:
@@ -52,9 +52,9 @@ def create_handwritten_receipt(output_path: str):
             title_font = ImageFont.truetype(fn, 44)
             print(f"Using font: {fn}")
             break
-        except (OSError, IOError):
+        except OSError:
             continue
-    
+
     if main_font is None:
         main_font = ImageFont.load_default()
         title_font = main_font
@@ -106,7 +106,7 @@ def create_handwritten_receipt(output_path: str):
     # ── Write each item ──
     for idx, (code, qty) in enumerate(RECEIPT_ITEMS, 1):
         color = random.choice(ink_colors)
-        
+
         # Random vertical jitter (handwriting isn't perfectly aligned)
         y_jitter = random.randint(-4, 4)
         x_jitter_sno = random.randint(-6, 6)
@@ -116,10 +116,10 @@ def create_handwritten_receipt(output_path: str):
         # S.No
         draw.text((95 + x_jitter_sno, y_pos + y_jitter),
                   f"{idx}.", fill=color, font=main_font)
-        
+
         # Product code — always uppercase for clarity
         code_display = code
-        
+
         draw.text((210 + x_jitter_code, y_pos + y_jitter + random.randint(-2, 2)),
                   code_display, fill=color, font=main_font)
 
@@ -130,7 +130,7 @@ def create_handwritten_receipt(output_path: str):
         # Quantity
         draw.text((530 + x_jitter_qty, y_pos + y_jitter + random.randint(-2, 2)),
                   str(qty), fill=color, font=main_font)
-        
+
         y_pos += random.randint(70, 85)  # Variable line spacing
 
     # ── Footer ──
@@ -140,14 +140,14 @@ def create_handwritten_receipt(output_path: str):
             wave_y = y_pos + int(1 * math.sin(x / 18))
             draw.point((x, wave_y), fill=random.choice(ink_colors))
     y_pos += 35
-    
+
     color = random.choice(ink_colors)
     draw.text((350 + random.randint(-5, 5), y_pos + random.randint(-3, 3)),
               f"Total Items: {len(RECEIPT_ITEMS)}", fill=color, font=main_font)
 
     # ── Post-processing: slight blur + noise for realism ──
     img = img.filter(ImageFilter.GaussianBlur(radius=0.7))
-    
+
     # Add slight rotation (like a slightly crooked scan)
     angle = random.uniform(-1.5, 1.5)
     img = img.rotate(angle, fillcolor=(235, 230, 220), expand=False)

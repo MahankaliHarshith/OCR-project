@@ -13,13 +13,13 @@ Cost Model (as of 2025):
     Free tier (F0)   : 500 pages / month     (both models combined)
 """
 
+import contextlib
 import json
 import logging
 import os
 import threading
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class UsageTracker:
 
     def __init__(
         self,
-        usage_file: Optional[Path] = None,
+        usage_file: Path | None = None,
         daily_limit: int = 50,
         monthly_limit: int = 500,
         free_tier_pages: int = 500,
@@ -70,7 +70,7 @@ class UsageTracker:
 
     # ─── Public API ──────────────────────────────────────────────────────
 
-    def can_call_azure(self) -> Dict:
+    def can_call_azure(self) -> dict:
         """
         Check if we're allowed to make another Azure API call.
 
@@ -221,7 +221,7 @@ class UsageTracker:
                 f"monthly_total={month_data['total_pages']}"
             )
 
-    def get_usage_summary(self) -> Dict:
+    def get_usage_summary(self) -> dict:
         """
         Get a complete usage summary for display on dashboard.
 
@@ -339,15 +339,15 @@ class UsageTracker:
             4,
         )
 
-    def _load(self) -> Dict:
+    def _load(self) -> dict:
         """Load usage data from JSON file."""
         if self.usage_file.exists():
             try:
-                with open(self.usage_file, "r") as f:
+                with open(self.usage_file) as f:
                     data = json.load(f)
                 logger.debug(f"[UsageTracker] Loaded usage data from {self.usage_file}")
                 return data
-            except (json.JSONDecodeError, IOError) as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"[UsageTracker] Corrupted usage file, resetting: {e}")
 
         return {"days": {}, "months": {}, "cache": {}}
@@ -372,7 +372,7 @@ class UsageTracker:
 
             # Clean up old monthly data (keep last 13 months)
             if "months" in self._data:
-                current_month = today.strftime("%Y-%m")
+                _current_month = today.strftime("%Y-%m")
                 month_keys_to_remove = []
                 for month_key in self._data["months"]:
                     try:
@@ -399,18 +399,16 @@ class UsageTracker:
                 os.replace(tmp_path, str(self.usage_file))
             except Exception:
                 # Clean up temp file on failure
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(tmp_path)
-                except OSError:
-                    pass
                 raise
-        except IOError as e:
+        except OSError as e:
             logger.error(f"[UsageTracker] Failed to save usage data: {e}")
 
 
 # ─── Singleton ───────────────────────────────────────────────────────────────
 
-_tracker: Optional[UsageTracker] = None
+_tracker: UsageTracker | None = None
 
 
 def get_usage_tracker() -> UsageTracker:
@@ -419,8 +417,8 @@ def get_usage_tracker() -> UsageTracker:
     if _tracker is None:
         from app.config import (
             AZURE_DAILY_PAGE_LIMIT,
-            AZURE_MONTHLY_PAGE_LIMIT,
             AZURE_FREE_TIER_PAGES,
+            AZURE_MONTHLY_PAGE_LIMIT,
         )
         _tracker = UsageTracker(
             daily_limit=AZURE_DAILY_PAGE_LIMIT,

@@ -6,19 +6,17 @@ Orchestrates the full receipt scanning pipeline:
 
 import logging
 import os
-import time
 import shutil
 import threading
-from pathlib import Path
-from typing import Dict, List, Optional
+import time
 from datetime import datetime
+from pathlib import Path
 
 from app.config import UPLOAD_DIR
 from app.database import db
-from app.ocr.preprocessor import ImagePreprocessor
-from app.ocr.engine import get_ocr_engine
 from app.ocr.hybrid_engine import get_hybrid_engine
 from app.ocr.parser import ReceiptParser
+from app.ocr.preprocessor import ImagePreprocessor
 from app.ocr.total_verifier import get_total_verifier
 from app.services.product_service import product_service
 
@@ -30,12 +28,13 @@ except Exception:
     def _record_scan(*a, **kw):
         pass
 
-from app.tracing import get_tracer, optional_span
-from app.error_tracking import capture_exception, add_breadcrumb, track_operation
-from app.services.dedup_service import dedup_service
-from app.ocr.quality_scorer import quality_scorer
-from app.ocr.validators import receipt_validator
-from app.services.correction_service import correction_service
+from app.error_tracking import add_breadcrumb, capture_exception  # noqa: E402
+from app.ocr.quality_scorer import quality_scorer  # noqa: E402
+from app.ocr.validators import receipt_validator  # noqa: E402
+from app.services.correction_service import correction_service  # noqa: E402
+from app.services.dedup_service import dedup_service  # noqa: E402
+from app.tracing import get_tracer, optional_span  # noqa: E402
+
 _tracer = get_tracer(__name__)
 
 
@@ -48,7 +47,7 @@ class ReceiptService:
         self.preprocessor = ImagePreprocessor()
         self.hybrid_engine = get_hybrid_engine()
         self.db = db
-        self._parser: Optional[ReceiptParser] = None
+        self._parser: ReceiptParser | None = None
         self._catalog_last_refresh: float = 0.0   # epoch seconds
         self._CATALOG_TTL: float = 30.0            # refresh at most once per 30s
         self._catalog_lock = threading.Lock()       # must be created in __init__, not lazily
@@ -83,7 +82,7 @@ class ReceiptService:
                 self._parser = ReceiptParser(catalog)
             self._catalog_last_refresh = now
 
-    def process_receipt(self, image_path: str) -> Dict:
+    def process_receipt(self, image_path: str) -> dict:
         """
         Process a single receipt image through the full pipeline.
 
@@ -165,7 +164,7 @@ class ReceiptService:
                 logger.debug(f"[Step 1/5] Image saved to: {saved_path}")
             else:
                 saved_path = result["metadata"]["image_path"]
-                logger.debug(f"[Step 1/5] Image already saved by early cache check")
+                logger.debug("[Step 1/5] Image already saved by early cache check")
         except Exception as e:
             if not result["metadata"].get("image_path"):  # not already saved by Step 0
                 result["errors"].append(f"Image save failed: {e}")
@@ -550,7 +549,7 @@ class ReceiptService:
             # can PUT (update) instead of POST (duplicate) on "Confirm & Save"
             saved_receipt = self.db.get_receipt(receipt_id)
             if saved_receipt and saved_receipt.get("items"):
-                for item, saved_item in zip(receipt_data["items"], saved_receipt["items"]):
+                for item, saved_item in zip(receipt_data["items"], saved_receipt["items"], strict=False):
                     item["id"] = saved_item["id"]
 
             # ── Save smart OCR metadata ──
@@ -622,11 +621,11 @@ class ReceiptService:
 
         return result
 
-    def get_receipt(self, receipt_id: int) -> Optional[Dict]:
+    def get_receipt(self, receipt_id: int) -> dict | None:
         """Get a receipt by ID with all items."""
         return self.db.get_receipt(receipt_id)
 
-    def get_recent_receipts(self, limit: int = 10, offset: int = 0) -> List[Dict]:
+    def get_recent_receipts(self, limit: int = 10, offset: int = 0) -> list[dict]:
         """Get the most recent receipts (paginated)."""
         return self.db.get_recent_receipts(limit, offset)
 
@@ -634,7 +633,7 @@ class ReceiptService:
         """Return total receipt count."""
         return self.db.count_receipts()
 
-    def get_receipts_by_date(self, date: str) -> List[Dict]:
+    def get_receipts_by_date(self, date: str) -> list[dict]:
         """Get all receipts for a specific date."""
         return self.db.get_receipts_by_date(date)
 
@@ -704,7 +703,7 @@ class ReceiptService:
             unit_price=unit_price, line_total=line_total,
         )
 
-    def _parse_azure_structured(self, azure_data: Dict, ocr_detections: List[Dict], is_structured: bool = False) -> Dict:
+    def _parse_azure_structured(self, azure_data: dict, ocr_detections: list[dict], is_structured: bool = False) -> dict:
         """
         Convert Azure prebuilt-receipt structured items into our receipt format.
 
@@ -720,8 +719,8 @@ class ReceiptService:
         Returns:
             Standard receipt data dict (same format as parser.parse()).
         """
-        from difflib import get_close_matches
         from datetime import datetime
+        from difflib import get_close_matches
 
         items = []
         azure_items = azure_data.get("items", [])
@@ -887,7 +886,7 @@ class ReceiptService:
             "total_verification": total_verification,
         }
 
-    def _quick_item_count(self, ocr_results: List[Dict]) -> int:
+    def _quick_item_count(self, ocr_results: list[dict]) -> int:
         """
         Quick-parse OCR results to count how many known catalog items are present.
         Used to decide if a second OCR pass is needed. Much faster than full parse

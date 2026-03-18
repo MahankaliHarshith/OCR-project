@@ -26,13 +26,11 @@ Metrics exposed:
 """
 
 import logging
-import time
-from typing import Optional, Callable
 
 from prometheus_client import (
     Counter,
-    Histogram,
     Gauge,
+    Histogram,
     Info,
 )
 

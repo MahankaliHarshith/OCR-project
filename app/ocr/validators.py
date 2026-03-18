@@ -9,7 +9,6 @@ Post-parse validation that catches OCR errors the parser missed:
 """
 
 import logging
-from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +25,10 @@ class ReceiptValidator:
 
     def validate(
         self,
-        items: List[Dict],
-        catalog: Optional[Dict[str, Dict]] = None,
-        historical_stats: Optional[Dict] = None,
-    ) -> Dict:
+        items: list[dict],
+        catalog: dict[str, dict] | None = None,
+        historical_stats: dict | None = None,
+    ) -> dict:
         """Run all validation rules on parsed receipt items.
 
         Args:
@@ -40,8 +39,8 @@ class ReceiptValidator:
         Returns:
             Dict with warnings, corrections applied, and overall status.
         """
-        warnings: List[Dict] = []
-        corrections: List[Dict] = []
+        warnings: list[dict] = []
+        corrections: list[dict] = []
 
         # ── Rule 1: Impossible Quantity Detection ────────────────────────
         for item in items:
@@ -141,7 +140,7 @@ class ReceiptValidator:
                         })
 
         # ── Rule 3: Duplicate Item Flagging ──────────────────────────────
-        code_counts: Dict[str, int] = {}
+        code_counts: dict[str, int] = {}
         for item in items:
             code = item.get("code", "")
             if code:
@@ -201,7 +200,7 @@ class ReceiptValidator:
             },
         }
 
-    def get_historical_stats(self, db_instance) -> Dict:
+    def get_historical_stats(self, db_instance) -> dict:
         """Get historical quantity statistics per product code.
 
         Returns dict: {code: {avg_quantity, max_quantity, count}}

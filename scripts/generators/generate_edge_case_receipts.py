@@ -15,10 +15,9 @@ Covers scenarios:
 """
 
 import random
-import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 OUTPUT_DIR = Path("test_images")
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -28,7 +27,7 @@ def get_font(size: int):
     for name in ["comic.ttf", "comicbd.ttf", "segoesc.ttf", "calibri.ttf"]:
         try:
             return ImageFont.truetype(name, size)
-        except (OSError, IOError):
+        except OSError:
             continue
     return ImageFont.load_default()
 
@@ -124,7 +123,7 @@ def generate_receipt(
     y += 12
 
     # Draw each item
-    for idx, (code, qty) in enumerate(items, 1):
+    for _idx, (code, qty) in enumerate(items, 1):
         _draw_wavy_line(draw, y + int(line_spacing * 0.85), w - 60, (200, 195, 185), 1)
 
         full_line = f"{code}    {qty}"
@@ -303,7 +302,7 @@ EDGE_CASES = [
         "expected_items": 8,
     },
     # 8. "Total Items" false positive test
-    # This receipt has "Total Qty 8" AND "Total Items: 3" — 
+    # This receipt has "Total Qty 8" AND "Total Items: 3" —
     # the scanner should use "Total Qty 8", NOT "Total Items: 3"
     {
         "name": "edge_total_items_confusion.jpg",
@@ -355,7 +354,7 @@ if __name__ == "__main__":
         )
         paths.append(p)
     print(f"\n✓ {len(paths)} edge-case images saved to {OUTPUT_DIR}/")
-    print(f"\nExpected results:")
+    print("\nExpected results:")
     for r in EDGE_CASES:
         et = r['expected_total']
         ei = r['expected_items']

@@ -1,13 +1,18 @@
 """Test parser with OCR detections from the boxed template receipt."""
-import sys, io, warnings, os, time
+import io
+import os
+import sys
+import time
+import warnings
+
 warnings.filterwarnings("ignore")
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
-from app.ocr.parser import ReceiptParser
-from app.ocr.engine import OCREngine
-from app.ocr.preprocessor import ImagePreprocessor
+from app.ocr.engine import OCREngine  # noqa: E402
+from app.ocr.parser import ReceiptParser  # noqa: E402
+from app.ocr.preprocessor import ImagePreprocessor  # noqa: E402
 
 # Expected results
 expected = {'ABC': 2, 'DEF': 3, 'GHI': 1, 'JKL': 2, 'MNO': 10}
@@ -89,7 +94,6 @@ if not os.path.exists(img_path):
 prep = ImagePreprocessor()
 eng = OCREngine()
 
-import cv2
 start = time.time()
 gray_img, meta = prep.preprocess(img_path)
 print(f"  Preprocessed: {gray_img.shape} in {meta.get('processing_time_ms', '?')}ms")
@@ -100,7 +104,7 @@ if is_structured:
     print(f"  ⚡ TURBO mode: grid detected, image {gray_img.shape[1]}x{gray_img.shape[0]}")
     ocr_results = eng.extract_text_turbo(gray_img)
 else:
-    print(f"  Standard mode (no grid detected)")
+    print("  Standard mode (no grid detected)")
     ocr_results = eng.extract_text(gray_img)
 ocr_time = time.time() - start
 print(f"  OCR detections: {len(ocr_results)} in {ocr_time:.1f}s")

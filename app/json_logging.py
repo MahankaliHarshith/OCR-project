@@ -21,16 +21,13 @@ import logging
 import logging.handlers
 import os
 import sys
-import time
-import traceback
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from app.config import (
     LOG_DIR,
-    LOG_FILE_MAX_BYTES,
     LOG_FILE_BACKUP_COUNT,
+    LOG_FILE_MAX_BYTES,
 )
 from app.logging_config import WindowsSafeRotatingFileHandler
 
@@ -77,8 +74,8 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         # Base structured fields
-        log_entry: Dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+        log_entry: dict[str, Any] = {
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

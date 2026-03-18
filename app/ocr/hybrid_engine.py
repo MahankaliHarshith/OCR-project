@@ -32,12 +32,11 @@ Engine Modes:
     - "local": EasyOCR only (offline, original behavior)
 """
 
+import contextlib
 import logging
 import re
-import time
 import threading
-from typing import Dict, List, Optional, Tuple
-from pathlib import Path
+import time
 
 from app.tracing import get_tracer, optional_span
 
@@ -114,8 +113,8 @@ class HybridOCREngine:
         Only materialised when OCR_PARALLEL_DUAL_PASS=True.
         """
         if self._local_engine_2 is None:
-            from app.ocr.engine import OCREngine
             from app.config import OCR_LANGUAGE, OCR_USE_GPU
+            from app.ocr.engine import OCREngine
             logger.info("[HybridOCR] Initializing second OCR reader for parallel dual-pass...")
             self._local_engine_2 = OCREngine(language=OCR_LANGUAGE, use_gpu=OCR_USE_GPU)
         return self._local_engine_2
@@ -145,7 +144,7 @@ class HybridOCREngine:
         is_structured: bool = False,
         original_color=None,
         quality_info: dict = None,
-    ) -> Dict:
+    ) -> dict:
         """
         Process a receipt image through the optimal OCR pipeline.
 
@@ -173,7 +172,6 @@ class HybridOCREngine:
                 "metadata": {...},
             }
         """
-        total_start = time.time()
 
         with optional_span(_tracer, "hybrid_engine.route", {"ocr.mode": self.mode}) as span:
             if self.mode == "local":
@@ -193,7 +191,7 @@ class HybridOCREngine:
         is_structured: bool,
         original_color=None,
         quality_info: dict = None,
-    ) -> Dict:
+    ) -> dict:
         """
         AUTO mode: Smart routing with MAXIMUM cost efficiency.
 
@@ -212,16 +210,13 @@ class HybridOCREngine:
             Effective capacity: ~35-50 scans/day = ~800-1100 scans/month
         """
         from app.config import (
-            AZURE_RECEIPT_MIN_ITEMS,
-            AZURE_RECEIPT_CONFIDENCE_THRESHOLD,
             AZURE_MODEL_STRATEGY,
+            AZURE_RECEIPT_MIN_ITEMS,
             HYBRID_CROSS_VERIFY,
+            IMAGE_QUALITY_GATE_ENABLED,
+            LOCAL_CATALOG_MATCH_SKIP_THRESHOLD,
             LOCAL_CONFIDENCE_SKIP_THRESHOLD,
             LOCAL_MIN_DETECTIONS_SKIP,
-            LOCAL_CATALOG_MATCH_SKIP_THRESHOLD,
-            IMAGE_QUALITY_GATE_ENABLED,
-            IMAGE_QUALITY_MIN_SHARPNESS,
-            IMAGE_QUALITY_MIN_BRIGHTNESS,
         )
 
         total_start = time.time()
@@ -281,7 +276,6 @@ class HybridOCREngine:
                 # ── Calibrated confidence: adjusts for EasyOCR's inflated scores ──
                 # EasyOCR often reports 0.70-0.90 on garbled handwritten text.
                 # Calibration penalizes short/noisy/repetitive detections.
-                from app.ocr.engine import OCREngine
                 local_dets = local_result.get("ocr_detections", [])
                 calibrated_conf = self._calibrated_avg_confidence(local_dets)
 
@@ -472,10 +466,8 @@ class HybridOCREngine:
                         or (azure_items and avg_conf > 0.5)
                     )
                     if cache_key and _cache_worthy:
-                        try:
+                        with contextlib.suppress(Exception):
                             self.image_cache.put(cache_key, result)
-                        except Exception:
-                            pass
                     elif cache_key:
                         logger.debug(
                             "[Hybrid] Skipping cache write — result too sparse "
@@ -536,7 +528,7 @@ class HybridOCREngine:
         image_path: str,
         processed_image,
         is_structured: bool,
-    ) -> Dict:
+    ) -> dict:
         """
         AZURE-ONLY mode: Use Azure, fail if unavailable.
 
@@ -649,10 +641,8 @@ class HybridOCREngine:
             or (azure_items and avg_conf > 0.5)
         )
         if cache_key and _cache_worthy:
-            try:
+            with contextlib.suppress(Exception):
                 self.image_cache.put(cache_key, result)
-            except Exception:
-                pass
         elif cache_key:
             logger.debug(
                 "[Azure-Only] Skipping cache write — result too sparse "
@@ -672,7 +662,7 @@ class HybridOCREngine:
         is_structured: bool,
         original_color=None,
         quality_info: dict = None,
-    ) -> Dict:
+    ) -> dict:
         """
         LOCAL mode: EasyOCR multi-pass strategy with parallel dual-pass.
 
@@ -684,12 +674,14 @@ class HybridOCREngine:
             original_color: Pre-loaded color image (BGR).  When supplied the
                             expensive disk-read + EXIF correction is skipped.
         """
+        from concurrent.futures import ThreadPoolExecutor
+
         import cv2
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         from app.config import (
-            OCR_SMART_PASS_THRESHOLD,
-            OCR_PARALLEL_DUAL_PASS,
             IMAGE_MAX_DIMENSION,
+            OCR_PARALLEL_DUAL_PASS,
+            OCR_SMART_PASS_THRESHOLD,
         )
 
         total_start = time.time()
@@ -841,7 +833,7 @@ class HybridOCREngine:
 
     # ─── Helper Methods ──────────────────────────────────────────────────
 
-    def _check_image_quality(self, processed_image) -> Dict:
+    def _check_image_quality(self, processed_image) -> dict:
         """
         Quick image quality assessment to prevent wasting Azure pages on bad images.
 
@@ -854,7 +846,8 @@ class HybridOCREngine:
         """
         import cv2
         import numpy as np
-        from app.config import IMAGE_QUALITY_MIN_SHARPNESS, IMAGE_QUALITY_MIN_BRIGHTNESS
+
+        from app.config import IMAGE_QUALITY_MIN_BRIGHTNESS, IMAGE_QUALITY_MIN_SHARPNESS
 
         result = {"acceptable": True, "sharpness": 0.0, "brightness": 0.0, "reason": ""}
 
@@ -905,8 +898,8 @@ class HybridOCREngine:
         return result
 
     def _merge_local_passes(
-        self, primary: List[Dict], secondary: List[Dict]
-    ) -> List[Dict]:
+        self, primary: list[dict], secondary: list[dict]
+    ) -> list[dict]:
         """Merge primary and secondary local OCR passes with multi-pass voting.
 
         Voting logic:
@@ -922,7 +915,7 @@ class HybridOCREngine:
         preserved as two distinct detections.
         y_bucket = round(y_center / 60) gives 60-pixel row bands.
         """
-        def _det_key(det: Dict):
+        def _det_key(det: dict):
             text_upper = det["text"].upper().strip()
             bbox = det.get("bbox", [])
             try:
@@ -932,7 +925,7 @@ class HybridOCREngine:
             y_bucket = round(y_mid / 60)
             return (text_upper, y_bucket)
 
-        def _y_bucket(det: Dict):
+        def _y_bucket(det: dict):
             bbox = det.get("bbox", [])
             try:
                 y_mid = (float(bbox[0][1]) + float(bbox[2][1])) / 2
@@ -1126,8 +1119,8 @@ class HybridOCREngine:
         return merged
 
     def _cross_verify_results(
-        self, local_result: Dict, azure_detections: List[Dict]
-    ) -> Dict:
+        self, local_result: dict, azure_detections: list[dict]
+    ) -> dict:
         """
         Cross-verify local OCR results with Azure Read detections.
         Boosts confidence of items found by both engines.
@@ -1176,7 +1169,7 @@ class HybridOCREngine:
         local_result["metadata"]["cross_verified"] = True
         return local_result
 
-    def _quick_item_count_local(self, ocr_results: List[Dict]) -> int:
+    def _quick_item_count_local(self, ocr_results: list[dict]) -> int:
         """Quick-count catalog items from OCR results (used for pass decisions)."""
         try:
             # Use the parser's in-memory catalog instead of DB query for speed
@@ -1201,7 +1194,7 @@ class HybridOCREngine:
                     found.add(clean)
         return len(found)
 
-    def _avg_confidence(self, detections: List[Dict]) -> float:
+    def _avg_confidence(self, detections: list[dict]) -> float:
         """Calculate average confidence across detections.
         Returns 0.0 for empty lists — callers should check len(detections)
         separately to distinguish 'no data' from 'low confidence'."""
@@ -1210,7 +1203,7 @@ class HybridOCREngine:
         confs = [d.get("confidence", 0) for d in detections]
         return sum(confs) / len(confs)
 
-    def _calibrated_avg_confidence(self, detections: List[Dict]) -> float:
+    def _calibrated_avg_confidence(self, detections: list[dict]) -> float:
         """Calculate average CALIBRATED confidence across detections.
 
         Uses OCREngine.calibrate_confidence() to adjust each detection's
@@ -1227,7 +1220,7 @@ class HybridOCREngine:
         ]
         return sum(cal_confs) / len(cal_confs)
 
-    def _catalog_match_rate(self, detections: List[Dict]) -> float:
+    def _catalog_match_rate(self, detections: list[dict]) -> float:
         """Calculate what fraction of OCR detections match known product codes.
 
         A high raw confidence is meaningless if the detected text doesn't
@@ -1276,7 +1269,7 @@ class HybridOCREngine:
 
         return matched / len(candidate_dets)
 
-    def get_engine_status(self) -> Dict:
+    def get_engine_status(self) -> dict:
         """
         Get current engine status for dashboard/debugging.
 
@@ -1317,7 +1310,7 @@ class HybridOCREngine:
 
 # ─── Singleton ───────────────────────────────────────────────────────────────
 
-_hybrid_engine: Optional[HybridOCREngine] = None
+_hybrid_engine: HybridOCREngine | None = None
 _hybrid_engine_lock = threading.Lock()
 
 

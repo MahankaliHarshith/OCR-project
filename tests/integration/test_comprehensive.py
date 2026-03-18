@@ -4,7 +4,9 @@ No HTTP server needed — calls the OCR pipeline directly for speed.
 Reports accuracy (items found, codes correct, quantities correct) and timing.
 """
 
-import sys, os, time, json
+import os
+import sys
+import time
 
 # Setup path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -90,7 +92,8 @@ EXPECTED = {
 def test_image(filepath, filename, preprocessor, ocr_engine, parser):
     """Process a single image through the full pipeline and return results."""
     import cv2
-    from app.config import OCR_SMART_PASS_THRESHOLD, IMAGE_MAX_DIMENSION
+
+    from app.config import IMAGE_MAX_DIMENSION, OCR_SMART_PASS_THRESHOLD
 
     result = {
         "filename": filename,
@@ -225,7 +228,7 @@ def print_result(result, expected_items=None):
     print(f"  Type: {result['receipt_type']} | OCR passes: {result['ocr_passes']}")
     print(f"{'='*75}")
 
-    print(f"  Timing:")
+    print("  Timing:")
     print(f"    Preprocess : {timings.get('preprocess_ms', 0):>6}ms")
     print(f"    Grid detect: {timings.get('grid_detect_ms', 0):>6}ms")
     print(f"    OCR        : {timings.get('ocr_ms', 0):>6}ms")
@@ -252,7 +255,7 @@ def print_result(result, expected_items=None):
 
     if expected_items:
         total_expected = len(expected_items)
-        print(f"\n  Accuracy Check:")
+        print("\n  Accuracy Check:")
         for exp in expected_items:
             exp_code = exp["code"]
             exp_qty = exp["qty"]
@@ -289,7 +292,7 @@ def print_result(result, expected_items=None):
         print(f"    Qty  accuracy: {qty_correct}/{total_expected} ({qty_pct:.0f}%)")
         print(f"    Result       : {overall}")
     else:
-        print(f"\n  [Discovery mode - no expected values defined]")
+        print("\n  [Discovery mode - no expected values defined]")
 
     return {
         "passed": passed,
@@ -315,9 +318,9 @@ def main():
     print("\nInitializing OCR engine (one-time model load)...")
     init_start = time.time()
 
-    from app.ocr.preprocessor import ImagePreprocessor
     from app.ocr.engine import get_ocr_engine
     from app.ocr.parser import ReceiptParser
+    from app.ocr.preprocessor import ImagePreprocessor
     from app.services.product_service import product_service
 
     preprocessor = ImagePreprocessor()
@@ -378,7 +381,7 @@ def main():
 
     # ── Grand Summary ──
     print(f"\n{'='*75}")
-    print(f"  GRAND SUMMARY")
+    print("  GRAND SUMMARY")
     print(f"{'='*75}")
 
     total_codes_correct = 0
@@ -419,7 +422,7 @@ def main():
         )
         print(f"\n  {'ALL TESTS PASSED' if all_passed else 'SOME TESTS FAILED'}")
     else:
-        print(f"\n  No expected values to compare against.")
+        print("\n  No expected values to compare against.")
 
     # Return exit code
     all_passed = all(

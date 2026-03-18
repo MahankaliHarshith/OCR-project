@@ -12,16 +12,19 @@ Environment Variables:
 """
 
 import uvicorn
-from app.config import API_HOST, API_PORT, API_DEBUG, LOG_FILE, LOG_LEVEL
+
+from app.config import API_DEBUG, API_HOST, API_PORT, LOG_FILE, LOG_LEVEL
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("  📝 Handwritten Receipt Scanner v1.0.0")
+    print("  📝 Handwritten Receipt Scanner v2.0.0")
     print("=" * 50)
     print(f"  🌐 App:      http://localhost:{API_PORT}")
     print(f"  📄 Docs:     http://localhost:{API_PORT}/docs")
     print(f"  📋 Log file: {LOG_FILE}")
     print(f"  📊 Level:    {LOG_LEVEL}")
+    if API_DEBUG:
+        print("  ⚠️  DEBUG MODE: hot-reload enabled (do NOT use in production)")
     print("=" * 50)
 
     uvicorn.run(

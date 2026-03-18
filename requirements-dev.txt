@@ -4,5 +4,18 @@
 
 -r requirements.txt
 
+# ─── Testing ─────────────────────────────────────────────
 pytest==9.0.2
+pytest-cov==6.1.1
 httpx==0.28.1
+
+# ─── Linting & Formatting ───────────────────────────────
+ruff>=0.8
+pre-commit>=3.6
+
+# ─── Type Checking ──────────────────────────────────────
+mypy>=1.13
+
+# ─── Security Scanning ─────────────────────────────────
+bandit>=1.8
+pip-audit>=2.7

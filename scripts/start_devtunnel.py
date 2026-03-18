@@ -5,13 +5,14 @@ Usage:
     python start_devtunnel.py
 """
 
+import contextlib
 import os
-import sys
-import time
 import signal
 import subprocess
+import sys
+import time
 import urllib.request
-import socket
+
 
 def main():
     port = int(os.getenv("API_PORT", "8000"))
@@ -66,8 +67,7 @@ def main():
             if resp.status == 200:
                 print(f"\n  ✅ Server is running on http://localhost:{port}")
                 break
-        except (urllib.error.URLError, socket.timeout, ConnectionRefusedError,
-                TimeoutError, OSError):
+        except (urllib.error.URLError, ConnectionRefusedError, TimeoutError, OSError):
             if i % 5 == 0 and i > 0:
                 print(f"  ⏳ Still waiting for server... ({i}s)")
             time.sleep(1)
@@ -108,10 +108,9 @@ def main():
             if "https://" in line and "devtunnels" in line:
                 # Extract URLs — prefer the short browseable URL, skip -inspect
                 for word in line.replace(",", " ").split():
-                    if word.startswith("https://") and "devtunnels" in word and "-inspect" not in word:
+                    if word.startswith("https://") and "devtunnels" in word and "-inspect" not in word and (tunnel_url is None or "-8000." in word):
                         # Prefer the -8000. URL over the :8000 URL
-                        if tunnel_url is None or "-8000." in word:
-                            tunnel_url = word.rstrip(",")
+                        tunnel_url = word.rstrip(",")
             if "Ready to accept" in line:
                 break
 
@@ -132,8 +131,8 @@ def main():
             print(f"\n  🌍 Public URL  : {tunnel_url}")
             print(f"  🏠 Local URL   : http://localhost:{port}")
             print(f"  📄 API Docs    : {tunnel_url}/docs")
-            print(f"\n  📱 Open this URL on your phone or other device!")
-            print(f"  ⏱  Tunnel stays active while this script runs.")
+            print("\n  📱 Open this URL on your phone or other device!")
+            print("  ⏱  Tunnel stays active while this script runs.")
             print("=" * 60)
         else:
             print("  ⚠  Couldn't detect tunnel URL. Check the output above.")
@@ -157,18 +156,14 @@ def main():
             tunnel_process.terminate()
             tunnel_process.wait(timeout=5)
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 tunnel_process.kill()
-            except Exception:
-                pass
         try:
             server_process.terminate()
             server_process.wait(timeout=5)
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 server_process.kill()
-            except Exception:
-                pass
         print("  ✅ Server and tunnel stopped.\n")
         sys.exit(0)
 

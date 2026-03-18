@@ -13,7 +13,8 @@ Switches modes by monkey-patching the singleton engine's .mode attribute
 and clearing caches between runs.
 """
 
-import os, sys, time, json
+import sys
+import time
 from pathlib import Path
 
 # Ensure project root on sys.path
@@ -157,9 +158,9 @@ def main():
     print("|  5 receipt images x 3 modes (local / azure / hybrid-auto)          |")
     print("+" + "="*70 + "+")
 
-    from app.services.receipt_service import ReceiptService
-    from app.ocr.hybrid_engine import get_hybrid_engine
     from app.config import AZURE_DOC_INTEL_AVAILABLE
+    from app.ocr.hybrid_engine import get_hybrid_engine
+    from app.services.receipt_service import ReceiptService
 
     svc = ReceiptService()
     engine = get_hybrid_engine()
@@ -195,11 +196,11 @@ def main():
               f"{r['azure_pages']:>7} {r['avg_ms']:>7}ms")
 
     # Per-image breakdown
-    print(f"\n  PER-IMAGE BREAKDOWN")
+    print("\n  PER-IMAGE BREAKDOWN")
     print(f"  {'---'*23}")
     for img in GROUND_TRUTH:
         print(f"\n  {img}:")
-        for key, r in all_results.items():
+        for _key, r in all_results.items():
             if img in r["per_image"]:
                 d = r["per_image"][img]
                 print(f"    {r['label']:<28} code={d['code_pct']:>3}%  qty={d['qty_pct']:>3}%  "
@@ -213,7 +214,7 @@ def main():
         ac = all_results["azure"]["code_pct"]
         aq = all_results["azure"]["qty_pct"]
         print(f"\n  {'='*68}")
-        print(f"  IMPROVEMENT SUMMARY")
+        print("  IMPROVEMENT SUMMARY")
         print(f"  {'='*68}")
         print(f"  Azure vs Local : code {ac - lc:+d}pp   qty {aq - lq:+d}pp")
         if "hybrid" in all_results:

@@ -9,15 +9,12 @@ Covers:
     - API routes: upload, benchmark, optimize endpoints
 """
 
-import json
-import shutil
-import tempfile
+import os
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-import sys
-import os
 
 # Ensure project root is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -67,8 +64,8 @@ def sample_ground_truth():
 @pytest.fixture
 def data_manager(temp_training_dir):
     """Create a DataManager pointing to temp directory."""
-    from app.training.data_manager import TrainingDataManager
     import app.training.data_manager as dm_mod
+    from app.training.data_manager import TrainingDataManager
 
     # Patch directory constants
     orig_images = dm_mod.IMAGES_DIR
@@ -393,8 +390,8 @@ class TestOptimizer:
 
     def test_apply_profile_changes_config(self):
         """Applying a profile updates config values."""
-        from app.training.optimizer import Optimizer
         import app.config as cfg
+        from app.training.optimizer import Optimizer
 
         opt = Optimizer()
         original_cutoff = cfg.FUZZY_MATCH_CUTOFF
@@ -410,8 +407,8 @@ class TestOptimizer:
 
     def test_apply_profile_no_changes(self):
         """No changes when values are already optimal."""
-        from app.training.optimizer import Optimizer
         import app.config as cfg
+        from app.training.optimizer import Optimizer
 
         opt = Optimizer()
         current = cfg.FUZZY_MATCH_CUTOFF

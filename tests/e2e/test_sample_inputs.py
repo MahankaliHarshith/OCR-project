@@ -3,7 +3,12 @@ Test all sample inputs from tests/sample_inputs/ through the full OCR pipeline.
 Reports accuracy (items found, codes correct, quantities correct) and speed.
 """
 
-import sys, os, time, json, threading, requests
+import os
+import sys
+import threading
+import time
+
+import requests
 
 # ── Expected results for each sample image ────────────────────────────────────
 # Media (2).jpg = Receipt 1: 5 items
@@ -52,6 +57,7 @@ BASE_URL = "http://127.0.0.1:8765"
 def start_server():
     """Start test server on port 8765."""
     import uvicorn
+
     from app.main import app
     config = uvicorn.Config(app, host="127.0.0.1", port=8765, log_level="warning")
     server = uvicorn.Server(config)
@@ -66,7 +72,7 @@ def wait_for_server(timeout=15):
             r = requests.get(f"{BASE_URL}/", timeout=2)
             if r.status_code == 200:
                 return True
-        except:
+        except Exception:
             pass
         time.sleep(0.5)
     return False
@@ -132,7 +138,7 @@ def analyze_result(filename, status_code, data, expected_items=None):
         found_items[code] = qty
 
     if unparsed:
-        print(f"\n  Unparsed lines:")
+        print("\n  Unparsed lines:")
         for u in unparsed:
             print(f"    • {u.get('text', '?')!r} (conf={u.get('confidence', 0):.2f})")
 
@@ -149,7 +155,7 @@ def analyze_result(filename, status_code, data, expected_items=None):
 
     if expected_items:
         result["total_expected"] = len(expected_items)
-        print(f"\n  ── Accuracy Check ──")
+        print("\n  ── Accuracy Check ──")
         all_codes_ok = True
         all_qty_ok = True
 
@@ -188,7 +194,7 @@ def analyze_result(filename, status_code, data, expected_items=None):
         print(f"    Qty  accuracy: {result['qty_correct']}/{result['total_expected']} ({qty_pct:.0f}%)")
         print(f"    Overall      : {'✅ PASS' if result['passed'] else '❌ FAIL'}")
     else:
-        print(f"\n  ℹ️  No expected results defined — discovery mode")
+        print("\n  ℹ️  No expected results defined — discovery mode")
 
     return result
 
@@ -232,7 +238,7 @@ def main():
 
     # ── Summary ──
     print(f"\n{'='*70}")
-    print(f"  📊 SUMMARY")
+    print("  📊 SUMMARY")
     print(f"{'='*70}")
 
     total_codes_correct = 0

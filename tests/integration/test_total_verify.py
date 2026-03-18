@@ -1,5 +1,4 @@
 """Quick test: Bill Total Verification on test images."""
-import json
 from app.services.receipt_service import receipt_service
 
 images = [
@@ -23,7 +22,7 @@ for img in images:
         print(f"    {item['code']:8s}  qty={item['quantity']}")
 
     computed = sum(it["quantity"] for it in rd.get("items", []))
-    print(f"\n  TOTAL VERIFICATION:")
+    print("\n  TOTAL VERIFICATION:")
     print(f"    OCR Total:      {tv.get('ocr_total', tv.get('total_qty_ocr', 'N/A'))}")
     print(f"    Computed Total:  {tv.get('computed_total', tv.get('total_qty_computed', 'N/A'))}")
     print(f"    Match:           {tv.get('total_qty_match', 'N/A')}")

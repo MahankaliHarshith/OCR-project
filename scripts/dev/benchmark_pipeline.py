@@ -1,12 +1,16 @@
 """Pipeline benchmark — identifies speed bottlenecks & accuracy gaps."""
-import time, cv2, numpy as np, sys, os
+import os
+import sys
+import time
+
+import cv2
 
 # Make sure we can import app modules
 sys.path.insert(0, os.path.dirname(__file__))
 
-from app.ocr.preprocessor import ImagePreprocessor
-from app.ocr.engine import OCREngine, get_ocr_engine
+from app.ocr.engine import get_ocr_engine
 from app.ocr.parser import ReceiptParser
+from app.ocr.preprocessor import ImagePreprocessor
 from app.services.product_service import product_service
 
 IMG = "uploads/upload_20260221_182218.jpg"
@@ -91,8 +95,14 @@ def benchmark():
     # Check OCR engine parameters
     print()
     print("OCR ENGINE PARAMETERS:")
-    from app.config import (OCR_CANVAS_SIZE, OCR_MAG_RATIO, OCR_MIN_SIZE,
-                            OCR_TEXT_THRESHOLD, OCR_LOW_TEXT, IMAGE_MAX_DIMENSION)
+    from app.config import (
+        IMAGE_MAX_DIMENSION,
+        OCR_CANVAS_SIZE,
+        OCR_LOW_TEXT,
+        OCR_MAG_RATIO,
+        OCR_MIN_SIZE,
+        OCR_TEXT_THRESHOLD,
+    )
     print(f"  canvas_size = {OCR_CANVAS_SIZE}  (smaller=faster)")
     print(f"  mag_ratio   = {OCR_MAG_RATIO}  (smaller=faster)")
     print(f"  min_size    = {OCR_MIN_SIZE}")

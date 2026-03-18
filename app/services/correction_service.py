@@ -16,7 +16,6 @@ giving instant fixes for known OCR errors.
 
 import logging
 import threading
-from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ class CorrectionService:
     """Manages OCR correction feedback loop."""
 
     def __init__(self):
-        self._corrections_cache: Optional[Dict[str, str]] = None
+        self._corrections_cache: dict[str, str] | None = None
         self._cache_lock = threading.Lock()
 
     def record_correction(
@@ -70,7 +69,7 @@ class CorrectionService:
         except Exception as e:
             logger.warning(f"Failed to record OCR correction: {e}")
 
-    def get_corrections_map(self, db_instance) -> Dict[str, str]:
+    def get_corrections_map(self, db_instance) -> dict[str, str]:
         """Get the corrections lookup map (original_code → corrected_code).
 
         Builds from historical corrections where the same correction
@@ -93,8 +92,8 @@ class CorrectionService:
             return {}
 
     def apply_correction(
-        self, code: str, corrections_map: Dict[str, str]
-    ) -> Tuple[str, bool]:
+        self, code: str, corrections_map: dict[str, str]
+    ) -> tuple[str, bool]:
         """Apply a known correction to a product code.
 
         Args:
@@ -111,7 +110,7 @@ class CorrectionService:
             return corrected, True
         return upper, False
 
-    def get_correction_stats(self, db_instance) -> Dict:
+    def get_correction_stats(self, db_instance) -> dict:
         """Get statistics about OCR corrections.
 
         Returns summary of most common corrections and their frequency.

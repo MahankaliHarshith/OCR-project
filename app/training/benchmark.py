@@ -14,10 +14,8 @@ Metrics produced:
     - Average confidence: mean OCR confidence across all detections
 """
 
-import json
-import time
 import logging
-from typing import Dict, List, Optional, Tuple
+import time
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -59,10 +57,10 @@ class BenchmarkEngine:
 
     def run_benchmark(
         self,
-        samples: List[Tuple[str, Dict]],
-        ocr_params: Optional[Dict] = None,
+        samples: list[tuple[str, dict]],
+        ocr_params: dict | None = None,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """
         Run OCR pipeline on all labeled samples and compute accuracy.
 
@@ -198,10 +196,10 @@ class BenchmarkEngine:
     def _process_single(
         self,
         image_path: str,
-        label: Dict,
+        label: dict,
         parser,
-        ocr_params: Optional[Dict] = None,
-    ) -> Dict:
+        ocr_params: dict | None = None,
+    ) -> dict:
         """
         Process one image and compare against ground truth.
 
@@ -266,9 +264,9 @@ class BenchmarkEngine:
 
     def _compare_items(
         self,
-        expected: List[Dict],
-        detected: List[Dict],
-    ) -> Dict:
+        expected: list[dict],
+        detected: list[dict],
+    ) -> dict:
         """
         Compare expected items against detected items.
 
@@ -346,8 +344,8 @@ class BenchmarkEngine:
         self,
         processed_image,
         image_path: str,
-        params: Dict,
-    ) -> List[Dict]:
+        params: dict,
+    ) -> list[dict]:
         """
         Run OCR with custom parameter overrides (for auto-tuning).
 
@@ -391,9 +389,9 @@ class BenchmarkEngine:
     def benchmark_single(
         self,
         image_path: str,
-        ground_truth: Dict,
-        ocr_params: Optional[Dict] = None,
-    ) -> Dict:
+        ground_truth: dict,
+        ocr_params: dict | None = None,
+    ) -> dict:
         """Benchmark a single image against its ground truth."""
         label = {
             "receipt_id": "single_test",

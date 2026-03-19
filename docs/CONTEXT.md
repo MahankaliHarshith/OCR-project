@@ -3,7 +3,9 @@
 **Stack:** Python 3.12, FastAPI, EasyOCR, Azure Document Intelligence, OpenCV, SQLite (WAL) / PostgreSQL, Vanilla JS SPA  
 **Purpose:** Local web app for small shops to scan handwritten receipts → extract product codes + quantities → save to DB → export Excel.  
 **Key constraint:** Operates within Azure free tier (500 pages/month) via 6-layer cost defense. Works fully offline with local EasyOCR alone.  
-**Latest audit:** 🏆 **91/100 (Grade A)** — 100% code detection, 100% qty accuracy on synthetic images, 0 critical failures.
+**Latest audit:** 🏆 **91/100 (Grade A)** — 100% code detection, 100% qty accuracy on synthetic images, 0 critical failures.  
+**Smart OCR:** Phase 2 complete — duplicate detection, quality scoring (0–100 + letter grade), validation rules, OCR correction feedback loop, date/store extraction. 7 bugs found & fixed via deep edge-case testing.  
+**Tests:** **314 tests passing** (283 unit + 31 integration) across 15+ test files.
 
 ---
 
@@ -22,38 +24,38 @@ OCR project/
 │   ├── Receipt_Design_and_Scanning_Guide.md
 │   └── PRD.txt
 ├── app/
-│   ├── config.py (227L)         main.py (249L)   middleware.py (238L)
-│   ├── database.py (1334L)      db_postgres.py (450L)
-│   ├── logging_config.py (127L) json_logging.py (139L)
-│   ├── observability.py (393L)  tracing.py (237L)   metrics.py (158L)
-│   ├── error_tracking.py (212L) websocket.py (121L)
-│   ├── api/routes.py (920L)
+│   ├── config.py (240L)         main.py (254L)   middleware.py (232L)
+│   ├── database.py (1328L)      db_postgres.py (449L)
+│   ├── logging_config.py (125L) json_logging.py (136L)
+│   ├── observability.py (327L)  tracing.py (187L)   metrics.py (122L)
+│   ├── error_tracking.py (175L) websocket.py (92L)
+│   ├── api/routes.py (974L)     ← +54L for Smart OCR endpoints
 │   ├── ocr/
-│   │   ├── preprocessor.py (1014L)  engine.py (373L)     parser.py (2407L)
-│   │   ├── azure_engine.py (579L)   hybrid_engine.py (1170L)
-│   │   ├── total_verifier.py (797L) quality_scorer.py (177L) validators.py (218L)
-│   │   ├── usage_tracker.py (366L)  image_cache.py (262L)
+│   │   ├── preprocessor.py (1002L)  engine.py (374L)     parser.py (2468L)
+│   │   ├── azure_engine.py (570L)   hybrid_engine.py (1192L)
+│   │   ├── total_verifier.py (714L) quality_scorer.py (175L) validators.py (186L)
+│   │   ├── usage_tracker.py (364L)  image_cache.py (261L)
 │   ├── services/
-│   │   ├── receipt_service.py (843L)  product_service.py (170L)  excel_service.py (328L)
-│   │   ├── batch_service.py (514L)    dedup_service.py (132L)    correction_service.py (112L)
+│   │   ├── receipt_service.py (980L)  product_service.py (169L)  excel_service.py (327L)
+│   │   ├── batch_service.py (441L)    dedup_service.py (131L)    correction_service.py (111L)
 │   ├── static/
 │   │   ├── index.html (954L)  styles.css (2991L)  app.js (3985L)  lucide.min.js
 │   └── training/
-│       ├── routes.py (430L)  benchmark.py (360L)  optimizer.py (292L)
-│       ├── data_manager.py (286L)  template_learner.py (306L)
-│       └── real_world_trainer.py (650L)  # Adaptive trainer with error mining + learned rules
+│       ├── routes.py (352L)  benchmark.py (358L)  optimizer.py (290L)
+│       ├── data_manager.py (284L)  template_learner.py (303L)
+│       └── real_world_trainer.py (909L)  # Adaptive trainer with error mining + learned rules
 ├── scripts/
 │   ├── start_server.py  start_public.py  start_devtunnel.py  train.py  trainer.py (530L)
 │   ├── dev/ benchmark_azure_vs_local.py  benchmark_pipeline.py  diag_edge.py  dump_ocr.py
 │   └── generators/ create_test_receipt.py  generate_edge_case_receipts.py  generate_test_receipts.py
 ├── tests/
-│   ├── test_smart_ocr.py (704L)  test_smart_ocr_edge_cases.py (996L)
-│   ├── test_accuracy.py (248L)   test_api.py (159L)   test_app.py (203L)
-│   ├── test_services.py           test_infrastructure.py
-│   ├── test_middleware_and_db.py   test_parser_internals.py
-│   ├── test_azure_integration.py (349L)  test_db_production.py (486L)
-│   ├── test_observability.py (310L)  test_preprocessing.py (215L)  test_training.py (482L)
-│   ├── test_trainer.py (600L)
+│   ├── test_smart_ocr.py (702L)  test_smart_ocr_edge_cases.py (991L)
+│   ├── test_accuracy.py (246L)   test_api.py (157L)   test_app.py (201L)
+│   ├── test_services.py (297L)    test_infrastructure.py (432L)
+│   ├── test_middleware_and_db.py (450L)   test_parser_internals.py (365L)
+│   ├── test_azure_integration.py (348L)  test_db_production.py (488L)
+│   ├── test_observability.py (307L)  test_preprocessing.py (215L)  test_training.py (478L)
+│   ├── test_trainer.py (482L)
 │   ├── e2e/  test_all_flows.py  test_realworld_audit.py (497L)  run_deep_test.py
 │   │         test_edge_cases.py  test_ocr_accuracy.py  test_new_samples.py  ...
 │   ├── integration/ test_comprehensive.py  test_boxed_template.py  test_qty.py ...
@@ -138,7 +140,7 @@ App:       MAX_FILE_SIZE_MB=20, ALLOWED_EXTENSIONS={jpg,jpeg,png,bmp,tiff,webp}
 
 ---
 
-## Database Architecture (`database.py` — 1334L)
+## Database Architecture (`database.py` — 1328L)
 
 ### Architecture (6 subsystems)
 
@@ -188,12 +190,25 @@ App:       MAX_FILE_SIZE_MB=20, ALLOWED_EXTENSIONS={jpg,jpeg,png,bmp,tiff,webp}
 ```sql
 products:          id, product_code(UNIQUE), product_name, category, unit, unit_price, is_active, created_at, updated_at
 receipts:          id, receipt_number(UNIQUE), scan_date, scan_time, image_path, processed_image_path,
-                   processing_status, total_items, ocr_confidence_avg, created_at
+                   processing_status, total_items, ocr_confidence_avg, created_at,
+                   image_hash, content_fingerprint, receipt_date, store_name,     ← v4 Smart OCR
+                   quality_score, quality_grade                                    ← v4 Smart OCR
 receipt_items:     id, receipt_id(FK CASCADE), product_code, product_name, quantity, unit,
+                   unit_price, line_total,                                         ← v3 price columns
                    ocr_confidence, manually_edited
+ocr_corrections:   id, receipt_id(FK SET NULL), item_id, original_code, corrected_code,  ← v4 Smart OCR
+                   original_qty, corrected_qty, raw_ocr_text, created_at
 processing_logs:   id, receipt_id(FK no-cascade), stage, status, duration_ms, error_message, timestamp
-schema_migrations: version(PK), name, applied_at   ← migration tracking
+schema_migrations: version(PK), name, applied_at   ← migration tracking (v1–v4)
 ```
+
+### Schema Migrations
+| Version | Name | Purpose |
+|---|---|---|
+| v1 | `baseline_schema` | Original tables (products, receipts, receipt_items, processing_logs) |
+| v2 | `composite_item_index` | Composite index on receipt_items(receipt_id, product_code) |
+| v3 | `add_price_columns` | Add unit_price + line_total to receipt_items |
+| v4 | `smart_ocr_metadata` | Add image_hash, content_fingerprint, receipt_date, store_name, quality_score, quality_grade to receipts + create ocr_corrections table |
 
 ### Seed Data (18 products)
 **Alpha codes:** ABC(1L Exterior Paint), XYZ(1L Interior Paint), PQR(5L Primer), MNO(Paint Brush), DEF(1L Wood Varnish), GHI(Sandpaper), JKL(Putty Knife), STU(Wall Filler), VWX(Masking Tape), RST(Thinner 500ml)  
@@ -318,7 +333,7 @@ JIT warmup on init (dummy 1024×768 image → eliminates 5-8s first-scan cold st
 
 ---
 
-## Quality Scorer (`quality_scorer.py` — 177L)
+## Quality Scorer (`quality_scorer.py` — 175L)
 
 Computes a 0–100 quality score and letter grade (A/B/C/D) per receipt:
 
@@ -331,15 +346,20 @@ Computes a 0–100 quality score and letter grade (A/B/C/D) per receipt:
 | Image Quality | 10 | sharpness + brightness |
 | Catalog Match Rate | 10 | % items matched to catalog |
 
+**Bug fixes applied (v2.1):**
+- Items without `match_type` key no longer inflate catalog match score (added `None` to exclusion list)
+- `sharpness=0` / `brightness=0` now display as `0.0` instead of `None` (was using falsy check instead of `is not None`)
+- `None` confidence values no longer crash `> 0` comparison (uses `or 0` fallback)
+
 ---
 
-## Receipt Validator (`validators.py` — 218L)
+## Receipt Validator (`validators.py` — 186L)
 
 Post-parse validation rules engine:
 1. **Impossible quantity detection** — zero, negative, absurdly high (MAX_REASONABLE_QTY=100, MAX_ABSOLUTE_QTY=999)
 2. **Price sanity checks** — missing prices, extreme deviations (>5× catalog), math errors
 3. **Duplicate item flagging** — same code appears multiple times
-4. **Cross-receipt anomaly detection** — qty far exceeds historical patterns
+4. **Cross-receipt anomaly detection** — qty far exceeds historical patterns (no longer gated on catalog — **bug fix v2.1**)
 
 ---
 
@@ -403,7 +423,7 @@ Daily entries auto-pruned after 7 days. Free tier = 500 pages/month = ~22 pages/
 
 ---
 
-## REST API (`routes.py` — 920L)
+## REST API (`routes.py` — 974L)
 
 | Method | Path | Notes |
 |---|---|---|
@@ -413,7 +433,7 @@ Daily entries auto-pruned after 7 days. Free tier = 500 pages/month = ~22 pages/
 | GET | `/api/batch/{id}` | Poll batch job status |
 | GET/DELETE | `/api/receipts/{id}` | 🔒 DELETE protected |
 | GET | `/api/receipts` | `?limit=10` (1-100) |
-| PUT | `/api/receipts/items/{id}` | ItemUpdate (code, name, qty validated) |
+| PUT | `/api/receipts/items/{id}` | ItemUpdate (code, name, qty validated), records OCR correction feedback |
 | POST | `/api/receipts/{id}/items` | Manual row add, 404 if receipt not found |
 | GET | `/api/receipts/date/{date}` | YYYY-MM-DD |
 | GET/POST/PUT/DELETE | `/api/products[/{code}]` | Full CRUD, soft-delete, pagination (limit/offset) |
@@ -426,7 +446,8 @@ Daily entries auto-pruned after 7 days. Free tier = 500 pages/month = ~22 pages/
 | GET | `/api/ocr/usage` | usage + cache stats + **pacing** dict |
 | POST | `/api/ocr/usage/reset-daily` | 🔒 API key protected |
 | POST | `/api/ocr/cache/clear` | 🔒 API key protected |
-| GET | `/api/corrections/stats` | Correction feedback statistics |
+| GET | `/api/corrections` | OCR correction feedback statistics (Smart OCR) |
+| GET | `/api/item-stats` | Per-product historical quantity statistics (Smart OCR) |
 | WS | `/ws/batch/{batch_id}` | Real-time batch processing updates |
 | GET | `/` | → index.html |
 
@@ -455,20 +476,26 @@ Real-time batch processing updates via `ws://host:port/ws/batch/{batch_id}`:
 
 ## Service Layer
 
-**`receipt_service.py` (843L)** — 6-step pipeline:
+**`receipt_service.py` (980L)** — 6-step pipeline:
 1. `_save_uploaded_image()` → `uploads/receipt_YYYYMMDD_HHMMSS_<uuid6>.ext`
 2. `preprocessor.preprocess()` → save processed image
 3. `detect_grid_structure()` → `hybrid_engine.process_image(path, processed, is_structured)`
 4. `azure_structured.items`? → `_parse_azure_structured()` else `parser.parse(ocr_detections)`. If Azure < 2 items → supplements with parser.
 5. `db.create_receipt()` + `add_receipt_items()` + processing logs. DB failure sets `success: false`.
-6. **Post-parse**: dedup_service checks for duplicate receipts, correction_service records feedback, quality_scorer computes grade
+6. **Post-parse Smart OCR pipeline** (Steps 4b–4f):
+   - 4b: Bill total verification (multi-pass digit re-reading)
+   - 4c: Math/price verification (catalog price injection)
+   - 4d: Smart validation rules (qty anomaly, price deviation, duplicates, historical anomalies)
+   - 4e: Quality scoring (0–100 + letter grade A/B/C/D)
+   - 4f: Dedup hash computation + duplicate check against recent receipts
+   - Save smart OCR metadata (image_hash, content_fingerprint, receipt_date, store_name, quality_score, quality_grade)
 
 **`_parse_azure_structured()`** — 4-tier: azure-exact → azure-contains → azure-fuzzy (difflib 0.5) → azure-unmatched (first 6 chars, needs_review=True)
 
-**`dedup_service.py` (132L)** — Duplicate receipt detection via image hash (SHA-256) + content fingerprint comparison.  
-**`correction_service.py` (112L)** — Records user corrections (manual edits) for feedback loop to improve OCR accuracy.  
-**`product_service.py` (170L)** — CRUD + CSV import/export, fuzzy search via difflib.  
-**`excel_service.py` (328L)** — 2-sheet .xlsx: "Daily Sales Report" + "Summary" with OpenPyXL styles.
+**`dedup_service.py` (131L)** — 3-layer duplicate detection: perceptual image hash (8×8 grayscale average hash, hamming distance ≤5) + content fingerprint (SHA-256 of sorted code:qty pairs) + user confirmation prompt. 24h dedup window. Bug fixes: handles SQL NULL hashes, None codes, empty fingerprints.  
+**`correction_service.py` (111L)** — OCR correction feedback loop: records user corrections (code/qty changes), builds lookup map from corrections with ≥2 occurrences (filters noise), thread-safe cache with invalidation. Parser checks this map before fuzzy matching.  
+**`product_service.py` (169L)** — CRUD + CSV import/export, fuzzy search via difflib.  
+**`excel_service.py` (327L)** — 2-sheet .xlsx: "Daily Sales Report" + "Summary" with OpenPyXL styles.
 
 ---
 
@@ -736,6 +763,22 @@ training_data/
 - Short-digit Y-distance dedup: 1-2 digit numbers use raw Y-distance (35px threshold)
 - Position-based echo dedup: same (x,y) within 30×15px → keep best confidence
 
+### Smart OCR Deep Testing (v2.1 — March 2026)
+
+**7 bugs found and fixed** via comprehensive edge-case testing:
+
+| # | File | Bug | Impact |
+|---|------|-----|--------|
+| 1 | `dedup_service.py` | Empty-code fingerprint returned fixed SHA hash | False duplicate collisions |
+| 2 | `quality_scorer.py` | Missing `match_type` inflated catalog match score | Incorrect quality grades |
+| 3 | `validators.py` | Rule 4 anomaly detection gated on catalog | Anomaly checks silently skipped |
+| 4 | `quality_scorer.py` | `sharpness=0` displayed as `None` (falsy check) | Incorrect metadata display |
+| 5 | `dedup_service.py` | SQL NULL `image_hash` not handled | Potential crash on DB read |
+| 6 | `dedup_service.py` | `None` code crashed `.upper()` | Runtime AttributeError |
+| 7 | `quality_scorer.py` | `None` confidence crashed `> 0` comparison | Runtime TypeError |
+
+**Test infrastructure fix:** DB singleton shutdown issue — `test_api.py`'s TestClient lifespan calls `db.shutdown()` on the global singleton, killing the pool for subsequent test files. Fixed by having Smart OCR test classes instantiate fresh `Database()` instances instead of using the global `db` singleton.
+
 ### Remaining Limitations (EasyOCR on CPU)
 - OCR O/1 confusion: "PEPW1" reads as "PEPW1O" (indistinguishable from "PEPW10") — handled by ambiguous_oi resolver
 - Speed bottleneck: 93% of scan time is EasyOCR CRAFT + CRNN on CPU (~14s avg). GPU would cut to ~2-3s.
@@ -746,26 +789,40 @@ training_data/
 
 ## Test Suite Structure
 
-**497+ tests · 73% code coverage · 11 test files** (threshold: 70%)
+**314 tests passing (283 unit + 31 integration) · 73% code coverage · 15+ test files** (threshold: 70%)
 
 ### Unit / Module Tests
-| Test | Tests | Coverage |
-|------|------:|----------|
-| `test_app.py` | 17 | App startup, configuration, middleware |
-| `test_services.py` | 35 | CorrectionService (100%) + DedupService (100%) |
-| `test_infrastructure.py` | 49 | logging_config (80%), tracing, metrics (100%), json_logging (85%), websocket (97%) |
-| `test_middleware_and_db.py` | 48 | RateLimiter, SecurityHeaders, RateLimit, APIKey, DevTunnelCORS middlewares (96%) + DB (82%) |
-| `test_parser_internals.py` | 73 | 15+ parser internal helpers (61%) — qty extraction, code matching, dedup, date/store |
-| `test_observability.py` | 37 | Observability manager, tracing, metrics |
-| `test_smart_ocr.py` | 704L | Dedup, quality scoring, validation, correction feedback, date/store extraction |
-| `test_smart_ocr_edge_cases.py` | 996L | Edge cases for smart OCR modules |
-| `test_preprocessing.py` | 215L | Image preprocessor pipeline |
-| `test_training.py` | 482L | Training system (benchmark, optimizer, data manager, template learner) |
-| `test_trainer.py` | 43 | Real-world trainer (scan, correct, error mining, confusion matrix, learned rules, augmentation) |
-| `test_api.py` | 159L | API endpoint unit tests |
-| `test_db_production.py` | 486L | Database operations, migrations, backup |
-| `test_azure_integration.py` | 349L | Azure OCR engine integration |
-| `test_accuracy.py` | 248L | OCR accuracy metrics |
+| Test | Lines | Tests | Coverage |
+|------|------:|------:|----------|
+| `test_app.py` | 201 | 17 | App startup, configuration, middleware |
+| `test_services.py` | 297 | 35 | CorrectionService (100%) + DedupService (100%) |
+| `test_infrastructure.py` | 432 | 49 | logging_config (80%), tracing, metrics (100%), json_logging (85%), websocket (97%) |
+| `test_middleware_and_db.py` | 450 | 48 | RateLimiter, SecurityHeaders, RateLimit, APIKey, DevTunnelCORS middlewares (96%) + DB (82%) |
+| `test_parser_internals.py` | 365 | 73 | 15+ parser internal helpers (61%) — qty extraction, code matching, dedup, date/store |
+| `test_observability.py` | 307 | 37 | Observability manager, tracing, metrics |
+| `test_smart_ocr.py` | 702 | 67 | Dedup, quality scoring, validation, correction feedback, date/store extraction |
+| `test_smart_ocr_edge_cases.py` | 991 | 103 | 9 edge-case classes: dedup, scoring, validation, correction, date/store, DB, wiring, endpoints |
+| `test_preprocessing.py` | 215 | — | Image preprocessor pipeline |
+| `test_training.py` | 478 | — | Training system (benchmark, optimizer, data manager, template learner) |
+| `test_trainer.py` | 482 | 43 | Real-world trainer (scan, correct, error mining, confusion matrix, learned rules, augmentation) |
+| `test_api.py` | 157 | — | API endpoint unit tests |
+| `test_db_production.py` | 488 | 46 | Database operations, migrations, backup |
+| `test_azure_integration.py` | 348 | 31 | Azure OCR engine integration |
+| `test_accuracy.py` | 246 | — | OCR accuracy metrics |
+
+### Smart OCR Edge-Case Tests (`test_smart_ocr_edge_cases.py` — 991L, 103 tests)
+
+| Class | Tests | Coverage |
+|-------|------:|----------|
+| `TestDedupEdgeCases` | 18 | null hashes, empty/None codes, whitespace, case insensitivity, threshold boundaries, corrupted images |
+| `TestQualityScorerEdgeCases` | 16 | None metadata, confidence boundaries, grade boundaries (90/75/60), score cap at 100, brightness bands |
+| `TestValidatorEdgeCases` | 18 | empty items, anomaly without catalog, price threshold boundaries, tolerance math, missing code key |
+| `TestCorrectionEdgeCases` | 10 | empty codes, case-only changes, float noise, DB errors, concurrent 20-thread access |
+| `TestDateExtractionEdgeCases` | 16 | embedded dates, keyword priority, Feb 29/30, year boundaries, 2-digit years, month names |
+| `TestStoreExtractionEdgeCases` | 10 | 200-char truncation, separator lines, Receipt/Invoice skipped, noise-only returns None |
+| `TestDatabaseEdgeCases` | 11 | SQL injection prevention, empty kwargs, negative IDs, min_count=0, HAVING cnt ≥ 2 |
+| `TestReceiptServiceWiring` | 2 | correction recording on update, no-correction on no-change |
+| `TestSmartOCREndpoints` | 2 | /api/corrections and /api/item-stats response structure |
 
 ### E2E Tests
 | Test | Lines | Purpose |
@@ -811,7 +868,9 @@ edge cases       → python tests/e2e/test_edge_cases.py             (10-image e
 deep test        → python tests/e2e/run_deep_test.py               (5-image deep test with math/total)
 full audit       → python tests/e2e/test_realworld_audit.py        (23-image comprehensive audit)
 new samples      → python tests/e2e/test_new_samples.py            (8-image real-world test)
-smart ocr        → python -m pytest tests/test_smart_ocr.py        (dedup, quality, validation)
+smart ocr        → python -m pytest tests/test_smart_ocr.py        (67 tests: dedup, quality, validation)
+edge cases       → python -m pytest tests/test_smart_ocr_edge_cases.py  (103 tests: deep edge cases)
+all unit tests   → python -m pytest tests/test_app.py tests/test_api.py tests/test_preprocessing.py tests/test_training.py tests/test_smart_ocr.py tests/test_smart_ocr_edge_cases.py -x -q  (283 tests)
 benchmark        → python scripts/dev/benchmark_pipeline.py
 gen receipts     → python scripts/generators/generate_test_receipts.py
 gen edge cases   → python scripts/generators/generate_edge_case_receipts.py

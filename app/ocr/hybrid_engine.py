@@ -65,6 +65,7 @@ class HybridOCREngine:
         self._azure_engine = None
         self._local_engine = None
         self._local_engine_2 = None   # Second reader for thread-safe parallel dual-pass
+        self._engine2_lock = threading.Lock()  # Guards lazy init of _local_engine_2
         self._azure_checked = False
         self._azure_ok = False
 
@@ -112,11 +113,14 @@ class HybridOCREngine:
         PyTorch releases the GIL during neural-network forward passes.
         Only materialised when OCR_PARALLEL_DUAL_PASS=True.
         """
-        if self._local_engine_2 is None:
-            from app.config import OCR_LANGUAGE, OCR_USE_GPU
-            from app.ocr.engine import OCREngine
-            logger.info("[HybridOCR] Initializing second OCR reader for parallel dual-pass...")
-            self._local_engine_2 = OCREngine(language=OCR_LANGUAGE, use_gpu=OCR_USE_GPU)
+        if self._local_engine_2 is not None:
+            return self._local_engine_2
+        with self._engine2_lock:
+            if self._local_engine_2 is None:
+                from app.config import OCR_LANGUAGE, OCR_USE_GPU
+                from app.ocr.engine import OCREngine
+                logger.info("[HybridOCR] Initializing second OCR reader for parallel dual-pass...")
+                self._local_engine_2 = OCREngine(language=OCR_LANGUAGE, use_gpu=OCR_USE_GPU)
         return self._local_engine_2
 
     @property
@@ -228,11 +232,13 @@ class HybridOCREngine:
             cache_key = self.image_cache.compute_hash(image_path)
             cached_result = self.image_cache.get(cache_key)
             if cached_result is not None:
+                import copy
+                result_copy = copy.deepcopy(cached_result)
                 total_ms = int((time.time() - total_start) * 1000)
-                cached_result["ocr_time_ms"] = total_ms
-                cached_result["metadata"] = {"strategy": "auto-cached", "cache": "hit", "azure_pages_used": 0}
+                result_copy["ocr_time_ms"] = total_ms
+                result_copy["metadata"] = {"strategy": "auto-cached", "cache": "hit", "azure_pages_used": 0}
                 logger.info(f"[Hybrid] ✅ Cache HIT — saved 1 Azure page ({total_ms}ms)")
-                return cached_result
+                return result_copy
         except Exception as e:
             logger.debug(f"[Hybrid] Cache check failed: {e}")
 
@@ -448,10 +454,19 @@ class HybridOCREngine:
                     )
                     total_ms = int((time.time() - total_start) * 1000)
 
+                    # Preserve azure_structured even without items if it has
+                    # useful metadata (total, subtotal, merchant, transaction_date)
+                    _has_useful_meta = bool(
+                        azure_items
+                        or azure_result.get("total")
+                        or azure_result.get("subtotal")
+                        or azure_result.get("merchant")
+                        or azure_result.get("transaction_date")
+                    )
                     result = {
                         "engine_used": model_used,
                         "ocr_detections": azure_detections,
-                        "azure_structured": azure_result if azure_items else None,
+                        "azure_structured": azure_result if _has_useful_meta else None,
                         "ocr_time_ms": total_ms,
                         "ocr_passes": 1,
                         "confidence_avg": round(avg_conf, 4),
@@ -553,11 +568,13 @@ class HybridOCREngine:
             cache_key = self.image_cache.compute_hash(image_path)
             cached_result = self.image_cache.get(cache_key)
             if cached_result is not None:
+                import copy
+                result_copy = copy.deepcopy(cached_result)
                 total_ms = int((time.time() - total_start) * 1000)
-                cached_result["ocr_time_ms"] = total_ms
-                cached_result["metadata"] = {"strategy": "azure-only-cached", "cache": "hit", "azure_pages_used": 0}
+                result_copy["ocr_time_ms"] = total_ms
+                result_copy["metadata"] = {"strategy": "azure-only-cached", "cache": "hit", "azure_pages_used": 0}
                 logger.info(f"[Azure-Only] ✅ Cache HIT — saved Azure page ({total_ms}ms)")
-                return cached_result
+                return result_copy
         except Exception as e:
             logger.debug(f"[Azure-Only] Cache check failed: {e}")
 
@@ -625,10 +642,18 @@ class HybridOCREngine:
         )
         total_ms = int((time.time() - total_start) * 1000)
 
+        # Preserve azure_structured even without items if it has useful metadata
+        _has_useful_meta = bool(
+            azure_items
+            or azure_result.get("total")
+            or azure_result.get("subtotal")
+            or azure_result.get("merchant")
+            or azure_result.get("transaction_date")
+        )
         result = {
             "engine_used": model_used,
             "ocr_detections": azure_detections,
-            "azure_structured": azure_result if azure_items else None,
+            "azure_structured": azure_result if _has_useful_meta else None,
             "ocr_time_ms": total_ms,
             "ocr_passes": 1,
             "confidence_avg": round(avg_conf, 4),
@@ -717,12 +742,16 @@ class HybridOCREngine:
             }
 
         # ── Load color image for Phase 2 (reuse if already provided) ──
+        # The caller (receipt_service) passes the preprocessor's _color_image
+        # which is already EXIF-corrected and resized.  Only fall back to
+        # disk re-read if the caller didn't provide one (shouldn't happen
+        # in normal flow — this saves 200-500ms on 5MB phone photos).
         if original_color is None:
+            logger.debug("[Local] ⚠ Color image not provided — reading from disk (slow path)")
             try:
-                from app.ocr.preprocessor import ImagePreprocessor as _IP
-                original_color = _IP()._load_with_exif_correction(image_path)
-            except Exception:
                 original_color = cv2.imread(image_path)
+            except Exception:
+                original_color = None
             if original_color is not None:
                 h, w = original_color.shape[:2]
                 if max(h, w) > IMAGE_MAX_DIMENSION:
@@ -730,29 +759,30 @@ class HybridOCREngine:
                     original_color = cv2.resize(original_color, None, fx=scale, fy=scale,
                                                 interpolation=cv2.INTER_AREA)
 
-        # ── PARALLEL dual-pass: run gray fast + color full simultaneously ──
+        # ── TRUE PARALLEL dual-pass: both passes run simultaneously ──
+        # When OCR_PARALLEL_DUAL_PASS=True, launch gray and color passes
+        # concurrently via ThreadPoolExecutor. PyTorch releases the GIL
+        # during neural-net forward passes, so true parallelism is achieved.
+        # This cuts local OCR time by ~40% (max(gray,color) instead of sum).
         if OCR_PARALLEL_DUAL_PASS and original_color is not None:
-            logger.debug("[Local] ⚡ PARALLEL dual-pass (gray fast + color full)")
+            ocr_engine_2 = self.local_engine_2
             parallel_start = time.time()
 
-            # Two SEPARATE engine instances so threads never share internal
-            # reader state — PyTorch releases the GIL during forward passes,
-            # giving genuine CPU parallelism on dual-core machines.
-            ocr_engine_2 = self.local_engine_2
             with ThreadPoolExecutor(max_workers=2) as executor:
-                fut_gray  = executor.submit(ocr_engine.extract_text_fast, cropped_gray)
-                fut_color = executor.submit(ocr_engine_2.extract_text, original_color, quality_info)
-                gray_results  = fut_gray.result()
-                color_results = fut_color.result()
+                future_gray = executor.submit(ocr_engine.extract_text_fast, cropped_gray)
+                future_color = executor.submit(ocr_engine_2.extract_text, original_color, quality_info)
+
+                gray_results = future_gray.result()
+                color_results = future_color.result()
 
             parallel_ms = int((time.time() - parallel_start) * 1000)
             logger.info(
-                f"[Local] Parallel dual-pass done in {parallel_ms}ms "
+                f"[Local] ⚡ Parallel dual-pass done in {parallel_ms}ms "
                 f"(gray={len(gray_results)}, color={len(color_results)} detections)"
             )
 
             # Pick the better pass; merge in the other as supplementary
-            gray_conf  = self._avg_confidence(gray_results)
+            gray_conf = self._avg_confidence(gray_results)
             color_conf = self._avg_confidence(color_results)
             if len(color_results) > len(gray_results) or (
                 len(color_results) == len(gray_results) and color_conf > gray_conf
@@ -770,7 +800,7 @@ class HybridOCREngine:
                 "ocr_time_ms": total_ms,
                 "ocr_passes": 2,
                 "confidence_avg": round(self._avg_confidence(ocr_results), 4),
-                "metadata": {**metadata, "dual_pass": "parallel"},
+                "metadata": {**metadata, "dual_pass": "true-parallel"},
             }
 
         # ── SERIAL fallback (OCR_PARALLEL_DUAL_PASS=False or no color image) ──
@@ -1246,7 +1276,10 @@ class HybridOCREngine:
                 return 0.0  # Can't check catalog — pessimistic → route to Azure
 
         if not catalog:
-            return 0.0  # Empty catalog — can't verify, route to Azure
+            # Empty catalog — can't verify, but DON'T penalize local OCR.
+            # Return 1.0 so new installations don't burn Azure budget on every
+            # scan just because the product catalog hasn't been populated yet.
+            return 1.0
 
         matched = 0
         # Only consider detections that are likely product lines (3+ chars, has alpha)

@@ -4,6 +4,7 @@ Entry point for the Handwritten Receipt Scanner API.
 """
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -64,9 +65,9 @@ async def lifespan(app: FastAPI):
     init_sentry(app)
 
     # Warn about security config
-    if not API_SECRET_KEY:
-        logger.warning("   ⚠️  API_SECRET_KEY is empty — admin/destructive endpoints are UNPROTECTED. "
-                        "Set API_SECRET_KEY env var in production.")
+    if not os.getenv("API_SECRET_KEY", ""):
+        logger.warning("   ⚠️  API_SECRET_KEY env var not set — using auto-generated key. "
+                        "Set API_SECRET_KEY env var in production for a stable key.")
 
     # Clean up old upload files (keep last 7 days)
     try:
@@ -261,8 +262,9 @@ async def static_cache_headers(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
     if path.startswith("/static/"):
-        # 1 hour for JS/CSS; browsers still revalidate on hard refresh
-        response.headers["Cache-Control"] = "public, max-age=3600"
+        # No caching during development so changes are picked up immediately.
+        # For production, switch to "public, max-age=3600" or use versioned filenames.
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
     return response
 
 # ─── Static Files ─────────────────────────────────────────────────────────────
@@ -290,7 +292,10 @@ async def serve_frontend():
     """Serve the main HTML page."""
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
-        return FileResponse(str(index_path))
+        return FileResponse(
+            str(index_path),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+        )
     return {"message": f"{APP_TITLE} API v{APP_VERSION} is running. Visit /docs for API documentation."}
 
 

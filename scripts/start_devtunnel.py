@@ -16,7 +16,7 @@ import urllib.request
 
 def main():
     port = int(os.getenv("API_PORT", "8000"))
-    project_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     print("=" * 60)
     print("  📝 Handwritten Receipt Scanner — DEV TUNNEL MODE")

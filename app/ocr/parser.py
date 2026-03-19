@@ -157,11 +157,14 @@ class ReceiptParser:
         re.compile(rf"(?:net){_AMOUNT_SEP}{_TOTAL_WORD}{_AMOUNT_SEP}(\d+\.?\d*)", re.IGNORECASE),
     ]
     # Quick check for grand total keywords (must NOT be just "Total Qty")
+    # IMPORTANT: separator must match _AMOUNT_SEP (not just \s*) to catch
+    # OCR garbles like "Grand-Total", "Grand_Total", "Grand:Total" etc.
+    _GT_SEP = r'[\s:=\-_\.]*'
     _GRAND_TOTAL_KEYWORD_RE = re.compile(
-        r"((?:grand|grramd|gramd|grrand|gra[nm]d)\s*(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)"
-        r"|(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)\s*(?:amount|amt)"
-        r"|bill\s*(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)"
-        r"|net\s*(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal))",
+        r"((?:grand|grramd|gramd|grrand|gra[nm]d)" + _GT_SEP + r"(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)"
+        r"|(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)" + _GT_SEP + r"(?:amount|amt)"
+        r"|bill" + _GT_SEP + r"(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal)"
+        r"|net" + _GT_SEP + r"(?:total|totai|tota1|t0tal|totd|toal|tdal|tetal))",
         re.IGNORECASE,
     )
 
@@ -693,8 +696,14 @@ class ReceiptParser:
                 rate = item.get("unit_price", 0)
                 qty  = item.get("quantity", 0)
                 amt  = item.get("line_total", 0)
-                expected = round(qty * rate, 2)
-                ok = abs(amt - expected) < max(0.01, abs(expected) * 0.005) if amt > 0 else True
+                # When rate is 0 but we have a line_total, we can't verify
+                # qty × rate = amount. Use the OCR amount for the grand total.
+                if rate == 0 and amt > 0:
+                    ok = True
+                    expected = amt  # trust the OCR amount
+                else:
+                    expected = round(qty * rate, 2)
+                    ok = abs(amt - expected) < max(0.01, abs(expected) * 0.005) if amt > 0 else True
                 if not ok:
                     all_line_ok = False
                 computed_grand += expected
@@ -1573,8 +1582,9 @@ class ReceiptParser:
 
         # Pairwise reverse substitutions (two chars at a time)
         # Handles cases like TEWZO → TEW20 (Z→2 + O→0)
+        # Cap to avoid combinatorial explosion with many eligible positions
         rev_positions = [(i, ch) for i, ch in enumerate(upper) if ch in self.OCR_REVERSE_SUBS]
-        if len(rev_positions) >= 2:
+        if 2 <= len(rev_positions) <= 4:  # Skip if >4 positions (too many combos)
             from itertools import combinations
             for (i1, c1), (i2, c2) in combinations(rev_positions, 2):
                 chars = list(upper)
@@ -1583,6 +1593,10 @@ class ReceiptParser:
                 variant = ''.join(chars)
                 if variant not in variants:
                     variants.append(variant)
+                    if len(variants) >= 15:  # Hard cap on total variants
+                        break
+            if len(variants) >= 15:
+                pass  # Already capped
 
         # ── Learned rules from training pipeline ──
         # Apply character-level substitutions discovered by real-world training.
@@ -1621,6 +1635,8 @@ class ReceiptParser:
         Last-resort: extract tokens (including mixed alpha-digit) from the text,
         apply OCR character substitution, and try fuzzy matching against the catalog.
         """
+        from app.config import get_adaptive_fuzzy_cutoff as _gafc
+
         # Split by whitespace and delimiters to get clean tokens
         raw_tokens = re.split(r'[\s\-\u2013\u2014.,;:]+', text)
         # Keep tokens of 3-7 chars that have at least one letter
@@ -1715,8 +1731,7 @@ class ReceiptParser:
                     }
 
                 # Try fuzzy match on the variant (length-adaptive cutoff)
-                from app.config import get_adaptive_fuzzy_cutoff
-                _adaptive_cutoff = get_adaptive_fuzzy_cutoff(len(variant))
+                _adaptive_cutoff = _gafc(len(variant))
                 matches = get_close_matches(
                     variant,
                     self.product_catalog.keys(),

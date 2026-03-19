@@ -15,22 +15,43 @@ except ImportError:
 
 # ─── Base Paths ───────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-EXPORT_DIR = BASE_DIR / "exports"
 MODEL_DIR = BASE_DIR / "models"
 
-# SQLite doesn't work in OneDrive/cloud-synced folders (locking issues).
-# Auto-redirect the database to a local folder if needed.
+
+def _is_cloud_synced(path: Path) -> bool:
+    """Check if a path is inside a cloud-synced folder (OneDrive, Dropbox, etc.)."""
+    path_str = str(path).lower()
+    return "onedrive" in path_str or "dropbox" in path_str or "google drive" in path_str
+
+
+def _safe_local_dir(subfolder: str) -> Path:
+    """Return a local (non-cloud-synced) directory for storing transient files.
+    Prevents OneDrive/Dropbox from syncing hundreds of temp images & showing
+    deletion-confirmation dialogs on every app restart."""
+    import sys
+    if _is_cloud_synced(BASE_DIR):
+        if sys.platform == "win32":
+            root = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))) / "ReceiptScanner"
+        else:
+            root = Path(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))) / "ReceiptScanner"
+        local = root / subfolder
+        local.mkdir(parents=True, exist_ok=True)
+        return local
+    return BASE_DIR / subfolder
+
+
+UPLOAD_DIR = _safe_local_dir("uploads")
+EXPORT_DIR = _safe_local_dir("exports")
+
+
 def _safe_db_path(base: Path) -> Path:
     """Avoid creating the DB inside cloud-synced folders (OneDrive, Dropbox, etc.).
     SQLite + file-sync = corruption. Use a local-only directory instead."""
-    import sys
-    base_str = str(base).lower()
-    if "onedrive" in base_str or "dropbox" in base_str or "google drive" in base_str:
+    if _is_cloud_synced(base):
+        import sys
         if sys.platform == "win32":
             fallback = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))) / "ReceiptScanner"
         else:
-            # Linux/Mac: use ~/.local/share (XDG_DATA_HOME) or fallback to home
             fallback = Path(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))) / "ReceiptScanner"
         fallback.mkdir(parents=True, exist_ok=True)
         return fallback / "receipt_scanner.db"
@@ -44,7 +65,7 @@ DATABASE_PATH = _safe_db_path(BASE_DIR)
 DB_BACKEND = os.getenv("DB_BACKEND", "sqlite")
 
 # Backup settings (SQLite only — daily copy before first write)
-DB_BACKUP_DIR = BASE_DIR / "backups"
+DB_BACKUP_DIR = _safe_local_dir("backups")
 DB_BACKUP_KEEP_DAYS = int(os.getenv("DB_BACKUP_KEEP_DAYS", "7"))
 
 # PostgreSQL connection (only used when DB_BACKEND = "postgresql")
@@ -71,8 +92,8 @@ OCR_LOW_CONFIDENCE_THRESHOLD = 0.25  # Below this → flag entire receipt
 OCR_TEXT_THRESHOLD = 0.4  # Lower to catch faint handwriting (was 0.7)
 OCR_LOW_TEXT = 0.3  # Lower to catch faint text (was 0.4)
 OCR_LINK_THRESHOLD = 0.3  # Link nearby characters (was 0.4)
-OCR_CANVAS_SIZE = 1280  # Optimized: fast enough for same-type receipts, still captures handwriting
-OCR_MAG_RATIO = 1.8  # Slightly lower mag trades marginal detail for ~15% speed gain
+OCR_CANVAS_SIZE = 1280  # Higher resolution for better handwriting capture
+OCR_MAG_RATIO = 1.8  # Higher magnification for better handwriting recognition
 OCR_MIN_SIZE = 10  # Lower to catch small handwritten digits (single-digit quantities)
 
 # Smart OCR pass strategy: run gray first (faster), only add color pass if
@@ -177,7 +198,7 @@ AZURE_IMAGE_QUALITY = 85
 # ─── Image Preprocessing ─────────────────────────────────────────────────────
 IMAGE_MIN_WIDTH = 400
 IMAGE_MIN_HEIGHT = 300
-IMAGE_MAX_DIMENSION = 1800  # Larger to preserve handwriting detail for OCR accuracy
+IMAGE_MAX_DIMENSION = 1800  # Higher resolution preserves handwriting detail
 GAUSSIAN_BLUR_KERNEL = (3, 3)  # Gentler blur for handwriting (was 5,5)
 ADAPTIVE_THRESH_BLOCK_SIZE = 31  # Larger block for handwriting (was 11)
 ADAPTIVE_THRESH_C = 10  # Higher C preserves ink strokes (was 2)

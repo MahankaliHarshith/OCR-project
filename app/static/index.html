@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="description" content="Scan handwritten receipts instantly with AI-powered OCR. Fast, accurate, elegant.">
     <title>Receipt Scanner — Instant Handwritten OCR</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=2.2.0">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
@@ -16,6 +16,8 @@
     <script src="/static/lucide.min.js"></script>
 </head>
 <body>
+    <!-- Skip to main content (accessibility) -->
+    <a href="#main-content" class="sr-skip-link">Skip to main content</a>
 
     <!-- ─── Header ─────────────────────────────────────────────────── -->
     <header class="header">
@@ -60,7 +62,7 @@
     </header>
 
     <!-- ─── Main Content ───────────────────────────────────────────── -->
-    <main class="main">
+    <main class="main" id="main-content">
 
         <!-- ─── Scan Tab ───────────────────────────────────────────── -->
         <section id="tab-scan" class="tab-content active" role="tabpanel" aria-labelledby="tab-btn-scan">
@@ -470,6 +472,10 @@
                 <div class="section-header">
                     <h2>Recent Receipts</h2>
                     <div class="header-actions">
+                        <div class="input-group receipt-search-group">
+                            <i data-lucide="search" class="input-icon" aria-hidden="true"></i>
+                            <input type="text" id="receiptSearch" class="input input-with-icon" placeholder="Search receipts…" aria-label="Search receipts by number, store, or product">
+                        </div>
                         <div class="input-group">
                             <i data-lucide="calendar" class="input-icon" aria-hidden="true"></i>
                             <input type="date" id="dateFilter" class="input input-with-icon" aria-label="Filter receipts by date">
@@ -478,6 +484,14 @@
                             <i data-lucide="filter" style="width:14px;height:14px"></i>
                             Filter
                         </button>
+                        <select id="receiptSortBy" class="input input-sm receipt-sort-select" aria-label="Sort receipts">
+                            <option value="newest">Newest First</option>
+                            <option value="oldest">Oldest First</option>
+                            <option value="amount-desc">Amount ↓</option>
+                            <option value="amount-asc">Amount ↑</option>
+                            <option value="items-desc">Items ↓</option>
+                            <option value="confidence">Confidence</option>
+                        </select>
                         <button class="btn btn-ghost btn-sm" id="showAllBtn">
                             <i data-lucide="list" style="width:14px;height:14px"></i>
                             Show All
@@ -488,8 +502,29 @@
                         </button>
                     </div>
                 </div>
+                <!-- Bulk actions bar (hidden until checkboxes selected) -->
+                <div class="receipt-bulk-bar" id="receiptBulkBar" style="display:none">
+                    <label class="receipt-select-all-label">
+                        <input type="checkbox" id="receiptSelectAll"> <span id="receiptSelectedCount">0</span> selected
+                    </label>
+                    <div class="receipt-bulk-actions">
+                        <button class="btn btn-sm btn-accent" id="bulkExportBtn">
+                            <i data-lucide="file-spreadsheet" style="width:14px;height:14px"></i> Export Selected
+                        </button>
+                        <button class="btn btn-sm btn-primary" id="bulkBatchBtn">
+                            <i data-lucide="plus" style="width:14px;height:14px"></i> Add to Batch
+                        </button>
+                        <button class="btn btn-sm btn-danger" id="bulkDeleteBtn">
+                            <i data-lucide="trash-2" style="width:14px;height:14px"></i> Delete Selected
+                        </button>
+                    </div>
+                </div>
                 <div class="receipts-list" id="receiptsList">
                     <p class="placeholder">Loading receipts…</p>
+                </div>
+                <!-- Load more -->
+                <div id="receiptsLoadMore" style="display:none;text-align:center;padding:1rem">
+                    <button class="btn btn-ghost btn-sm" id="loadMoreBtn">Load More…</button>
                 </div>
             </div>
         </section>
@@ -508,19 +543,32 @@
                             <i data-lucide="plus" style="width:14px;height:14px"></i>
                             Add Product
                         </button>
-                        <button class="btn btn-ghost btn-sm" id="exportCatalogBtn">
-                            <i data-lucide="download" style="width:14px;height:14px"></i>
+                        <button class="btn btn-accent btn-sm" id="importCatalogBtn" aria-label="Import products from CSV file">
+                            <i data-lucide="upload" style="width:14px;height:14px" aria-hidden="true"></i>
+                            Import CSV
+                        </button>
+                        <button class="btn btn-ghost btn-sm" id="exportCatalogBtn" aria-label="Export product catalog as CSV">
+                            <i data-lucide="download" style="width:14px;height:14px" aria-hidden="true"></i>
                             CSV
                         </button>
                     </div>
+                </div>
+
+                <!-- CSV Import Drop Area -->
+                <div class="csv-import-area" id="csvImportArea" role="region" aria-label="CSV file import area">
+                    <div class="csv-import-icon" aria-hidden="true">📄</div>
+                    <p><strong>Drop your CSV file here</strong> or click to browse</p>
+                    <input type="file" id="csvFileInput" accept=".csv" style="display:none" aria-label="Select CSV file to import">
+                    <button class="btn btn-primary btn-sm" id="csvBrowseBtn">Choose CSV File</button>
+                    <p class="csv-format-hint">Format: product_code, product_name, category, unit — UTF-8, max 1MB</p>
                 </div>
 
                 <!-- Add Product Form (hidden by default) -->
                 <div class="product-form" id="productForm" style="display:none">
                     <div class="form-header">
                         <h3 id="formTitle">Add New Product</h3>
-                        <button class="btn-close-form" id="cancelProductBtn" title="Close">
-                            <i data-lucide="x" style="width:18px;height:18px"></i>
+                        <button class="btn-close-form" id="cancelProductBtn" title="Close" aria-label="Close product form">
+                            <i data-lucide="x" style="width:18px;height:18px" aria-hidden="true"></i>
                         </button>
                     </div>
                     <div class="form-grid">
@@ -578,6 +626,30 @@
         <!-- ─── Train Tab ──────────────────────────────────────────── -->
         <section id="tab-train" class="tab-content" role="tabpanel" aria-labelledby="tab-btn-train">
             <div class="catalog-container">
+
+                <!-- Training Onboarding Guide -->
+                <div class="train-onboarding" id="trainOnboarding" role="region" aria-label="Training getting started guide">
+                    <button class="train-onboarding-dismiss" id="dismissOnboarding" title="Dismiss guide" aria-label="Dismiss training guide">✕</button>
+                    <h3><i data-lucide="graduation-cap" style="width:18px;height:18px" aria-hidden="true"></i> Getting Started with Training</h3>
+                    <div class="train-onboarding-steps">
+                        <div class="train-onboarding-step">
+                            <span class="train-step-num" aria-hidden="true">1</span>
+                            <span class="train-step-text"><strong>Upload labeled receipts</strong> — Scan or photograph receipts and add the correct product codes, names and quantities as ground truth.</span>
+                        </div>
+                        <div class="train-onboarding-step">
+                            <span class="train-step-num" aria-hidden="true">2</span>
+                            <span class="train-step-text"><strong>Run a benchmark</strong> — Compare OCR output against your ground truth to measure accuracy (precision, recall, F1 score).</span>
+                        </div>
+                        <div class="train-onboarding-step">
+                            <span class="train-step-num" aria-hidden="true">3</span>
+                            <span class="train-step-text"><strong>Auto-optimize</strong> — Let the system search for the best OCR parameters. Choose a strategy (Smart Tune or Grid Search) and metric to optimize.</span>
+                        </div>
+                        <div class="train-onboarding-step">
+                            <span class="train-step-num" aria-hidden="true">4</span>
+                            <span class="train-step-text"><strong>Save &amp; apply profiles</strong> — Save the best parameters as a named profile. Apply it for all future scans.</span>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Training Status Dashboard -->
                 <div class="train-dashboard" id="trainDashboard">
@@ -756,8 +828,8 @@
                             <i data-lucide="database" style="width:15px;height:15px"></i>
                             Training Samples
                         </div>
-                        <button class="btn btn-ghost btn-sm" id="refreshSamplesBtn" title="Refresh list">
-                            <i data-lucide="refresh-cw" style="width:14px;height:14px"></i>
+                        <button class="btn btn-ghost btn-sm" id="refreshSamplesBtn" title="Refresh list" aria-label="Refresh training samples list">
+                            <i data-lucide="refresh-cw" style="width:14px;height:14px" aria-hidden="true"></i>
                         </button>
                     </div>
                     <div class="table-wrapper">
@@ -883,8 +955,8 @@
                             <i data-lucide="sliders-horizontal" style="width:15px;height:15px"></i>
                             Current OCR Parameters
                         </div>
-                        <button class="btn btn-ghost btn-sm" id="refreshParamsBtn" title="Refresh">
-                            <i data-lucide="refresh-cw" style="width:14px;height:14px"></i>
+                        <button class="btn btn-ghost btn-sm" id="refreshParamsBtn" title="Refresh" aria-label="Refresh OCR parameters">
+                            <i data-lucide="refresh-cw" style="width:14px;height:14px" aria-hidden="true"></i>
                         </button>
                     </div>
                     <div class="train-params-grid" id="currentParamsGrid">
@@ -930,12 +1002,43 @@
     <!-- ─── Batch Upload Progress ─────────────────────────────────── -->
     <div class="batch-upload-overlay" id="batchUploadOverlay" style="display:none">
         <div class="batch-upload-card">
-            <h3 id="batchUploadTitle">Processing Receipts…</h3>
+            <!-- Header with animated icon -->
+            <div class="batch-upload-header">
+                <div class="batch-upload-icon" id="batchUploadIcon">
+                    <svg class="batch-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                    </svg>
+                </div>
+                <h3 id="batchUploadTitle">Processing Receipts…</h3>
+                <p class="batch-upload-subtitle" id="batchUploadSubtitle">Scanning your receipts with OCR</p>
+            </div>
+            <!-- Progress section -->
             <div class="batch-upload-progress">
-                <div class="progress-track"><div class="progress-fill" id="batchProgressFill"></div></div>
+                <div class="batch-progress-info">
+                    <span class="batch-progress-label" id="batchProgressLabel">Uploading</span>
+                    <span class="batch-progress-pct" id="batchProgressPct">0%</span>
+                </div>
+                <div class="batch-progress-track"><div class="batch-progress-fill" id="batchProgressFill"></div></div>
                 <p class="batch-upload-status" id="batchUploadStatus">0 / 0</p>
             </div>
+            <!-- Results list -->
             <div class="batch-upload-results" id="batchUploadResults"></div>
+            <!-- Summary stats (shown on completion) -->
+            <div class="batch-upload-summary" id="batchUploadSummary" style="display:none">
+                <div class="batch-summary-stat batch-summary-success">
+                    <span class="batch-summary-num" id="batchSuccessCount">0</span>
+                    <span class="batch-summary-lbl">Succeeded</span>
+                </div>
+                <div class="batch-summary-stat batch-summary-failed" id="batchFailedStat" style="display:none">
+                    <span class="batch-summary-num" id="batchFailedCount">0</span>
+                    <span class="batch-summary-lbl">Failed</span>
+                </div>
+                <div class="batch-summary-stat batch-summary-items">
+                    <span class="batch-summary-num" id="batchTotalItems">0</span>
+                    <span class="batch-summary-lbl">Items Found</span>
+                </div>
+            </div>
+            <!-- Actions -->
             <div class="batch-upload-actions" id="batchUploadActions" style="display:none">
                 <button class="btn btn-primary" id="batchUploadDoneBtn">
                     <i data-lucide="check" style="width:15px;height:15px"></i>
@@ -954,7 +1057,7 @@
 
     <!-- ─── Dark Mode Toggle ──────────────────────────────────────── -->
     <button class="theme-toggle" id="themeToggle" title="Toggle dark mode (D)" aria-label="Toggle dark mode">
-        <i data-lucide="moon" style="width:16px;height:16px"></i>
+        <i data-lucide="moon" style="width:16px;height:16px" aria-hidden="true"></i>
     </button>
 
     <!-- ─── Keyboard Shortcuts Modal ──────────────────────────────── -->
@@ -985,9 +1088,9 @@
 
     <!-- ─── Modal ────────────────────────────────────────────────────── -->
     <div class="modal-overlay" id="modalOverlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-        <div class="modal">
+        <div class="modal" tabindex="-1" id="modalContent">
             <h3 id="modalTitle">Confirm</h3>
-            <div id="modalMessage"></div>
+            <div id="modalMessage" role="document"></div>
             <div class="modal-actions">
                 <button class="btn btn-primary" id="modalConfirm">Confirm</button>
                 <button class="btn btn-ghost" id="modalCancel">Cancel</button>
@@ -995,6 +1098,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2.2.0"></script>
 </body>
 </html>

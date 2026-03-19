@@ -62,8 +62,10 @@ TOTAL_EXCLUDE_RE = re.compile(
 
 # Grand Total lines — these are MONEY totals, not quantity totals.
 # The verifier handles qty totals; grand total is handled by verify_math.
+# IMPORTANT: separator must match the patterns in parser.py (not just \s*)
+# to catch OCR garbles like "Grand-Total", "Grand_Total", etc.
 GRAND_TOTAL_EXCLUDE_RE = re.compile(
-    r"(?:grand|grramd|gramd|grrand|gra[nm]d)\s*(?:total|totai|tota1|t0tal|totd)",
+    r"(?:grand|grramd|gramd|grrand|gra[nm]d)[\s:=\-_\.]*(?:total|totai|tota1|t0tal|totd)",
     re.IGNORECASE,
 )
 
@@ -293,8 +295,11 @@ class BillTotalVerifier:
             if has_total_kw and not TOTAL_EXCLUDE_RE.search(text):
                 # Extract number that directly follows the total keyword
                 # (not just any number on the line)
+                # NOTE: do NOT include 'grand total' here — those are monetary
+                # totals, not qty totals.  They should be excluded by
+                # GRAND_TOTAL_EXCLUDE_RE before reaching this point.
                 fallback_match = re.search(
-                    r'(?:total|totai|tota1|t0tal|subtotal|sub\s*total|grand\s*total|grramd\s*total|sum)'
+                    r'(?:total|totai|tota1|t0tal|subtotal|sub\s*total|sum)'
                     r'\s*(?:qty|quantity|qtv|qly|qtyt|qiy|qtt)?[\s:=\-]*(\d+\.?\d*)',
                     text, re.IGNORECASE
                 )
@@ -578,10 +583,18 @@ class BillTotalVerifier:
             qty = item.get("quantity", 0)
             rate = item.get("unit_price", 0)
             amt = item.get("line_total", 0)
-            expected_amt = round(qty * rate, 2)
 
-            # Line math check: qty × rate = amount
-            line_ok = abs(amt - expected_amt) < 0.01 if amt > 0 else True
+            # When rate is 0 but we have a line_total, we can't verify
+            # qty × rate = amount (division info missing).  Use the OCR
+            # amount directly for the grand total instead of 0.
+            if rate == 0 and amt > 0:
+                line_ok = True
+                expected_amt = amt  # trust the OCR amount
+            else:
+                expected_amt = round(qty * rate, 2)
+                # Line math check: qty × rate = amount
+                line_ok = abs(amt - expected_amt) < 0.01 if amt > 0 else True
+
             if not line_ok:
                 all_line_math_ok = False
 

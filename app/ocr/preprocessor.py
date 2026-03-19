@@ -132,7 +132,8 @@ class ImagePreprocessor:
         else:
             logger.debug(f"  [2a/7] Document scan skipped — no clear boundary found ({scan_ms}ms)")
 
-        metadata["_color_image"] = img   # keep reference (already a resize-copy, no need to deep-copy again)
+        # NOTE: _color_image is set AFTER deskew + rotation below,
+        # so the color pass uses the correctly-oriented image.
 
         # 2b. WHITE BALANCE CORRECTION — neutralize color casts from lighting
         # Phone cameras under fluorescent/LED lighting produce yellow/blue casts
@@ -174,6 +175,10 @@ class ImagePreprocessor:
             logger.debug("  [3b/7] ↻ Image was upside-down — rotated 180°")
         else:
             logger.debug("  [3b/7] Orientation check: image is right-side-up")
+
+        # Save color image AFTER all orientation corrections (deskew + 180° rotation)
+        # so the parallel color OCR pass uses the correctly-oriented image.
+        metadata["_color_image"] = img
 
         # 4. Quality assessment
         quality = self._assess_quality(gray)
@@ -265,7 +270,10 @@ class ImagePreprocessor:
 
         # g) Brightness normalization — handle shadows / uneven lighting
         mean_val = np.mean(enhanced)
-        contrast_val = quality.get('contrast', np.std(enhanced))
+        # Recompute contrast from the CURRENT enhanced image (not the raw quality
+        # dict) since CLAHE + shadow normalization already boosted contrast.
+        # Using the stale raw value would over-process images that are now fine.
+        contrast_val = float(np.std(enhanced))
         if mean_val < 100:
             # Very dark image — aggressive brighten with higher alpha
             alpha = 1.6
@@ -859,8 +867,21 @@ class ImagePreprocessor:
         """
         h, w = gray.shape[:2]
 
+        # ── Downscale to ~500px for speed (skew is a global property) ──
+        # HoughLinesP is O(n·pixels); running on full 1800px is 10× slower
+        # than on 500px, with identical angle accuracy.
+        _target = 500
+        if max(h, w) > _target:
+            _ds_scale = _target / max(h, w)
+            _small_gray = cv2.resize(gray, None, fx=_ds_scale, fy=_ds_scale,
+                                     interpolation=cv2.INTER_AREA)
+        else:
+            _small_gray = gray
+            _ds_scale = 1.0
+        _sh, _sw = _small_gray.shape[:2]
+
         # Edge detection on thresholded image
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        _, binary = cv2.threshold(_small_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         edges = cv2.Canny(binary, 50, 150, apertureSize=3)
 
         # Detect lines using probabilistic Hough transform
@@ -868,9 +889,9 @@ class ImagePreprocessor:
             edges,
             rho=1,
             theta=np.pi / 720,  # 0.25° resolution
-            threshold=100,
-            minLineLength=w // 4,  # Lines must span ≥25% of image width
-            maxLineGap=20,
+            threshold=max(50, int(100 * _ds_scale)),
+            minLineLength=_sw // 4,  # Lines must span ≥25% of image width
+            maxLineGap=int(20 * _ds_scale),
         )
 
         if lines is None or len(lines) < 3:
@@ -952,8 +973,10 @@ class ImagePreprocessor:
         """
         try:
             h, w = binary.shape[:2]
-            # Downsample for speed
-            scale = min(1.0, 300.0 / max(h, w))
+            # Downsample aggressively for speed — skew is a global property
+            # that's fully preserved at low resolution
+            target_dim = 200
+            scale = min(1.0, target_dim / max(h, w))
             if scale < 1.0:
                 small = cv2.resize(binary, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
             else:

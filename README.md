@@ -8,6 +8,8 @@
 ![Azure](https://img.shields.io/badge/Azure_Doc_Intel-Optional-0078D4?logo=microsoftazure&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Audit](https://img.shields.io/badge/Audit_Score-91%2F100_(Grade_A)-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-314_passing-brightgreen)
+![Smart OCR](https://img.shields.io/badge/Smart_OCR-Phase_2_Complete-blue)
 
 ---
 
@@ -39,7 +41,12 @@
 - **Hybrid OCR Engine** — Local EasyOCR + optional Azure Document Intelligence with intelligent cost-aware routing
 - **Handwritten Receipt Parsing** — 10+ regex patterns (priority-ordered) with 4-tier fuzzy code matching (exact → OCR-sub → handwriting-sub → fuzzy)
 - **Bill Total Verification** — Multi-pass digit re-reading, arithmetic reconciliation, confidence-weighted dispute resolution
-- **Quality Scoring** — Automated image quality assessment with blur/brightness/contrast analysis
+- **Smart OCR Pipeline** — Post-parse intelligence layer:
+  - **Quality Scoring** — 0–100 score + letter grade (A/B/C/D) based on 6 weighted factors (OCR confidence, items found, total/math verification, image quality, catalog match rate)
+  - **Validation Rules** — 4-rule engine: impossible quantity detection, price sanity checks, duplicate item flagging, cross-receipt anomaly detection
+  - **Duplicate Detection** — 3-layer dedup: perceptual image hash (hamming distance ≤5), content fingerprint (sorted code:qty SHA-256), user confirmation
+  - **OCR Correction Feedback** — Records user corrections, builds lookup map (≥2 occurrences), auto-corrects known OCR misreads on future scans
+  - **Date & Store Extraction** — Extracts receipt date (10+ formats) and store name from OCR text
 - **Input Validation** — Comprehensive OCR result validators with confidence thresholds and sanity checks
 - **Real-time Web Interface** — Single-page app with camera capture, clipboard paste, drag-and-drop upload
 - **Excel Export** — Styled multi-sheet reports (Daily Sales + Summary) with confidence highlighting
@@ -63,6 +70,7 @@
 - **Duplicate Detection** — Receipt dedup service prevents double-scans of the same image
 - **Correction Service** — Post-OCR correction pipeline for automated error fixups
 - **CI/CD** — GitHub Actions pipeline (lint + test matrix + Docker build), pre-commit hooks (ruff + formatting)
+- **Testing** — 314 tests passing (283 unit + 31 integration), 103 edge-case tests for Smart OCR, 7 bugs found and fixed via deep testing
 - **Docker** — Multi-stage production image, non-root user, healthcheck, docker-compose with Prometheus + Grafana + Jaeger + Loki + Promtail + Alertmanager + named volumes
 
 ---
@@ -91,6 +99,10 @@
 │  └──────────┘    └──────────────┘    └─────────────────┘   │
 │  preprocessor · parser · total_verifier · quality_scorer    │
 │  image_cache · usage_tracker · validators                   │
+├─────────────────────────────────────────────────────────────┤
+│                   Smart OCR Pipeline                       │
+│  dedup_service · correction_service · quality_scorer         │
+│  receipt_validator · date/store extraction                   │
 ├─────────────────────────────────────────────────────────────┤
 │                    Database Layer                           │
 │  ┌──────────────────┐    ┌──────────────────────────────┐  │
@@ -225,6 +237,24 @@ Detailed end-to-end flow showing every stage a receipt goes through — from use
 ║     • Line total validation (qty × unit_price)                       ║
 ║                         ↓                                            ║
 ║                                                                      ║
+║  STEP 4d: SMART VALIDATION RULES (ReceiptValidator)                  ║
+║     • Impossible quantity detection (zero/negative/absurd)           ║
+║     • Price sanity checks (>5× catalog deviation)                    ║
+║     • Duplicate item flagging                                       ║
+║     • Cross-receipt anomaly detection (historical patterns)          ║
+║                         ↓                                            ║
+║                                                                      ║
+║  STEP 4e: QUALITY SCORING (QualityScorer)                            ║
+║     • 6-factor weighted score (0–100) + letter grade (A/B/C/D)       ║
+║     • OCR confidence, items, total/math verification, image, catalog ║
+║                         ↓                                            ║
+║                                                                      ║
+║  STEP 4f: DUPLICATE DETECTION (DedupService)                         ║
+║     • Perceptual image hash (8×8 grayscale average hash)             ║
+║     • Content fingerprint (SHA-256 of sorted code:qty pairs)        ║
+║     • Hamming distance ≤5 = duplicate warning                       ║
+║                         ↓                                            ║
+║                                                                      ║
 ║  STEP 5: DATABASE SAVE (SQLite / PostgreSQL)                         ║
 ║     • INSERT → receipts table                                        ║
 ║     • INSERT → receipt_items table                                   ║
@@ -300,6 +330,20 @@ POST /api/batch (up to 20 files)
                        │ line_total       │
                        │ ocr_confidence   │
                        │ manually_edited  │
+                       └──────────────────┘
+
+                       ┌──────────────────┐
+                       │ ocr_corrections  │
+                       ├──────────────────┤
+                       │ id (PK)          │
+                       │ receipt_id (FK)   │
+                       │ item_id           │
+                       │ original_code     │
+                       │ corrected_code    │
+                       │ original_qty      │
+                       │ corrected_qty     │
+                       │ raw_ocr_text      │
+                       │ created_at        │
                        └──────────────────┘
 ```
 
@@ -379,20 +423,20 @@ POST /api/batch (up to 20 files)
 │   │   ├── azure_engine.py       #   Azure Document Intelligence client
 │   │   ├── hybrid_engine.py      #   Intelligent OCR router (cost-aware)
 │   │   ├── preprocessor.py       #   Image enhancement pipeline
-│   │   ├── parser.py             #   Receipt text → structured data
+│   │   ├── parser.py             #   Receipt text → structured data (2468L)
 │   │   ├── total_verifier.py     #   Cross-line total verification (multi-pass)
-│   │   ├── quality_scorer.py     #   Image quality assessment (blur, brightness, contrast)
-│   │   ├── validators.py         #   OCR result validation (confidence, sanity checks)
+│   │   ├── quality_scorer.py     #   Receipt quality scoring (0–100 + A/B/C/D grade)
+│   │   ├── validators.py         #   Post-parse validation rules (4-rule engine)
 │   │   ├── usage_tracker.py      #   Azure API budget tracking
 │   │   └── image_cache.py        #   SHA-256 LRU result cache
 │   │
 │   ├── services/
-│   │   ├── receipt_service.py    #   Scan orchestration pipeline
+│   │   ├── receipt_service.py    #   Scan orchestration pipeline (980L, 6-step + Smart OCR)
 │   │   ├── product_service.py    #   Product CRUD + CSV import/export
 │   │   ├── excel_service.py      #   Styled Excel report generation
 │   │   ├── batch_service.py      #   Async background batch processing
-│   │   ├── dedup_service.py      #   Duplicate receipt detection
-│   │   └── correction_service.py #   Post-OCR correction pipeline
+│   │   ├── dedup_service.py      #   Duplicate receipt detection (image hash + content fingerprint)
+│   │   └── correction_service.py #   OCR correction feedback loop (learn from user edits)
 │   │
 │   └── static/                   # Frontend assets
 │       ├── index.html            #   3-tab SPA (Scan | Receipts | Catalog)
@@ -408,17 +452,21 @@ POST /api/batch (up to 20 files)
 │   ├── template_learner.py       #   Receipt template pattern learning
 │   └── real_world_trainer.py     #   Adaptive trainer — error mining, confusion matrix, learned rules
 │
-├── tests/                        # Test suite
+├── tests/                        # Test suite (314 tests: 283 unit + 31 integration)
 │   ├── test_app.py               #   Unit tests (pytest) — parser, Excel, DB
-│   ├── test_smart_ocr.py         #   Smart OCR pipeline tests (704 lines)
-│   ├── test_smart_ocr_edge_cases.py  #   Edge case regression suite (996 lines)
+│   ├── test_smart_ocr.py         #   Smart OCR pipeline tests (702L, 67 tests)
+│   ├── test_smart_ocr_edge_cases.py  #   Smart OCR edge cases (991L, 103 tests, 9 classes)
 │   ├── test_accuracy.py          #   OCR accuracy validation tests
 │   ├── test_preprocessing.py     #   Image preprocessing tests
-│   ├── test_training.py          #   Training system tests (482 lines)
+│   ├── test_training.py          #   Training system tests (478L)
 │   ├── test_trainer.py           #   Real-world trainer tests (43 tests)
-│   ├── test_observability.py     #   WebSocket, JSON logging, alerting tests (32 tests)
+│   ├── test_observability.py     #   WebSocket, JSON logging, alerting tests (37 tests)
 │   ├── test_db_production.py     #   Database infrastructure tests (46 tests)
-│   ├── test_azure_integration.py #   Azure OCR integration tests
+│   ├── test_azure_integration.py #   Azure OCR integration tests (31 tests)
+│   ├── test_services.py          #   CorrectionService + DedupService tests (35 tests)
+│   ├── test_infrastructure.py    #   Logging, tracing, metrics, WebSocket tests (49 tests)
+│   ├── test_middleware_and_db.py  #   Middleware + DB operation tests (48 tests)
+│   ├── test_parser_internals.py  #   Parser internal helper tests (73 tests)
 │   ├── test_codes.py             #   Fuzzy matching tests
 │   ├── test_api.py               #   API endpoint tests
 │   ├── api_check.py              #   API endpoint health checks
@@ -580,6 +628,8 @@ Interactive API documentation is available at **[http://localhost:8000/docs](htt
 | `GET` | `/api/ocr/usage` | Azure usage + pacing stats |
 | `POST` | `/api/ocr/usage/reset-daily` | Reset daily usage counter 🔒 |
 | `POST` | `/api/ocr/cache/clear` | Clear the image cache 🔒 |
+| `GET` | `/api/corrections` | OCR correction feedback statistics |
+| `GET` | `/api/item-stats` | Per-product historical quantity statistics |
 
 > 🔒 Protected by `API_SECRET_KEY` — pass via `X-API-Key` header.
 
@@ -660,6 +710,7 @@ Image Upload
 
 - **10+ regex patterns** for code–quantity extraction (priority-ordered)
 - **4-tier code matching:** exact → OCR character substitution → handwriting substitution → fuzzy (difflib)
+- **OCR correction lookup** — checks learned corrections map before fuzzy matching (from user feedback)
 - **Y-aware line grouping** with rotation-resistant quantity alignment
 - **Quantity sanity clamping** — max 100 per item (50 for 2-column), dense receipt detection at 6+ items
 - **Cross-line total verification** with OCR-garbled variant handling (`qtyt`, `grrand`, etc.)
@@ -695,11 +746,12 @@ POSTGRES_PASSWORD=your-password
 
 | Table | Purpose |
 |-------|---------|
-| `products` | Product catalog — code (unique), name, category, unit |
-| `receipts` | Scan metadata — image paths, status, OCR confidence |
-| `receipt_items` | Parsed line items (FK → receipts, CASCADE delete) |
+| `products` | Product catalog — code (unique), name, category, unit, unit_price |
+| `receipts` | Scan metadata — image paths, status, OCR confidence, **image_hash, content_fingerprint, receipt_date, store_name, quality_score, quality_grade** (v4) |
+| `receipt_items` | Parsed line items (FK → receipts, CASCADE delete), **unit_price, line_total** (v3) |
+| `ocr_corrections` | **OCR correction feedback** (FK → receipts, SET NULL) — original/corrected code+qty pairs (v4) |
 | `processing_logs` | Per-stage timing and error tracking |
-| `schema_migrations` | Migration version audit trail |
+| `schema_migrations` | Migration version audit trail (v1–v4) |
 
 ### Seed Data
 
@@ -715,7 +767,7 @@ On first initialization, the database is seeded with **18 paint-shop products**:
 
 ## Testing
 
-**497+ tests · 73% code coverage** (threshold: 70%) across 11 test files.
+**314 tests passing** (283 unit + 31 integration) · **73% code coverage** (threshold: 70%) across 15+ test files.
 
 ```bash
 # Run all unit tests with coverage
@@ -748,7 +800,10 @@ python -m pytest tests/test_observability.py -v
 # Smart OCR pipeline tests
 python -m pytest tests/test_smart_ocr.py -v
 
-# Edge case regression suite (996 lines, comprehensive)
+# Smart OCR pipeline tests (67 tests)
+python -m pytest tests/test_smart_ocr.py -v
+
+# Edge case regression suite (991 lines, 103 tests, 9 test classes)
 python -m pytest tests/test_smart_ocr_edge_cases.py -v
 
 # OCR accuracy validation
@@ -1329,7 +1384,34 @@ Hooks: trailing whitespace, EOF fixer, YAML/TOML check, large file guard, merge 
 
 ---
 
-## Changelog — v2.0.0 Optimization
+## Changelog
+
+### v2.1.0 — Smart OCR + Deep Testing (March 2026)
+
+**Phase 2: Smart OCR Pipeline** — Post-parse intelligence layer:
+- **Quality Scoring** — 6-factor weighted score (OCR confidence 30pts, items 20pts, total verification 15pts, math verification 15pts, image quality 10pts, catalog match 10pts)
+- **Validation Rules** — 4-rule engine: impossible qty detection, price sanity (>5× catalog), duplicate flagging, cross-receipt anomaly detection
+- **Duplicate Detection** — 3-layer dedup: perceptual image hash (8×8 average hash, hamming ≤5), content fingerprint (SHA-256), user confirmation
+- **OCR Correction Feedback** — Records user corrections, builds lookup map (≥2 occurrences), auto-corrects known misreads
+- **Date & Store Extraction** — 10+ date formats, keyword-priority store detection, truncation at 200 chars
+- **New API Endpoints** — `GET /api/corrections`, `GET /api/item-stats`
+- **Database Migration v4** — Added 6 columns to receipts table + `ocr_corrections` table
+
+**Deep Edge-Case Testing** — 7 bugs found and fixed:
+
+| # | File | Bug | Fix |
+|---|------|-----|-----|
+| 1 | `dedup_service.py` | Empty-code fingerprint returned fixed SHA hash | `if not pairs: return ""` |
+| 2 | `quality_scorer.py` | Missing `match_type` inflated catalog match score | Added `None` to exclusion |
+| 3 | `validators.py` | Rule 4 anomaly detection gated on catalog | Removed `and catalog` gate |
+| 4 | `quality_scorer.py` | `sharpness=0` displayed as `None` | `if sharpness is not None` |
+| 5 | `dedup_service.py` | SQL NULL `image_hash` not handled | `.get() or ""` pattern |
+| 6 | `dedup_service.py` | `None` code crashed `.upper()` | `(item.get("code") or "")` |
+| 7 | `quality_scorer.py` | `None` confidence crashed `> 0` | `.get() or 0` pattern |
+
+**103 new edge-case tests** across 9 test classes — total: **314 tests passing** (283 unit + 31 integration)
+
+### v2.0.0 — Same-Receipt-Type Optimization
 
 **Deep Audit Result:** 🏆 **91/100 (Grade A)** — up from 81/100 (Grade B)
 

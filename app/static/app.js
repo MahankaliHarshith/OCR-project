@@ -280,16 +280,26 @@ $$('.nav-btn').forEach(btn => {
         $$('.tab-content').forEach(t => t.classList.remove('active'));
         $(`#tab-${tab}`).classList.add('active');
 
-        // Pause dashboard auto-refresh when on other tabs to save bandwidth/CPU.
-        // Resume when returning to dashboard.
-        if (tab === 'dashboard') {
+        // Scroll to top on tab switch
+        window.scrollTo({ top: 0, behavior: 'instant' });
+
+        // Update URL hash (without triggering hashchange)
+        history.replaceState(null, '', `#${tab}`);
+
+        // The quick-stats bar lives on the 'scan' tab, so keep the dashboard
+        // timer running there.  Only pause it on the data-heavy tabs (receipts,
+        // catalog, train) where the stats are not visible and the extra requests
+        // would be wasted.
+        if (tab === 'scan' || tab === 'dashboard') {
             if (!_dashboardTimer) {
                 loadDashboardStats();
                 _dashboardTimer = setInterval(loadDashboardStats, 30000);
             }
-        } else if (_dashboardTimer) {
-            clearInterval(_dashboardTimer);
-            _dashboardTimer = null;
+        } else {
+            if (_dashboardTimer) {
+                clearInterval(_dashboardTimer);
+                _dashboardTimer = null;
+            }
         }
 
         // Load data for the tab
@@ -302,6 +312,23 @@ $$('.nav-btn').forEach(btn => {
         }
         if (tab === 'train') loadTrainingTab();
     });
+});
+
+// ─── URL Hash Routing ────────────────────────────────────────────────────────
+// On page load, restore tab from URL hash
+(function restoreTabFromHash() {
+    const hash = location.hash.replace('#', '');
+    const validTabs = ['scan', 'receipts', 'catalog', 'train'];
+    if (hash && validTabs.includes(hash)) {
+        const btn = document.querySelector(`.nav-btn[data-tab="${hash}"]`);
+        if (btn) setTimeout(() => btn.click(), 100);
+    }
+})();
+// Listen for browser back/forward
+window.addEventListener('hashchange', () => {
+    const hash = location.hash.replace('#', '');
+    const btn = document.querySelector(`.nav-btn[data-tab="${hash}"]`);
+    if (btn && !btn.classList.contains('active')) btn.click();
 });
 
 // ─── File Upload & Drag/Drop ─────────────────────────────────────────────────
@@ -481,33 +508,50 @@ async function processFiles(files) {
     state.isProcessing = true;
     const overlay = $('#batchUploadOverlay');
     const title = $('#batchUploadTitle');
+    const subtitle = $('#batchUploadSubtitle');
     const fill = $('#batchProgressFill');
     const status = $('#batchUploadStatus');
+    const pctLabel = $('#batchProgressPct');
+    const progressLabel = $('#batchProgressLabel');
     const resultsDiv = $('#batchUploadResults');
     const actionsDiv = $('#batchUploadActions');
+    const iconDiv = $('#batchUploadIcon');
+    const summaryDiv = $('#batchUploadSummary');
 
     overlay.style.display = 'flex';
     actionsDiv.style.display = 'none';
+    summaryDiv.style.display = 'none';
     resultsDiv.innerHTML = '';
+    iconDiv.className = 'batch-upload-icon';
+    iconDiv.innerHTML = `<svg class="batch-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
+    fill.className = 'batch-progress-fill';
     title.textContent = `Processing ${validFiles.length} Receipt${validFiles.length > 1 ? 's' : ''}…`;
+    subtitle.textContent = 'Scanning your receipts with OCR';
+    progressLabel.textContent = 'Scanning';
     fill.style.width = '0%';
+    pctLabel.textContent = '0%';
     status.textContent = `0 / ${validFiles.length}`;
 
     const batchResults = [];
     let succeeded = 0;
+    let totalItemsFound = 0;
 
     for (let i = 0; i < validFiles.length; i++) {
         const file = validFiles[i];
         const pct = Math.round(((i) / validFiles.length) * 100);
         fill.style.width = pct + '%';
+        pctLabel.textContent = pct + '%';
         status.textContent = `${i + 1} / ${validFiles.length} — ${file.name}`;
 
-        // Add a pending row
+        // Add a pending row with animated icon
         const row = document.createElement('div');
         row.className = 'batch-upload-row pending';
-        row.innerHTML = `<span class="batch-upload-filename">${escHtml(file.name)}</span><span class="batch-upload-row-status">⏳ Processing…</span>`;
+        row.style.animationDelay = `${i * 0.05}s`;
+        row.innerHTML = `
+            <span class="batch-upload-row-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation:batchSpin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></span>
+            <span class="batch-upload-filename">${escHtml(file.name)}</span>
+            <span class="batch-upload-row-status">Processing<span class="batch-pending-dots"><span></span><span></span><span></span></span></span>`;
         resultsDiv.appendChild(row);
-        // Auto-scroll to latest
         resultsDiv.scrollTop = resultsDiv.scrollHeight;
 
         try {
@@ -517,7 +561,7 @@ async function processFiles(files) {
             formData.append('file', optimizedFile);
 
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000);
+            const timeoutId = setTimeout(() => controller.abort(), 180000);
 
             const res = await fetch('/api/receipts/scan', {
                 method: 'POST',
@@ -531,8 +575,10 @@ async function processFiles(files) {
             if (res.ok && data.success !== false) {
                 const itemCount = data.receipt_data?.items?.length || 0;
                 const dbId = data.receipt_data?.db_id;
+                totalItemsFound += itemCount;
                 row.className = 'batch-upload-row success';
-                row.querySelector('.batch-upload-row-status').textContent = `✅ ${itemCount} item${itemCount !== 1 ? 's' : ''}`;
+                row.querySelector('.batch-upload-row-icon').innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+                row.querySelector('.batch-upload-row-status').textContent = `${itemCount} item${itemCount !== 1 ? 's' : ''}`;
                 batchResults.push({ file, data, success: true, dbId });
                 succeeded++;
 
@@ -541,26 +587,62 @@ async function processFiles(files) {
                     const batch = getActiveBatch();
                     if (batch && !batch.receiptIds.includes(dbId) && batch.receiptIds.length < MAX_BATCH_SIZE) {
                         batch.receiptIds.push(dbId);
+                        saveBatchState();
                     }
                 }
             } else {
                 const errMsg = data.detail || data.errors?.[0] || 'Processing failed';
                 row.className = 'batch-upload-row failed';
-                row.querySelector('.batch-upload-row-status').textContent = `❌ ${errMsg}`;
+                row.querySelector('.batch-upload-row-icon').innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+                row.querySelector('.batch-upload-row-status').textContent = errMsg;
                 batchResults.push({ file, data, success: false, error: errMsg });
             }
         } catch (err) {
             const errMsg = err.name === 'AbortError' ? 'Timeout' : (err.message || 'Error');
             row.className = 'batch-upload-row failed';
-            row.querySelector('.batch-upload-row-status').textContent = `❌ ${errMsg}`;
+            row.querySelector('.batch-upload-row-icon').innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+            row.querySelector('.batch-upload-row-status').textContent = errMsg;
             batchResults.push({ file, success: false, error: errMsg });
         }
+
+        // Update progress after each file
+        const donePct = Math.round(((i + 1) / validFiles.length) * 100);
+        fill.style.width = donePct + '%';
+        pctLabel.textContent = donePct + '%';
     }
 
     // Complete
     fill.style.width = '100%';
+    fill.classList.add('complete');
+    pctLabel.textContent = '100%';
+    progressLabel.textContent = 'Complete';
+
     const failed = validFiles.length - succeeded;
-    title.textContent = `Batch Complete — ${succeeded} ✅${failed > 0 ? `, ${failed} ❌` : ''}`;
+
+    // Update icon to success/warning state
+    if (failed === 0) {
+        iconDiv.classList.add('complete');
+        iconDiv.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+        title.textContent = 'All Receipts Processed!';
+        subtitle.textContent = `Successfully scanned ${succeeded} receipt${succeeded !== 1 ? 's' : ''}`;
+    } else {
+        iconDiv.classList.add('has-errors');
+        iconDiv.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+        title.textContent = `Batch Complete — ${succeeded} ✓, ${failed} failed`;
+        subtitle.textContent = `${failed} receipt${failed !== 1 ? 's' : ''} could not be processed`;
+    }
+
+    // Show summary stats
+    $('#batchSuccessCount').textContent = succeeded;
+    $('#batchTotalItems').textContent = totalItemsFound;
+    if (failed > 0) {
+        $('#batchFailedCount').textContent = failed;
+        $('#batchFailedStat').style.display = '';
+    } else {
+        $('#batchFailedStat').style.display = 'none';
+    }
+    summaryDiv.style.display = 'flex';
+
     status.textContent = `${succeeded} / ${validFiles.length} succeeded`;
     actionsDiv.style.display = 'flex';
 
@@ -643,142 +725,6 @@ function compressImage(file, maxDim = 1800, quality = 0.88) {
                     resolve(file);
                 }
             }, 'image/jpeg', quality);
-        };
-
-        img.onerror = () => {
-            URL.revokeObjectURL(url);
-            resolve(file);
-        };
-
-        img.src = url;
-    });
-}
-
-/**
- * Client-side image enhancement for OCR — applies scanner-app-style filters
- * using Canvas before uploading to the server. This reduces server load and
- * improves OCR accuracy by sending a cleaner image.
- *
- * Filters applied:
- *   1. Auto-levels (contrast stretch) — like scanner apps' "vibrant" filter
- *   2. Sharpening via unsharp mask — crisper text edges
- *   3. Slight brightness boost for dark images
- *
- * @param {File|Blob} file - Image file to enhance
- * @param {Object} options - Enhancement options
- * @returns {Promise<File>} Enhanced image file
- */
-function enhanceImageForOCR(file, options = {}) {
-    const {
-        sharpen = true,
-        autoLevels = true,
-        maxDim = 1800,
-    } = options;
-
-    return new Promise((resolve) => {
-        if (!file.type.startsWith('image/')) {
-            resolve(file);
-            return;
-        }
-
-        const img = new Image();
-        const url = URL.createObjectURL(file);
-
-        img.onload = () => {
-            URL.revokeObjectURL(url);
-
-            let { width, height } = img;
-
-            // Downscale if needed
-            if (width > maxDim || height > maxDim) {
-                const ratio = Math.min(maxDim / width, maxDim / height);
-                width = Math.round(width * ratio);
-                height = Math.round(height * ratio);
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(img, 0, 0, width, height);
-
-            // Get pixel data for processing
-            const imageData = ctx.getImageData(0, 0, width, height);
-            const data = imageData.data;
-
-            if (autoLevels) {
-                // ── Auto-levels (contrast stretch) ──
-                // This is the "vibrant" filter from scanner apps
-                // Find the 1st and 99th percentile of luminance
-                const luminances = new Uint8Array(width * height);
-                for (let i = 0; i < data.length; i += 4) {
-                    luminances[i / 4] = Math.round(
-                        data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
-                    );
-                }
-
-                // Sort a sample (every 4th pixel) for percentile calculation
-                const sample = [];
-                for (let i = 0; i < luminances.length; i += 4) {
-                    sample.push(luminances[i]);
-                }
-                sample.sort((a, b) => a - b);
-
-                const pLow = sample[Math.floor(sample.length * 0.01)];
-                const pHigh = sample[Math.floor(sample.length * 0.99)];
-                const range = pHigh - pLow;
-
-                if (range > 20 && range < 240) {
-                    const scale = 255 / range;
-                    for (let i = 0; i < data.length; i += 4) {
-                        data[i] = Math.min(255, Math.max(0, (data[i] - pLow) * scale));
-                        data[i + 1] = Math.min(255, Math.max(0, (data[i + 1] - pLow) * scale));
-                        data[i + 2] = Math.min(255, Math.max(0, (data[i + 2] - pLow) * scale));
-                    }
-                }
-            }
-
-            if (sharpen) {
-                // ── Unsharp mask (sharpen) ──
-                // Apply a lightweight sharpening to make text edges crisper
-                ctx.putImageData(imageData, 0, 0);
-
-                // Create a blurred version
-                const blurCanvas = document.createElement('canvas');
-                blurCanvas.width = width;
-                blurCanvas.height = height;
-                const blurCtx = blurCanvas.getContext('2d');
-                blurCtx.filter = 'blur(1px)';
-                blurCtx.drawImage(canvas, 0, 0);
-
-                const blurData = blurCtx.getImageData(0, 0, width, height).data;
-                const sharpData = ctx.getImageData(0, 0, width, height);
-                const sd = sharpData.data;
-
-                // Unsharp mask: original + (original - blurred) * amount
-                const amount = 0.5;
-                for (let i = 0; i < sd.length; i += 4) {
-                    sd[i] = Math.min(255, Math.max(0, sd[i] + (sd[i] - blurData[i]) * amount));
-                    sd[i + 1] = Math.min(255, Math.max(0, sd[i + 1] + (sd[i + 1] - blurData[i + 1]) * amount));
-                    sd[i + 2] = Math.min(255, Math.max(0, sd[i + 2] + (sd[i + 2] - blurData[i + 2]) * amount));
-                }
-
-                ctx.putImageData(sharpData, 0, 0);
-            } else {
-                ctx.putImageData(imageData, 0, 0);
-            }
-
-            canvas.toBlob((blob) => {
-                if (blob) {
-                    const enhanced = new File([blob], file.name || 'enhanced.jpg', { type: 'image/jpeg' });
-                    resolve(enhanced);
-                } else {
-                    resolve(file);
-                }
-            }, 'image/jpeg', 0.92);
         };
 
         img.onerror = () => {
@@ -942,22 +888,19 @@ async function processFile(file) {
     // Compress image client-side for faster upload & processing
     let optimizedFile = await compressImage(file);
 
-    // Apply scanner-style enhancement (auto-levels + sharpen) before server upload
-    try {
-        optimizedFile = await enhanceImageForOCR(optimizedFile);
-    } catch (e) {
-        console.warn('Client-side enhancement skipped:', e);
-    }
+    // NOTE: Server-side preprocessing (OpenCV) handles enhancement much better
+    // than client-side Canvas filters. Skipping client-side enhancement avoids
+    // degrading handwriting and eliminates the need for auto-retry.
 
     // Upload
     const formData = new FormData();
     formData.append('file', optimizedFile);
 
     try {
-        // Use AbortController for request timeout (60s max) and manual cancel
+        // Use AbortController for request timeout (180s max) and manual cancel
         const controller = new AbortController();
         state._abortController = controller;
-        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        const timeoutId = setTimeout(() => controller.abort(), 180000);
 
         const res = await fetch('/api/receipts/scan', {
             method: 'POST',
@@ -972,50 +915,6 @@ async function processFile(file) {
         if (!res.ok) {
             throw new Error(data.detail || 'Processing failed.');
         }
-
-        // ── Auto-retry on poor results ──
-        // If OCR returned zero items and this is the first attempt, retry with
-        // the original (unenhanced) file — client-side enhancement can sometimes
-        // degrade handwriting that EasyOCR handles better in raw form.
-        const itemCount = data.receipt_data?.items?.length || 0;
-        const avgConf = data.receipt_data?.avg_confidence || 0;
-        if (itemCount === 0 && !state._retryAttempted) {
-            state._retryAttempted = true;
-            showToast('No items found — retrying with original image...', 'info');
-            // Retry with original file (no client-side enhancement)
-            const retryForm = new FormData();
-            retryForm.append('file', file);
-            try {
-                const retryController = new AbortController();
-                state._abortController = retryController;  // Allow cancel button to abort retry
-                const retryTimeout = setTimeout(() => retryController.abort(), 60000);
-                const retryRes = await fetch('/api/receipts/scan', {
-                    method: 'POST', body: retryForm, signal: retryController.signal,
-                });
-                clearTimeout(retryTimeout);
-                const retryData = await retryRes.json();
-                if (retryRes.ok && (retryData.receipt_data?.items?.length || 0) > itemCount) {
-                    // Delete the empty receipt from the first attempt to avoid duplicates
-                    const firstDbId = data.receipt_data?.db_id;
-                    if (firstDbId) {
-                        fetch(`/api/receipts/${firstDbId}`, { method: 'DELETE' }).catch(() => {});
-                    }
-                    showToast('Retry succeeded with original image!', 'success');
-                    displayResults(retryData, file);
-                    state._retryAttempted = false;
-                    return;
-                } else {
-                    // Retry didn't improve — delete the retry's orphaned receipt
-                    const retryDbId = retryData?.receipt_data?.db_id;
-                    if (retryDbId) {
-                        fetch(`/api/receipts/${retryDbId}`, { method: 'DELETE' }).catch(() => {});
-                    }
-                }
-            } catch (retryErr) {
-                console.warn('Auto-retry failed:', retryErr);
-            }
-        }
-        state._retryAttempted = false;
 
         // Show results
         displayResults(data, file);
@@ -1074,7 +973,7 @@ function simulateProgress() {
             clearInterval(state.progressInterval);
             state.progressInterval = null;
         }
-    }, 800);
+    }, 400);
 }
 
 function clearProgressInterval() {
@@ -1108,13 +1007,12 @@ function displayResults(data, file) {
     $('#rawOcrOutput').textContent = '';
 
     // Always switch view (even on error/empty)
-    setTimeout(() => {
-        $('#processing').style.display = 'none';
-        $('#resultsContainer').style.display = 'block';
-        // Hide tips
-        const tips = $('#processingTips');
-        if (tips) tips.style.display = 'none';
-    }, 300);
+    // Show results immediately (no artificial delay)
+    $('#processing').style.display = 'none';
+    $('#resultsContainer').style.display = 'block';
+    // Hide tips
+    const tips = $('#processingTips');
+    if (tips) tips.style.display = 'none';
 
     // Haptic feedback on mobile (if supported)
     if (navigator.vibrate) navigator.vibrate(50);
@@ -1223,10 +1121,17 @@ function displayResults(data, file) {
     // Refresh dashboard stats (new receipt scanned)
     loadDashboardStats();
 
-    // Show image preview
-    const reader = new FileReader();
-    reader.onload = (e) => { $('#receiptImage').src = e.target.result; };
-    reader.readAsDataURL(file);
+    // Show image preview — prefer server-side image when available
+    // (it's the exact file stored in the uploads dir, not the compressed client version)
+    const serverImage = data.receipt_data?.image_path;
+    if (serverImage) {
+        const filename = serverImage.split(/[\/\\]/).pop();
+        $('#receiptImage').src = '/uploads/' + encodeURIComponent(filename);
+    } else if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => { $('#receiptImage').src = e.target.result; };
+        reader.readAsDataURL(file);
+    }
 
     // Check for backend failure flag
     if (data.success === false) {
@@ -1529,9 +1434,12 @@ function populateItemsTable(items) {
 
     // Prevent scroll wheel from changing quantity when scrolling the page
     tbody.querySelectorAll('input[type="number"]').forEach(inp => {
-        inp.addEventListener('wheel', () => {
-            if (document.activeElement === inp) inp.blur();
-        });
+        inp.addEventListener('wheel', (e) => {
+            if (document.activeElement === inp) {
+                e.preventDefault();   // block value change
+                inp.blur();
+            }
+        }, { passive: false });  // must be non-passive to allow preventDefault
         // Block decimal point/comma entry
         inp.addEventListener('keydown', (e) => {
             if (e.key === '.' || e.key === ',') e.preventDefault();
@@ -1839,6 +1747,11 @@ $('#confirmBtn').addEventListener('click', async () => {
             confirmBtn.disabled = false;
         }
     } else {
+        // No db_id — receipt was not saved to the server yet.
+        // Mark as a warning so the user knows data is local-only.
+        if (items.length > 0) {
+            showToast('Receipt data is local only — it was not saved to the server.', 'info');
+        }
         confirmBtn.disabled = false;
     }
 
@@ -1848,17 +1761,18 @@ $('#confirmBtn').addEventListener('click', async () => {
         confirmBtn.innerHTML = '<i data-lucide="check-circle" style="width:15px;height:15px"></i> Confirmed';
         confirmBtn.classList.add('btn-confirmed');
         showToast('Receipt confirmed and saved!', 'success');
+        // Only show Export and post-confirm panel when save fully succeeded
+        $('#exportExcelBtn').style.display = 'inline-flex';
+        showPostConfirmPanel();
     } else {
-        // Keep dirty so user can retry saving
+        // Keep dirty so user can retry saving — do NOT show Export / post-confirm
         state.isDirty = true;
         state.confirmed = false;
+        confirmBtn.disabled = false;
         confirmBtn.classList.remove('btn-confirmed');
         confirmBtn.innerHTML = '<i data-lucide="check" style="width:15px;height:15px"></i> Retry Save';
         showToast(`${_saveFailures} item(s) failed to save. Click Confirm to retry.`, 'warning');
     }
-    $('#exportExcelBtn').style.display = 'inline-flex';
-    // Show post-confirm panel with batch assignment + scan-next
-    showPostConfirmPanel();
     if (typeof lucide !== 'undefined') lucide.createIcons();
 });
 
@@ -2039,6 +1953,12 @@ function resetScanUI() {
     if (actionBtns) actionBtns.style.display = 'flex';
     // Reset warnings
     $('#warnings').style.display = 'none';
+    // BUG FIX: Remove dynamically injected pipeline/azure info nodes.
+    // displayResults() inserts .pipeline-breakdown and .azure-scan-info divs
+    // next to the processing-time element on every scan.  Without removal they
+    // accumulate and stack on top of each other across multiple scans.
+    document.querySelector('.pipeline-breakdown')?.remove();
+    document.querySelector('.azure-scan-info')?.remove();
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
@@ -2288,26 +2208,228 @@ $('#batchExportBtn').addEventListener('click', async () => {
 
 // ─── Receipts Tab ────────────────────────────────────────────────────────────
 
-/** Generate receipt card HTML with batch toggle support */
+/** Generate receipt card HTML with batch toggle support and checkbox */
 function renderReceiptCard(r) {
     const inBatch = state.batchReceiptIds.includes(r.id);
+    const isChecked = (state.selectedReceiptIds || []).includes(r.id);
+    const total = r.bill_total || 0;
+    const conf = r.ocr_confidence_avg || 0;
+    const confPct = (conf * 100).toFixed(0);
+    const confClass = conf >= 0.9 ? 'badge-conf-high' : conf >= 0.7 ? 'badge-conf-mid' : 'badge-conf-low';
+    const storeName = r.store_name ? escHtml(r.store_name) : '';
     return `
-        <div class="receipt-card">
+        <div class="receipt-card ${isChecked ? 'selected' : ''}" data-receipt-id="${r.id}">
+            <input type="checkbox" class="receipt-checkbox" ${isChecked ? 'checked' : ''} onchange="toggleReceiptSelect(${r.id}, this)" aria-label="Select receipt">
             <div class="receipt-info">
                 <h4>${escHtml(r.receipt_number)}</h4>
                 <p>${escHtml(r.scan_date)} ${escHtml(r.scan_time || '')} · ${r.total_items || 0} items · ${escHtml(r.processing_status || 'N/A')}</p>
+                <div class="receipt-meta-badges">
+                    ${total > 0 ? `<span class="receipt-meta-badge badge-amount">₹${total.toLocaleString()}</span>` : ''}
+                    ${conf > 0 ? `<span class="receipt-meta-badge ${confClass}" title="OCR confidence">${confPct}%</span>` : ''}
+                    ${storeName ? `<span class="receipt-meta-badge">${storeName}</span>` : ''}
+                    ${r.quality_grade ? `<span class="receipt-meta-badge">Grade ${r.quality_grade}</span>` : ''}
+                </div>
             </div>
             <div class="receipt-actions">
-                <button class="btn btn-sm btn-primary" onclick="viewReceipt(${r.id})">View</button>
-                <button class="btn btn-sm btn-accent" onclick="exportReceipt(${r.id})">Excel</button>
-                <button class="btn btn-sm ${inBatch ? 'btn-in-batch' : 'btn-ghost'}" onclick="toggleBatchReceipt(${r.id}, this)">
+                <button class="btn btn-sm btn-primary" onclick="viewReceipt(${r.id})" aria-label="View receipt ${escAttr(r.receipt_number)}">View</button>
+                <button class="btn btn-sm btn-accent" onclick="exportReceipt(${r.id})" aria-label="Export receipt ${escAttr(r.receipt_number)} as Excel">Excel</button>
+                <button class="btn btn-sm ${inBatch ? 'btn-in-batch' : 'btn-ghost'}" onclick="toggleBatchReceipt(${r.id}, this)" aria-label="${inBatch ? 'Remove from batch' : 'Add to batch'}">
                     ${inBatch ? '✓ In Batch' : '+ Batch'}
                 </button>
-                <button class="btn btn-sm btn-danger" onclick="deleteReceipt(${r.id})">Delete</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteReceipt(${r.id})" aria-label="Delete receipt ${escAttr(r.receipt_number)}">Delete</button>
             </div>
         </div>
     `;
 }
+
+/* ── Multi-Select State ─────────────────────────────────────────────────── */
+state.selectedReceiptIds = [];
+state._allLoadedReceipts = [];
+state._receiptsOffset = 0;
+state._receiptsHasMore = false;
+
+window.toggleReceiptSelect = function(id, cb) {
+    if (cb.checked) {
+        if (!state.selectedReceiptIds.includes(id)) state.selectedReceiptIds.push(id);
+    } else {
+        state.selectedReceiptIds = state.selectedReceiptIds.filter(x => x !== id);
+    }
+    // Update card selected class
+    const card = cb.closest('.receipt-card');
+    if (card) card.classList.toggle('selected', cb.checked);
+    updateBulkBar();
+};
+
+function updateBulkBar() {
+    const bar = $('#receiptBulkBar');
+    const count = state.selectedReceiptIds.length;
+    if (count > 0) {
+        bar.style.display = 'flex';
+        $('#receiptSelectedCount').textContent = count;
+        // Update select-all checkbox state
+        const allCbs = document.querySelectorAll('.receipt-checkbox');
+        const allChecked = allCbs.length > 0 && [...allCbs].every(cb => cb.checked);
+        $('#receiptSelectAll').checked = allChecked;
+        $('#receiptSelectAll').indeterminate = !allChecked && count > 0;
+    } else {
+        bar.style.display = 'none';
+        $('#receiptSelectAll').checked = false;
+        $('#receiptSelectAll').indeterminate = false;
+    }
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+$('#receiptSelectAll').addEventListener('change', function() {
+    const cbs = document.querySelectorAll('.receipt-checkbox');
+    if (this.checked) {
+        cbs.forEach(cb => {
+            cb.checked = true;
+            const id = parseInt(cb.closest('.receipt-card').dataset.receiptId);
+            if (!state.selectedReceiptIds.includes(id)) state.selectedReceiptIds.push(id);
+            cb.closest('.receipt-card').classList.add('selected');
+        });
+    } else {
+        cbs.forEach(cb => {
+            cb.checked = false;
+            cb.closest('.receipt-card').classList.remove('selected');
+        });
+        state.selectedReceiptIds = [];
+    }
+    updateBulkBar();
+});
+
+/* ── Bulk Actions ───────────────────────────────────────────────────────── */
+$('#bulkDeleteBtn').addEventListener('click', () => {
+    const count = state.selectedReceiptIds.length;
+    if (count === 0) return;
+    showDeleteConfirm(
+        `Delete ${count} receipt${count > 1 ? 's' : ''}?`,
+        `This will permanently remove ${count} receipt${count > 1 ? 's' : ''} and all their items. This cannot be undone.`,
+        async () => {
+            showToast(`Deleting ${count} receipts…`, 'info');
+            let ok = 0, fail = 0;
+            for (const id of [...state.selectedReceiptIds]) {
+                try {
+                    const res = await fetch(`/api/receipts/${id}`, { method: 'DELETE' });
+                    if (res.ok) { ok++; state.batches.forEach(b => { b.receiptIds = b.receiptIds.filter(rid => rid !== id); }); }
+                    else fail++;
+                } catch { fail++; }
+            }
+            state.selectedReceiptIds = [];
+            saveBatchState();
+            updateBatchBar();
+            updateBulkBar();
+            showToast(`Deleted ${ok} receipt${ok !== 1 ? 's' : ''}${fail ? `, ${fail} failed` : ''}.`, fail ? 'warning' : 'success');
+            loadReceipts();
+        }
+    );
+});
+
+$('#bulkExportBtn').addEventListener('click', async () => {
+    if (state.selectedReceiptIds.length === 0) return;
+    const btn = $('#bulkExportBtn');
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/export/excel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ receipt_ids: state.selectedReceiptIds }),
+        });
+        const data = await safeJson(res);
+        if (res.ok && data.download_url) {
+            window.open(data.download_url, '_blank');
+            showToast(`Exported ${state.selectedReceiptIds.length} receipts!`, 'success');
+        } else { throw new Error(data.detail || 'Export failed.'); }
+    } catch (err) { showToast(err.message, 'error'); }
+    finally { btn.disabled = false; }
+});
+
+$('#bulkBatchBtn').addEventListener('click', () => {
+    let added = 0;
+    state.selectedReceiptIds.forEach(id => {
+        if (!state.batchReceiptIds.includes(id)) {
+            state.batchReceiptIds.push(id);
+            added++;
+        }
+    });
+    saveBatchState();
+    updateBatchBar();
+    showToast(`Added ${added} receipt${added !== 1 ? 's' : ''} to batch.`, 'success');
+    // Re-render to update batch button states
+    rerenderReceiptCards();
+});
+
+function rerenderReceiptCards() {
+    const list = $('#receiptsList');
+    const sorted = applySortFilter(state._allLoadedReceipts);
+    list.innerHTML = sorted.map(r => renderReceiptCard(r)).join('');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+/* ── Styled Delete Confirmation ─────────────────────────────────────────── */
+function showDeleteConfirm(title, message, onConfirm) {
+    $('#modalTitle').textContent = '';
+    $('#modalMessage').innerHTML = `
+        <div class="confirm-delete-body">
+            <div class="confirm-delete-icon">🗑️</div>
+            <div class="confirm-delete-title">${escHtml(title)}</div>
+            <div class="confirm-delete-msg">${escHtml(message)}</div>
+            <div class="confirm-delete-actions">
+                <button class="btn-confirm-cancel" id="confirmCancelBtn">Cancel</button>
+                <button class="btn-confirm-delete" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    `;
+    $('#modalConfirm').style.display = 'none';
+    $('#modalCancel').style.display = 'none';
+    $('#modalOverlay').style.display = 'flex';
+
+    const close = () => {
+        $('#modalOverlay').style.display = 'none';
+        $('#modalConfirm').style.display = '';
+        $('#modalCancel').style.display = '';
+        $('#modalCancel').textContent = 'Cancel';
+    };
+
+    $('#confirmCancelBtn').addEventListener('click', close, { once: true });
+    $('#confirmDeleteBtn').addEventListener('click', () => { close(); onConfirm(); }, { once: true });
+    // Click outside to cancel
+    const overlayClose = (e) => { if (e.target === $('#modalOverlay')) { close(); $('#modalOverlay').removeEventListener('click', overlayClose); } };
+    $('#modalOverlay').addEventListener('click', overlayClose);
+}
+
+/* ── Search & Sort ──────────────────────────────────────────────────────── */
+function applySortFilter(receipts) {
+    let filtered = receipts;
+    const q = ($('#receiptSearch')?.value || '').trim().toLowerCase();
+    if (q) {
+        filtered = filtered.filter(r =>
+            (r.receipt_number || '').toLowerCase().includes(q) ||
+            (r.store_name || '').toLowerCase().includes(q) ||
+            (r.scan_date || '').includes(q) ||
+            String(r.bill_total || 0).includes(q)
+        );
+    }
+    const sort = $('#receiptSortBy')?.value || 'newest';
+    const sorted = [...filtered];
+    switch (sort) {
+        case 'newest': sorted.sort((a, b) => (b.id || 0) - (a.id || 0)); break;
+        case 'oldest': sorted.sort((a, b) => (a.id || 0) - (b.id || 0)); break;
+        case 'amount-desc': sorted.sort((a, b) => (b.bill_total || 0) - (a.bill_total || 0)); break;
+        case 'amount-asc': sorted.sort((a, b) => (a.bill_total || 0) - (b.bill_total || 0)); break;
+        case 'items-desc': sorted.sort((a, b) => (b.total_items || 0) - (a.total_items || 0)); break;
+        case 'confidence': sorted.sort((a, b) => (a.ocr_confidence_avg || 0) - (b.ocr_confidence_avg || 0)); break;
+    }
+    return sorted;
+}
+
+// Debounced search
+let _searchTimer = null;
+$('#receiptSearch').addEventListener('input', () => {
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(() => rerenderReceiptCards(), 250);
+});
+$('#receiptSortBy').addEventListener('change', () => rerenderReceiptCards());
 
 async function loadReceipts(limit = 20) {
     const list = $('#receiptsList');
@@ -2316,21 +2438,180 @@ async function loadReceipts(limit = 20) {
         '<div class="skeleton skeleton-card"></div>'
     ).join('');
 
+    state.selectedReceiptIds = [];
+    updateBulkBar();
+
     try {
         const res = await fetch(`/api/receipts?limit=${limit}`);
         const data = await res.json();
 
         if (!data.receipts || data.receipts.length === 0) {
-            list.innerHTML = '<p class="placeholder">No receipts found. Scan your first receipt!</p>';
+            list.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">📄</div>
+                    <div class="empty-state-title">No receipts yet</div>
+                    <div class="empty-state-msg">Scan your first receipt to see it here.</div>
+                    <button class="btn btn-primary btn-sm" onclick="$$('.nav-btn')[0]?.click()">
+                        <i data-lucide="scan" style="width:14px;height:14px"></i> Scan Now
+                    </button>
+                </div>`;
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+            state._allLoadedReceipts = [];
             return;
         }
 
-        list.innerHTML = data.receipts.map(r => renderReceiptCard(r)).join('');
+        state._allLoadedReceipts = data.receipts;
+        state._receiptsOffset = data.receipts.length;
+        state._receiptsHasMore = data.receipts.length >= limit;
+
+        const sorted = applySortFilter(data.receipts);
+        list.innerHTML = sorted.map(r => renderReceiptCard(r)).join('');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+
+        // Show/hide load more
+        const loadMoreDiv = $('#receiptsLoadMore');
+        if (loadMoreDiv) loadMoreDiv.style.display = state._receiptsHasMore ? 'block' : 'none';
 
     } catch (err) {
-        list.innerHTML = '<p class="placeholder">Failed to load receipts.</p>';
+        list.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">⚠️</div>
+                <div class="empty-state-title">Failed to load receipts</div>
+                <div class="empty-state-msg">Check your connection and try again.</div>
+                <button class="btn btn-primary btn-sm" onclick="loadReceipts()">
+                    <i data-lucide="refresh-cw" style="width:14px;height:14px"></i> Retry
+                </button>
+            </div>`;
+        if (typeof lucide !== 'undefined') lucide.createIcons();
     }
 }
+
+// Load More button
+if ($('#loadMoreBtn')) {
+    $('#loadMoreBtn').addEventListener('click', async () => {
+        const btn = $('#loadMoreBtn');
+        btn.disabled = true;
+        btn.textContent = 'Loading…';
+        try {
+            const res = await fetch(`/api/receipts?limit=20&offset=${state._receiptsOffset}`);
+            const data = await res.json();
+            if (data.receipts && data.receipts.length > 0) {
+                state._allLoadedReceipts.push(...data.receipts);
+                state._receiptsOffset += data.receipts.length;
+                state._receiptsHasMore = data.receipts.length >= 20;
+                rerenderReceiptCards();
+            } else {
+                state._receiptsHasMore = false;
+            }
+            const loadMoreDiv = $('#receiptsLoadMore');
+            if (loadMoreDiv) loadMoreDiv.style.display = state._receiptsHasMore ? 'block' : 'none';
+        } catch { showToast('Failed to load more receipts.', 'error'); }
+        finally { btn.disabled = false; btn.textContent = 'Load More…'; }
+    });
+}
+
+/* ── Receipt Image Lightbox ─────────────────────────────────────────────── */
+window._openReceiptLightbox = function(src) {
+    // Prevent duplicate
+    const existing = document.querySelector('.receipt-lightbox');
+    if (existing) existing.remove();
+
+    let scale = 1;
+    const MIN_SCALE = 0.5, MAX_SCALE = 5;
+    let lastDist = 0;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'receipt-lightbox';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Receipt image full view');
+    overlay.innerHTML = `
+        <button class="receipt-lightbox-close" title="Close" aria-label="Close image viewer">✕</button>
+        <img src="${src}" alt="Receipt full view" draggable="false" style="transform:scale(1)">
+        <div class="zoom-controls" aria-label="Zoom controls">
+            <button class="zoom-btn" data-zoom="out" aria-label="Zoom out">−</button>
+            <span class="zoom-level" aria-live="polite">100%</span>
+            <button class="zoom-btn" data-zoom="in" aria-label="Zoom in">+</button>
+            <button class="zoom-btn" data-zoom="reset" aria-label="Reset zoom">↺</button>
+        </div>
+        <span class="receipt-lightbox-hint">Scroll to zoom · Pinch to zoom · Click outside to close</span>
+    `;
+
+    const img = overlay.querySelector('img');
+    const zoomLabel = overlay.querySelector('.zoom-level');
+
+    const updateZoom = () => {
+        img.style.transform = `scale(${scale})`;
+        zoomLabel.textContent = `${Math.round(scale * 100)}%`;
+    };
+
+    // Mouse wheel zoom
+    overlay.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.15 : 0.15;
+        scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
+        updateZoom();
+    }, { passive: false });
+
+    // Pinch-to-zoom (touch)
+    overlay.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            lastDist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+        }
+    }, { passive: false });
+    overlay.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            const dist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            if (lastDist > 0) {
+                const delta = (dist - lastDist) * 0.005;
+                scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
+                updateZoom();
+            }
+            lastDist = dist;
+        }
+    }, { passive: false });
+    overlay.addEventListener('touchend', () => { lastDist = 0; });
+
+    // Zoom button controls
+    overlay.querySelectorAll('.zoom-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const action = btn.dataset.zoom;
+            if (action === 'in') scale = Math.min(MAX_SCALE, scale + 0.25);
+            else if (action === 'out') scale = Math.max(MIN_SCALE, scale - 0.25);
+            else if (action === 'reset') scale = 1;
+            updateZoom();
+        });
+    });
+
+    const close = () => {
+        overlay.style.opacity = '0';
+        overlay.style.transition = 'opacity 0.2s ease';
+        setTimeout(() => overlay.remove(), 200);
+        document.removeEventListener('keydown', escHandler);
+        document.body.classList.remove('focus-trap-active');
+    };
+    const escHandler = (e) => { if (e.key === 'Escape') close(); };
+
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay || e.target.classList.contains('receipt-lightbox-close'))
+            close();
+    });
+    overlay.querySelector('.receipt-lightbox-close').addEventListener('click', close);
+    document.addEventListener('keydown', escHandler);
+
+    document.body.appendChild(overlay);
+    document.body.classList.add('focus-trap-active');
+    overlay.querySelector('.receipt-lightbox-close').focus();
+};
 
 window.viewReceipt = async function(id) {
     // Show loading in the modal immediately
@@ -2350,27 +2631,128 @@ window.viewReceipt = async function(id) {
 
         // Build a formatted view in the modal
         const items = data.items || [];
+        const hasPrices = items.some(it => (it.unit_price || 0) > 0 || (it.line_total || 0) > 0);
+        const billTotal = data.bill_total || 0;
+        const totalItems = data.total_items || items.length;
+        const totalQty = items.reduce((s, it) => s + (it.quantity || 0), 0);
+        const computedTotal = items.reduce((s, it) => s + (it.line_total || 0), 0);
+        const avgConf = data.ocr_confidence_avg || 0;
+
+        // Build item rows — with inline editing support
         const itemRows = items.length > 0
-            ? items.map(it =>
-                `<tr><td>${escHtml(it.product_code)}</td><td>${escHtml(it.product_name)}</td><td>${it.quantity}</td></tr>`
-              ).join('')
-            : '<tr><td colspan="3" style="text-align:center;color:#999">No items</td></tr>';
+            ? items.map((it, idx) => {
+                const unitPrice = it.unit_price || 0;
+                const lineTotal = it.line_total || 0;
+                const conf = it.ocr_confidence || 0;
+                const confClass = conf >= 0.9 ? 'conf-high' : conf >= 0.7 ? 'conf-mid' : 'conf-low';
+                return `<tr data-item-id="${it.id}" role="row">
+                    <td class="receipt-detail-num">${idx + 1}</td>
+                    <td class="editable-cell" data-field="product_code" data-original="${escAttr(it.product_code || '')}" tabindex="0" role="gridcell" aria-label="Product code: ${escAttr(it.product_code || '')}. Click to edit."><span class="receipt-detail-code">${escHtml(it.product_code || '')}</span></td>
+                    <td class="editable-cell" data-field="product_name" data-original="${escAttr(it.product_name || '')}" tabindex="0" role="gridcell" aria-label="Product name: ${escAttr(it.product_name || '')}. Click to edit.">${escHtml(it.product_name || '')}</td>
+                    <td class="editable-cell receipt-detail-num" data-field="quantity" data-original="${it.quantity || 0}" tabindex="0" role="gridcell" aria-label="Quantity: ${it.quantity || 0}. Click to edit.">${it.quantity || 0}</td>
+                    ${hasPrices ? `<td class="editable-cell receipt-detail-num" data-field="unit_price" data-original="${unitPrice}" tabindex="0" role="gridcell" aria-label="Unit price: ${unitPrice}. Click to edit.">${unitPrice ? unitPrice.toLocaleString() : '—'}</td>` : ''}
+                    ${hasPrices ? `<td class="receipt-detail-num receipt-detail-amount">${lineTotal ? lineTotal.toLocaleString() : '—'}</td>` : ''}
+                    <td><span class="receipt-conf-badge ${confClass}" title="OCR confidence">${(conf * 100).toFixed(0)}%</span></td>
+                    <td class="receipt-detail-num"><button class="btn btn-sm btn-danger" onclick="window._deleteReceiptItem(${it.id}, ${id})" title="Delete item" aria-label="Delete item ${escAttr(it.product_name || '')}" style="padding:0.15rem 0.4rem;font-size:0.68rem">✕</button></td>
+                </tr>`;
+              }).join('')
+            : `<tr><td colspan="${hasPrices ? 8 : 6}" style="text-align:center;color:var(--text-muted);padding:1.5rem">No items found</td></tr>`;
+
+        // Summary stats row
+        const summaryCards = `
+            <div class="receipt-detail-stats">
+                <div class="receipt-stat-card">
+                    <span class="receipt-stat-value">${totalItems}</span>
+                    <span class="receipt-stat-label">Items</span>
+                </div>
+                <div class="receipt-stat-card">
+                    <span class="receipt-stat-value">${totalQty}</span>
+                    <span class="receipt-stat-label">Total Qty</span>
+                </div>
+                ${hasPrices ? `<div class="receipt-stat-card receipt-stat-highlight">
+                    <span class="receipt-stat-value">₹${(billTotal || computedTotal).toLocaleString()}</span>
+                    <span class="receipt-stat-label">Grand Total</span>
+                </div>` : ''}
+                <div class="receipt-stat-card">
+                    <span class="receipt-stat-value">${(avgConf * 100).toFixed(0)}%</span>
+                    <span class="receipt-stat-label">Confidence</span>
+                </div>
+                ${data.quality_grade ? `<div class="receipt-stat-card">
+                    <span class="receipt-stat-value receipt-grade-${data.quality_grade}">${data.quality_grade}</span>
+                    <span class="receipt-stat-label">Quality</span>
+                </div>` : ''}
+            </div>
+        `;
+
+        // Math verification section
+        let mathSection = '';
+        if (hasPrices && items.length > 0) {
+            const allLineCorrect = items.every(it => {
+                if (!it.unit_price || !it.line_total) return true;
+                const expected = it.unit_price * (it.quantity || 0);
+                return Math.abs(expected - it.line_total) < 0.5;
+            });
+            const billMatch = billTotal > 0 && Math.abs(billTotal - computedTotal) < 0.5;
+
+            mathSection = `
+                <div class="receipt-detail-math">
+                    <h4>Math Verification</h4>
+                    <div class="receipt-math-checks">
+                        <div class="receipt-math-row">
+                            <span>${allLineCorrect ? '✅' : '⚠️'} Line Totals (Qty × Rate)</span>
+                            <span class="${allLineCorrect ? 'math-pass' : 'math-warn'}">${allLineCorrect ? 'All Correct' : 'Mismatch Found'}</span>
+                        </div>
+                        ${billTotal > 0 ? `<div class="receipt-math-row">
+                            <span>${billMatch ? '✅' : '⚠️'} Grand Total</span>
+                            <span class="${billMatch ? 'math-pass' : 'math-warn'}">OCR: ₹${billTotal.toLocaleString()} | Computed: ₹${computedTotal.toLocaleString()}</span>
+                        </div>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Metadata section
+        const metaItems = [];
+        if (data.receipt_date) metaItems.push(`<span class="receipt-meta-tag">📅 ${escHtml(data.receipt_date)}</span>`);
+        if (data.store_name) metaItems.push(`<span class="receipt-meta-tag">🏪 ${escHtml(data.store_name)}</span>`);
+        if (data.quality_score) metaItems.push(`<span class="receipt-meta-tag">⭐ Score: ${data.quality_score}/100</span>`);
+        const metaSection = metaItems.length > 0 ? `<div class="receipt-detail-meta">${metaItems.join('')}</div>` : '';
 
         const html = `
-            <div style="text-align:left;font-size:0.9rem">
-                <p><strong>Receipt:</strong> ${escHtml(data.receipt_number || 'N/A')}</p>
-                <p><strong>Date:</strong> ${escHtml(data.scan_date || '')} ${escHtml(data.scan_time || '')}</p>
-                <p><strong>Status:</strong> ${escHtml(data.processing_status || 'N/A')}</p>
-                <p><strong>Items:</strong> ${data.total_items || items.length}</p>
+            <div class="receipt-detail-view">
+                <div class="receipt-detail-header">
+                    <p class="receipt-detail-id">${escHtml(data.receipt_number || 'N/A')}</p>
+                    <p class="receipt-detail-date">${escHtml(data.scan_date || '')} ${escHtml(data.scan_time || '')}</p>
+                    <span class="receipt-detail-status status-${(data.processing_status || 'pending').toLowerCase()}">${escHtml(data.processing_status || 'N/A')}</span>
+                </div>
+                ${metaSection}
                 ${data.image_path ? `
-                <div style="margin:0.75rem 0;text-align:center;background:var(--border-light);border-radius:var(--radius-sm);padding:0.5rem;cursor:zoom-in" onclick="this.classList.toggle('zoomed-modal-img')">
-                    <img src="/uploads/${escHtml(data.image_path.split(/[\/\\]/).pop())}" alt="Receipt image" style="max-width:100%;max-height:220px;border-radius:var(--radius-xs);object-fit:contain">
+                <div class="receipt-detail-image" onclick="window._openReceiptLightbox('/uploads/${escHtml(data.image_path.split(/[\/\\]/).pop())}')">
+                    <img src="/uploads/${escHtml(data.image_path.split(/[\/\\]/).pop())}" alt="Receipt image">
                 </div>
                 ` : ''}
-                <table class="data-table" style="margin-top:0.75rem;font-size:0.8rem">
-                    <thead><tr><th>Code</th><th>Product</th><th>Qty</th></tr></thead>
-                    <tbody>${itemRows}</tbody>
-                </table>
+                ${summaryCards}
+                <div class="receipt-detail-table-wrap">
+                    <table class="receipt-detail-table" role="grid" aria-label="Receipt items">
+                        <thead><tr>
+                            <th>#</th><th>Code</th><th>Product</th><th>Qty</th>
+                            ${hasPrices ? '<th>Rate</th><th>Amount</th>' : ''}
+                            <th>Conf</th><th></th>
+                        </tr></thead>
+                        <tbody>${itemRows}</tbody>
+                        ${hasPrices ? `<tfoot><tr>
+                            <td colspan="${hasPrices ? 5 : 3}" class="receipt-detail-total-label">Grand Total</td>
+                            <td class="receipt-detail-total-value">₹${(billTotal || computedTotal).toLocaleString()}</td>
+                            <td colspan="2"></td>
+                        </tr></tfoot>` : ''}
+                    </table>
+                </div>
+                <div class="receipt-edit-toolbar">
+                    <button class="btn btn-ghost btn-sm" onclick="window._addReceiptItem(${id})" aria-label="Add new item to receipt">
+                        <i data-lucide="plus" style="width:14px;height:14px" aria-hidden="true"></i> Add Item
+                    </button>
+                </div>
+                ${mathSection}
             </div>
         `;
 
@@ -2451,26 +2833,33 @@ window.toggleBatchReceipt = function(id, btn) {
 };
 
 window.deleteReceipt = async function(id) {
-    if (!confirm('Delete this receipt? This cannot be undone.')) return;
-    // Disable all delete buttons to prevent double-click
-    const btns = document.querySelectorAll('.receipt-actions .btn-danger');
-    btns.forEach(b => { b.disabled = true; b.textContent = '...'; });
-    try {
-        const res = await fetch(`/api/receipts/${id}`, { method: 'DELETE' });
-        if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            throw new Error(data.detail || 'Delete failed.');
+    showDeleteConfirm(
+        'Delete this receipt?',
+        'This will permanently remove the receipt and all its items. This cannot be undone.',
+        async () => {
+            // Disable all delete buttons to prevent double-click
+            const btns = document.querySelectorAll('.receipt-actions .btn-danger');
+            btns.forEach(b => { b.disabled = true; b.textContent = '...'; });
+            try {
+                const res = await fetch(`/api/receipts/${id}`, { method: 'DELETE' });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.detail || 'Delete failed.');
+                }
+                // Remove from all batches if present
+                state.batches.forEach(b => { b.receiptIds = b.receiptIds.filter(rid => rid !== id); });
+                state.selectedReceiptIds = state.selectedReceiptIds.filter(x => x !== id);
+                saveBatchState();
+                updateBatchBar();
+                updateBulkBar();
+                showToast('Receipt deleted.', 'success');
+                loadReceipts();
+            } catch (err) {
+                showToast(err.message || 'Delete failed.', 'error');
+                loadReceipts();
+            }
         }
-        // Remove from all batches if present
-        state.batches.forEach(b => { b.receiptIds = b.receiptIds.filter(rid => rid !== id); });
-        saveBatchState();
-        updateBatchBar();
-        showToast('Receipt deleted.', 'success');
-        loadReceipts();
-    } catch (err) {
-        showToast(err.message || 'Delete failed.', 'error');
-        loadReceipts();
-    }
+    );
 };
 
 // Date filter
@@ -2482,26 +2871,45 @@ $('#filterDateBtn').addEventListener('click', async () => {
     }
 
     const list = $('#receiptsList');
-    list.innerHTML = '<p class="placeholder">Loading...</p>';
+    list.innerHTML = Array.from({ length: 3 }, () => '<div class="skeleton skeleton-card"></div>').join('');
+
+    state.selectedReceiptIds = [];
+    updateBulkBar();
 
     try {
         const res = await fetch(`/api/receipts/date/${date}`);
         const data = await res.json();
 
         if (!data.receipts || data.receipts.length === 0) {
-            list.innerHTML = `<p class="placeholder">No receipts found for ${escHtml(date)}.</p>`;
+            list.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">📅</div>
+                    <div class="empty-state-title">No receipts for ${escHtml(date)}</div>
+                    <div class="empty-state-msg">Try selecting a different date or scan a new receipt.</div>
+                </div>`;
+            state._allLoadedReceipts = [];
             return;
         }
 
-        list.innerHTML = data.receipts.map(r => renderReceiptCard(r)).join('');
+        state._allLoadedReceipts = data.receipts;
+        const sorted = applySortFilter(data.receipts);
+        list.innerHTML = sorted.map(r => renderReceiptCard(r)).join('');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
     } catch (err) {
-        list.innerHTML = '<p class="placeholder">Failed to load receipts.</p>';
+        list.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">⚠️</div>
+                <div class="empty-state-title">Failed to load receipts</div>
+                <div class="empty-state-msg">Check your connection and try again.</div>
+                <button class="btn btn-primary btn-sm" onclick="loadReceipts()">Retry</button>
+            </div>`;
     }
 });
 
 // Show All (clear date filter and load ALL receipts)
 $('#showAllBtn').addEventListener('click', () => {
     $('#dateFilter').value = '';
+    $('#receiptSearch').value = '';
     loadReceipts(100);  // Load up to 100 receipts
 });
 
@@ -2555,8 +2963,8 @@ async function loadCatalog() {
                 <td>${escHtml(p.category || '-')}</td>
                 <td>${escHtml(p.unit || 'Piece')}</td>
                 <td>
-                    <button class="btn btn-sm btn-outline" onclick="editProduct('${escAttr(p.product_code)}')">Edit</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteProduct('${escAttr(p.product_code)}')">Delete</button>
+                    <button class="btn btn-sm btn-outline" onclick="editProduct('${escAttr(p.product_code)}')" aria-label="Edit product ${escAttr(p.product_code)}">Edit</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteProduct('${escAttr(p.product_code)}')" aria-label="Delete product ${escAttr(p.product_code)}">Delete</button>
                 </td>
             </tr>
         `).join('');
@@ -2600,8 +3008,8 @@ async function searchCatalog(q) {
                 <td>${escHtml(p.category || '-')}</td>
                 <td>${escHtml(p.unit || 'Piece')}</td>
                 <td>
-                    <button class="btn btn-sm btn-outline" onclick="editProduct('${escAttr(p.product_code)}')">Edit</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteProduct('${escAttr(p.product_code)}')">Delete</button>
+                    <button class="btn btn-sm btn-outline" onclick="editProduct('${escAttr(p.product_code)}')" aria-label="Edit product ${escAttr(p.product_code)}">Edit</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteProduct('${escAttr(p.product_code)}')" aria-label="Delete product ${escAttr(p.product_code)}">Delete</button>
                 </td>
             </tr>
         `).join('');
@@ -2653,13 +3061,13 @@ function closeActiveModal() {
 // Escape key to cancel product form or close modal
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-        // Camera overlay takes priority (handled by its own listener below)
-        if ($('#cameraOverlay').style.display !== 'none') return;
+        // Camera overlays take priority (handled by their own listeners)
+        if ($('#cameraOverlay')?.style.display !== 'none') return;
+        if ($('#trainCameraOverlay')?.style.display === 'flex') return;
 
-        if ($('#productForm').style.display !== 'none') {
+        if ($('#productForm')?.style.display !== 'none') {
             $('#productForm').style.display = 'none';
-        }
-        if ($('#modalOverlay').style.display !== 'none') {
+        } else if ($('#modalOverlay')?.style.display !== 'none') {
             closeActiveModal();
         }
     }
@@ -2745,29 +3153,332 @@ window.editProduct = async function(code) {
 };
 
 window.deleteProduct = async function(code) {
-    if (!confirm(`Delete product "${code}"? This cannot be undone.`)) return;
-    // Disable delete buttons to prevent double-click
-    const btns = document.querySelectorAll('#catalogTable .btn-danger');
-    btns.forEach(b => { b.disabled = true; b.textContent = '...'; });
-    try {
-        const res = await fetch(`/api/products/${code}`, { method: 'DELETE' });
-        if (!res.ok) {
-            const d = await safeJson(res);
-            throw new Error(d.detail || 'Delete failed.');
+    showDeleteConfirm(
+        `Delete product "${code}"?`,
+        'This product will be permanently removed from the catalog. This cannot be undone.',
+        async () => {
+            const btns = document.querySelectorAll('#catalogTable .btn-danger');
+            btns.forEach(b => { b.disabled = true; b.textContent = '...'; });
+            try {
+                const res = await fetch(`/api/products/${code}`, { method: 'DELETE' });
+                if (!res.ok) {
+                    const d = await safeJson(res);
+                    throw new Error(d.detail || 'Delete failed.');
+                }
+                showToast('Product deleted.', 'success');
+                loadCatalog();
+                loadCatalogCache();
+            } catch (err) {
+                showToast(err.message || 'Delete failed.', 'error');
+                loadCatalog();
+            }
         }
-        showToast('Product deleted.', 'success');
-        loadCatalog();
-        loadCatalogCache();
-    } catch (err) {
-        showToast(err.message || 'Delete failed.', 'error');
-        loadCatalog();
-    }
+    );
 };
 
 // Export catalog CSV
 $('#exportCatalogBtn').addEventListener('click', () => {
     window.open('/api/products/export/csv', '_blank');
 });
+
+// ─── CSV Import ──────────────────────────────────────────────────────────────
+$('#importCatalogBtn')?.addEventListener('click', () => {
+    const area = $('#csvImportArea');
+    area.classList.toggle('visible');
+    if (area.classList.contains('visible')) {
+        setTimeout(() => $('#csvBrowseBtn')?.focus(), 100);
+    }
+});
+
+$('#csvBrowseBtn')?.addEventListener('click', () => {
+    $('#csvFileInput')?.click();
+});
+
+$('#csvFileInput')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) uploadCsvFile(file);
+    e.target.value = '';
+});
+
+// Drag & drop on CSV import area
+(function() {
+    const area = $('#csvImportArea');
+    if (!area) return;
+    area.addEventListener('dragover', (e) => { e.preventDefault(); area.classList.add('dragover'); });
+    area.addEventListener('dragleave', () => area.classList.remove('dragover'));
+    area.addEventListener('drop', (e) => {
+        e.preventDefault();
+        area.classList.remove('dragover');
+        const file = e.dataTransfer?.files?.[0];
+        if (file && file.name.toLowerCase().endsWith('.csv')) {
+            uploadCsvFile(file);
+        } else {
+            showToast('Please drop a .csv file.', 'warning');
+        }
+    });
+})();
+
+async function uploadCsvFile(file) {
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+        showToast('Only CSV files are accepted.', 'warning');
+        return;
+    }
+    if (file.size > 1024 * 1024) {
+        showToast('CSV file too large (max 1MB).', 'warning');
+        return;
+    }
+
+    const btn = $('#csvBrowseBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/products/import/csv', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Import failed.');
+
+        const added = data.added || 0;
+        const updated = data.updated || 0;
+        const skipped = data.skipped || 0;
+        showToast(`CSV imported! ${added} added, ${updated} updated, ${skipped} skipped.`, 'success');
+        $('#csvImportArea')?.classList.remove('visible');
+        loadCatalog();
+        loadCatalogCache();
+    } catch (err) {
+        showToast(err.message || 'CSV import failed.', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Choose CSV File'; }
+    }
+}
+
+// ─── Inline Editing in Receipt Detail ────────────────────────────────────────
+// Delegate click on editable cells within the modal
+document.addEventListener('click', (e) => {
+    const cell = e.target.closest('.editable-cell');
+    if (!cell || cell.querySelector('.inline-edit-input')) return;
+
+    const field = cell.dataset.field;
+    const original = cell.dataset.original || '';
+    const isNum = field === 'quantity' || field === 'unit_price';
+
+    // Replace cell content with input
+    const input = document.createElement('input');
+    input.type = isNum ? 'number' : 'text';
+    input.className = 'inline-edit-input' + (isNum ? ' edit-num' : '');
+    input.value = original;
+    if (isNum) { input.min = '0'; input.step = field === 'unit_price' ? '0.01' : '1'; }
+    input.setAttribute('aria-label', `Edit ${field.replace('_', ' ')}`);
+
+    cell.innerHTML = '';
+    cell.appendChild(input);
+    input.focus();
+    input.select();
+
+    const save = async () => {
+        const newVal = input.value.trim();
+        if (newVal === original) {
+            // No change, restore
+            restoreCell(cell, field, original);
+            return;
+        }
+        const row = cell.closest('tr');
+        const itemId = row?.dataset.itemId;
+        if (!itemId) { restoreCell(cell, field, original); return; }
+
+        row.classList.add('receipt-row-saving');
+        try {
+            // Build update payload from the row's current data
+            const payload = {};
+            row.querySelectorAll('.editable-cell').forEach(c => {
+                const f = c.dataset.field;
+                const inp = c.querySelector('.inline-edit-input');
+                const val = inp ? inp.value.trim() : c.dataset.original;
+                if (f === 'quantity' || f === 'unit_price') payload[f] = parseFloat(val) || 0;
+                else payload[f] = val;
+            });
+            // Compute line_total
+            if (payload.unit_price !== undefined && payload.quantity !== undefined) {
+                payload.line_total = payload.unit_price * payload.quantity;
+            }
+
+            const res = await fetch(`/api/receipts/items/${itemId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+                const d = await safeJson(res);
+                throw new Error(d.detail || 'Save failed.');
+            }
+
+            // Update original value and restore display
+            cell.dataset.original = newVal;
+            restoreCell(cell, field, newVal);
+            row.classList.remove('receipt-row-saving');
+            row.classList.add('receipt-row-saved');
+            setTimeout(() => row.classList.remove('receipt-row-saved'), 600);
+            showToast('Item updated.', 'success');
+
+            // Update amount column if price or qty changed
+            if (field === 'quantity' || field === 'unit_price') {
+                const qtyCell = row.querySelector('[data-field="quantity"]');
+                const priceCell = row.querySelector('[data-field="unit_price"]');
+                const qty = parseFloat(qtyCell?.dataset.original || 0);
+                const price = parseFloat(priceCell?.dataset.original || 0);
+                const amountTd = row.querySelector('.receipt-detail-amount');
+                if (amountTd) {
+                    const lt = qty * price;
+                    amountTd.textContent = lt ? lt.toLocaleString() : '—';
+                }
+            }
+        } catch (err) {
+            row.classList.remove('receipt-row-saving');
+            row.classList.add('receipt-row-error');
+            setTimeout(() => row.classList.remove('receipt-row-error'), 600);
+            showToast(err.message || 'Failed to update item.', 'error');
+            restoreCell(cell, field, original);
+        }
+    };
+
+    input.addEventListener('blur', save, { once: true });
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { e.preventDefault(); input.removeEventListener('blur', save); restoreCell(cell, field, original); }
+        // Tab to next editable cell
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            input.blur();
+            const allCells = [...document.querySelectorAll('.editable-cell')];
+            const idx = allCells.indexOf(cell);
+            const next = allCells[e.shiftKey ? idx - 1 : idx + 1];
+            if (next) setTimeout(() => next.click(), 50);
+        }
+    });
+});
+
+// Also allow Enter key on editable cells to start editing
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.classList?.contains('editable-cell') && !e.target.querySelector('.inline-edit-input')) {
+        e.target.click();
+    }
+});
+
+function restoreCell(cell, field, value) {
+    if (field === 'product_code') {
+        cell.innerHTML = `<span class="receipt-detail-code">${escHtml(value)}</span>`;
+    } else if (field === 'quantity' || field === 'unit_price') {
+        const num = parseFloat(value) || 0;
+        cell.textContent = num ? num.toLocaleString() : '—';
+    } else {
+        cell.textContent = value;
+    }
+}
+
+// Delete a single receipt item
+window._deleteReceiptItem = function(itemId, receiptId) {
+    showDeleteConfirm(
+        'Delete this item?',
+        'This item will be permanently removed from the receipt.',
+        async () => {
+            try {
+                const res = await fetch(`/api/receipts/items/${itemId}`, { method: 'DELETE' });
+                if (!res.ok) throw new Error('Failed to delete item.');
+                showToast('Item deleted.', 'success');
+                // Refresh the receipt detail view
+                window.viewReceipt(receiptId);
+            } catch (err) {
+                showToast(err.message || 'Delete failed.', 'error');
+            }
+        }
+    );
+};
+
+// Add a new item to a receipt
+window._addReceiptItem = async function(receiptId) {
+    try {
+        const res = await fetch(`/api/receipts/${receiptId}/items`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ product_code: 'NEW', product_name: 'New Item', quantity: 1, unit_price: 0, line_total: 0 }),
+        });
+        if (!res.ok) throw new Error('Failed to add item.');
+        showToast('Item added — click cells to edit.', 'success');
+        window.viewReceipt(receiptId);
+    } catch (err) {
+        showToast(err.message || 'Failed to add item.', 'error');
+    }
+};
+
+// ─── Focus Trap ──────────────────────────────────────────────────────────────
+function trapFocus(container) {
+    const focusableSelectors = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusableEls = container.querySelectorAll(focusableSelectors);
+    if (focusableEls.length === 0) return null;
+
+    const first = focusableEls[0];
+    const last = focusableEls[focusableEls.length - 1];
+
+    const handler = (e) => {
+        if (e.key !== 'Tab') return;
+        if (e.shiftKey) {
+            if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+        } else {
+            if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+    };
+    container.addEventListener('keydown', handler);
+    // Auto-focus first focusable element
+    first.focus();
+    return handler;
+}
+
+// Apply focus trap when modal opens
+const _origModalDisplay = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'style');
+(function observeModal() {
+    const overlay = document.getElementById('modalOverlay');
+    if (!overlay) return;
+    let _focusTrapHandler = null;
+    const observer = new MutationObserver(() => {
+        const modal = document.getElementById('modalContent') || overlay.querySelector('.modal');
+        if (overlay.style.display === 'flex' || overlay.style.display === 'block') {
+            document.body.classList.add('focus-trap-active');
+            if (modal) {
+                // Small delay for DOM to settle
+                setTimeout(() => { _focusTrapHandler = trapFocus(modal); }, 50);
+            }
+        } else {
+            document.body.classList.remove('focus-trap-active');
+            if (modal && _focusTrapHandler) {
+                modal.removeEventListener('keydown', _focusTrapHandler);
+                _focusTrapHandler = null;
+            }
+        }
+    });
+    observer.observe(overlay, { attributes: true, attributeFilter: ['style'] });
+})();
+
+// ─── Training Onboarding ────────────────────────────────────────────────────
+(function initTrainOnboarding() {
+    const dismissed = localStorage.getItem('trainOnboardingDismissed');
+    const guide = document.getElementById('trainOnboarding');
+    if (dismissed === 'true' && guide) {
+        guide.style.display = 'none';
+    }
+    document.getElementById('dismissOnboarding')?.addEventListener('click', () => {
+        const g = document.getElementById('trainOnboarding');
+        if (g) {
+            g.style.transition = 'opacity 0.3s, max-height 0.3s';
+            g.style.opacity = '0';
+            g.style.maxHeight = '0';
+            g.style.overflow = 'hidden';
+            g.style.marginBottom = '0';
+            g.style.padding = '0';
+            setTimeout(() => { g.style.display = 'none'; }, 300);
+        }
+        localStorage.setItem('trainOnboardingDismissed', 'true');
+    });
+})();
 
 // ─── Azure Usage Modal ───────────────────────────────────────────────────────
 async function showAzureUsageModal() {
@@ -2841,7 +3552,8 @@ function showToast(message, type = 'info') {
     const container = $('#toastContainer');
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    toast.innerHTML = `<span>${escHtml(message)}</span><span class="toast-close">✕</span>`;
+    const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
+    toast.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ'}</span><span>${escHtml(message)}</span><span class="toast-close">✕</span>`;
     container.appendChild(toast);
 
     // Limit max visible toasts to 5 — remove oldest if exceeded
@@ -3202,9 +3914,10 @@ function useCapturedPhoto() {
         const file = new File([blob], `receipt_scan_${timestamp}.jpg`, { type: 'image/jpeg' });
 
         // NOTE: Do NOT call enhanceImageForOCR here — the image was already
-        // auto-leveled during capturePhoto(), and processFile() will apply
-        // enhanceImageForOCR as part of its pipeline. Triple-enhancement
-        // destroys handwriting by over-saturating ink and over-sharpening.
+        // auto-leveled (contrast stretch) during capturePhoto().
+        // The server-side OpenCV pipeline applies further enhancement;
+        // adding another client-side pass would over-saturate ink and
+        // over-sharpen handwriting, reducing OCR accuracy.
 
         // Close camera and process the file
         closeCamera();
@@ -3503,21 +4216,25 @@ async function loadTrainingSamples() {
 }
 
 async function deleteTrainingSample(receiptId) {
-    if (!confirm(`Delete training sample "${receiptId}"?`)) return;
-
-    try {
-        const res = await fetch(`/api/training/samples/${encodeURIComponent(receiptId)}`, { method: 'DELETE' });
-        if (res.ok) {
-            showToast(`Sample "${receiptId}" deleted.`, 'success');
-            loadTrainingSamples();
-            loadTrainingStatus();
-        } else {
-            const data = await res.json();
-            showToast(data.detail || 'Failed to delete sample.', 'error');
+    showDeleteConfirm(
+        `Delete training sample "${receiptId}"?`,
+        'This sample and its ground truth data will be permanently removed.',
+        async () => {
+            try {
+                const res = await fetch(`/api/training/samples/${encodeURIComponent(receiptId)}`, { method: 'DELETE' });
+                if (res.ok) {
+                    showToast(`Sample "${receiptId}" deleted.`, 'success');
+                    loadTrainingSamples();
+                    loadTrainingStatus();
+                } else {
+                    const data = await res.json();
+                    showToast(data.detail || 'Failed to delete sample.', 'error');
+                }
+            } catch (e) {
+                showToast('Error deleting sample.', 'error');
+            }
         }
-    } catch (e) {
-        showToast('Error deleting sample.', 'error');
-    }
+    );
 }
 
 // ─── Upload Training Data ────────────────────────────────────────────────────

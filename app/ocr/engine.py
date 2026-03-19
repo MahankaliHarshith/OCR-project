@@ -68,13 +68,13 @@ class OCREngine:
         # Warmup: run a realistically-sized dummy image through OCR to trigger
         # PyTorch JIT compilation. Without this, the first real scan pays ~5-8s
         # of JIT overhead on CPU, making structured receipts appear slow.
-        # Use 1024x768 to match actual canvas_size used in real scans —
-        # CRAFT JIT compiles differently for different input sizes, so
-        # the warmup image must be close to real scan dimensions.
+        # Use the PRODUCTION canvas_size (1280) so CRAFT JIT-compiles the
+        # exact tensor shapes used in real scans. A mismatched warmup size
+        # causes a re-JIT on the first real call, negating the warmup.
         warmup_start = time.time()
-        dummy = np.full((768, 1024), 200, dtype=np.uint8)  # realistic receipt size
+        dummy = np.full((960, 1280), 200, dtype=np.uint8)  # matches OCR_CANVAS_SIZE=1280
         with contextlib.suppress(Exception):
-            self.reader.readtext(dummy, detail=0, canvas_size=1024, mag_ratio=1.0)
+            self.reader.readtext(dummy, detail=0, canvas_size=OCR_CANVAS_SIZE, mag_ratio=1.0)
         warmup_ms = int((time.time() - warmup_start) * 1000)
         logger.info(f"OCR warmup completed in {warmup_ms}ms")
 
@@ -110,22 +110,25 @@ class OCREngine:
 
         if quality_info:
             if quality_info.get("is_blurry"):
-                # Blurry: lower thresholds to catch faint text, increase magnification
+                # Blurry: lower thresholds to catch faint text
+                # NOTE: Do NOT increase mag_ratio — magnifying blur makes text
+                # even fuzzier and worsens CRAFT character segmentation.
                 text_threshold = max(0.25, text_threshold - 0.1)
                 low_text = max(0.15, low_text - 0.1)
-                mag_ratio = min(2.5, mag_ratio + 0.4)
                 add_margin = 0.20  # Larger margin for fuzzy character boundaries
-                logger.debug("  OCR params: BLURRY mode (lower thresholds, higher mag)")
+                logger.debug("  OCR params: BLURRY mode (lower thresholds, standard mag)")
             if quality_info.get("is_low_contrast"):
                 # Low contrast: lower contrast threshold so EasyOCR doesn't skip faint text
+                # NOTE: Do NOT set adjust_contrast > 0.9 — the preprocessor already
+                # applies CLAHE; double enhancement creates halo artifacts.
                 contrast_ths = 0.1
-                adjust_contrast = 1.0  # Let EasyOCR boost contrast internally
                 logger.debug("  OCR params: LOW CONTRAST mode (lower contrast_ths)")
             if quality_info.get("is_too_dark"):
-                # Dark image: increase contrast adjustment
-                adjust_contrast = 1.2
+                # Dark image: lower threshold to catch faint text
+                # NOTE: Preprocessor already applies strong CLAHE + brightness
+                # correction for dark images, so no need for EasyOCR to re-enhance.
                 contrast_ths = 0.15
-                logger.debug("  OCR params: DARK mode (increased adjust_contrast)")
+                logger.debug("  OCR params: DARK mode (lower contrast_ths)")
 
         try:
             results = self.reader.readtext(
@@ -202,8 +205,8 @@ class OCREngine:
                 text_threshold=OCR_TEXT_THRESHOLD,
                 low_text=OCR_LOW_TEXT,
                 link_threshold=OCR_LINK_THRESHOLD,
-                canvas_size=min(OCR_CANVAS_SIZE, 1024),  # Balanced: enough detail for handwriting
-                mag_ratio=1.5,                            # Higher than before for better digit capture
+                canvas_size=OCR_CANVAS_SIZE,          # Use production size for better accuracy
+                mag_ratio=1.5,                            # Slightly lower than full for speed
                 batch_size=1,
                 contrast_ths=0.2,
                 adjust_contrast=0.8,      # Better contrast handling for ink on paper

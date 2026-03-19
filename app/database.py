@@ -1136,8 +1136,12 @@ class Database(DatabaseBackend):
     # Smart OCR — Dedup, Corrections, Stats
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    def update_receipt_metadata(self, receipt_id: int, **kwargs) -> None:
-        """Update receipt with smart OCR metadata (image_hash, quality_score, etc.)."""
+    def update_receipt_metadata(self, receipt_id: int, **kwargs) -> bool:
+        """Update receipt with smart OCR metadata (image_hash, quality_score, etc.).
+
+        Returns:
+            True if receipt was found and updated, False if receipt_id not found.
+        """
         allowed = {
             "image_hash", "content_fingerprint", "receipt_date",
             "store_name", "quality_score", "quality_grade",
@@ -1149,15 +1153,20 @@ class Database(DatabaseBackend):
                 fields.append(f"{key} = ?")
                 values.append(value)
         if not fields:
-            return
+            return False
+        self._before_write()
         values.append(receipt_id)
         conn = self._conn()
         try:
-            conn.execute(
+            cursor = conn.execute(
                 f"UPDATE receipts SET {', '.join(fields)} WHERE id = ?",  # nosec B608
                 values,
             )
             conn.commit()
+            if cursor.rowcount == 0:
+                logger.warning("update_receipt_metadata: receipt_id=%s not found", receipt_id)
+                return False
+            return True
         except Exception:
             conn.rollback()
             raise

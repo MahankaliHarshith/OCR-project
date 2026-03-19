@@ -28,6 +28,38 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super().default(obj)
 
+
+def _convert_numpy_inplace(obj):
+    """Recursively convert numpy types to native Python types in-place.
+
+    Much faster than json.dumps()+json.loads() round-trip because it only
+    touches numpy values instead of serializing the entire structure.
+    """
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, np.integer):
+                obj[k] = int(v)
+            elif isinstance(v, np.floating):
+                obj[k] = float(v)
+            elif isinstance(v, np.bool_):
+                obj[k] = bool(v)
+            elif isinstance(v, np.ndarray):
+                obj[k] = v.tolist()
+            elif isinstance(v, (dict, list)):
+                _convert_numpy_inplace(v)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            if isinstance(v, np.integer):
+                obj[i] = int(v)
+            elif isinstance(v, np.floating):
+                obj[i] = float(v)
+            elif isinstance(v, np.bool_):
+                obj[i] = bool(v)
+            elif isinstance(v, np.ndarray):
+                obj[i] = v.tolist()
+            elif isinstance(v, (dict, list)):
+                _convert_numpy_inplace(v)
+
 import contextlib  # noqa: E402
 
 from app.config import ALLOWED_IMAGE_EXTENSIONS, EXPORT_DIR, MAX_FILE_SIZE_MB, UPLOAD_DIR  # noqa: E402
@@ -330,13 +362,13 @@ async def scan_receipt(file: UploadFile = File(...)):
     try:
         import asyncio
         result = await asyncio.to_thread(receipt_service.process_receipt, str(upload_path))
-        # Serialize with numpy-safe encoder, then parse back for JSONResponse
-        safe_json = json.loads(json.dumps(result, cls=NumpyEncoder))
+        # Convert numpy types in-place (avoids expensive serialize+deserialize cycle)
+        _convert_numpy_inplace(result)
         logger.info(
             f"Receipt scan complete: success={result.get('success')}, "
             f"items={result.get('receipt_data', {}).get('total_items', 0) if result.get('receipt_data') else 0}"
         )
-        return JSONResponse(content=safe_json)
+        return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Receipt processing failed: {e}", exc_info=True)
         # Clean up orphaned upload file on failure
@@ -424,9 +456,9 @@ async def scan_receipts_batch(files: list[UploadFile] = File(...)):
 
             # Process receipt
             result = await asyncio.to_thread(receipt_service.process_receipt, str(upload_path))
-            safe_json = json.loads(json.dumps(result, cls=NumpyEncoder))
-            file_result["success"] = safe_json.get("success", False)
-            file_result["data"] = safe_json
+            _convert_numpy_inplace(result)
+            file_result["success"] = result.get("success", False)
+            file_result["data"] = result
             logger.info(
                 f"Batch scan [{idx+1}/{len(files)}] complete: "
                 f"filename={file.filename!r}, success={file_result['success']}"

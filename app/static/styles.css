@@ -1815,6 +1815,7 @@ button:disabled, .btn:disabled {
 .receipt-bulk-actions .btn-danger {
     background: var(--danger);
     border-color: var(--danger);
+    color: #fff;
 }
 
 /* ── Receipt Card with checkbox ─────────────────────────────────────────── */
@@ -3150,6 +3151,8 @@ button:disabled, .btn:disabled {
     box-shadow: 0 8px 40px rgba(0,0,0,0.5);
     user-select: none;
     -webkit-user-drag: none;
+    touch-action: manipulation;
+    transition: transform 0.15s ease;
 }
 .receipt-lightbox-close {
     position: absolute;
@@ -3444,10 +3447,6 @@ button:disabled, .btn:disabled {
 }
 
 /* ── Pinch-to-Zoom / Touch Zoom ─────────────────────────────────────────── */
-.receipt-lightbox img {
-    touch-action: manipulation;
-    transition: transform 0.15s ease;
-}
 .receipt-lightbox .zoom-controls {
     position: absolute;
     bottom: 50px;

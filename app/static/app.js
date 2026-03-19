@@ -1813,7 +1813,13 @@ $('#exportExcelBtn').addEventListener('click', async () => {
 // ─── Scan Again ──────────────────────────────────────────────────────────────
 $('#scanAgainBtn').addEventListener('click', () => {
     if (state.isDirty && !state.confirmed) {
-        if (!confirm('You have unsaved changes. Discard and scan a new receipt?')) return;
+        showStyledConfirm(
+            'Discard unsaved changes?',
+            'You have unsaved changes. Discard and scan a new receipt?',
+            'Discard',
+            () => resetScanUI()
+        );
+        return;
     }
     resetScanUI();
 });
@@ -1858,17 +1864,16 @@ if ($('#postConfirmAddBtn')) {
 // Post-confirm: "New Batch" button (in post-confirm panel)
 if ($('#postConfirmNewBatchBtn')) {
     $('#postConfirmNewBatchBtn').addEventListener('click', () => {
-        const name = prompt('Enter batch name:', `Batch ${state.batches.length + 1}`);
-        if (name === null) return;
-        createNewBatch(name.trim() || undefined);
-        populateBatchSelect($('#postConfirmBatchSelect'));
-        $('#postConfirmBatchSelect').value = state.activeBatchId;
-        // Re-enable Add button for newly created batch
-        const addBtn = $('#postConfirmAddBtn');
-        if (addBtn) addBtn.disabled = false;
-        const status = $('#postConfirmBatchStatus');
-        if (status) { status.textContent = ''; status.style.display = 'none'; }
-        showToast(`Batch "${getActiveBatch()?.name}" created!`, 'success');
+        showStyledPrompt('New Batch', 'Enter batch name:', `Batch ${state.batches.length + 1}`, (name) => {
+            createNewBatch(name.trim() || undefined);
+            populateBatchSelect($('#postConfirmBatchSelect'));
+            $('#postConfirmBatchSelect').value = state.activeBatchId;
+            const addBtn = $('#postConfirmAddBtn');
+            if (addBtn) addBtn.disabled = false;
+            const status = $('#postConfirmBatchStatus');
+            if (status) { status.textContent = ''; status.style.display = 'none'; }
+            showToast(`Batch "${getActiveBatch()?.name}" created!`, 'success');
+        });
     });
 }
 
@@ -2007,26 +2012,27 @@ if ($('#deleteBatchBtn')) {
         const batch = getActiveBatch();
         if (!batch) return;
         const msg = batch.receiptIds.length > 0
-            ? `Delete batch "${batch.name}" with ${batch.receiptIds.length} receipt(s)? Receipts stay in history.`
-            : `Delete empty batch "${batch.name}"?`;
-        if (!confirm(msg)) return;
-        state.batches = state.batches.filter(b => b.id !== batch.id);
-        state.activeBatchId = state.batches.length > 0 ? state.batches[0].id : null;
-        saveBatchState();
-        updateBatchBar();
-        $('#batchDetailPanel').style.display = 'none';
-        showToast(`Batch "${batch.name}" deleted.`, 'info');
-        if (document.querySelector('.nav-btn.active')?.dataset.tab === 'receipts') loadReceipts();
+            ? `This will remove batch "${batch.name}" with ${batch.receiptIds.length} receipt(s). Receipts stay in your history.`
+            : `This will remove the empty batch "${batch.name}".`;
+        showDeleteConfirm(`Delete batch "${batch.name}"?`, msg, () => {
+            state.batches = state.batches.filter(b => b.id !== batch.id);
+            state.activeBatchId = state.batches.length > 0 ? state.batches[0].id : null;
+            saveBatchState();
+            updateBatchBar();
+            $('#batchDetailPanel').style.display = 'none';
+            showToast(`Batch "${batch.name}" deleted.`, 'info');
+            if (document.querySelector('.nav-btn.active')?.dataset.tab === 'receipts') loadReceipts();
+        });
     });
 }
 
 // Create new batch
 if ($('#newBatchBtn')) {
     $('#newBatchBtn').addEventListener('click', () => {
-        const name = prompt('Enter batch name:', `Batch ${state.batches.length + 1}`);
-        if (name === null) return;
-        createNewBatch(name.trim() || undefined);
-        showToast(`Batch "${getActiveBatch()?.name}" created!`, 'success');
+        showStyledPrompt('New Batch', 'Enter batch name:', `Batch ${state.batches.length + 1}`, (name) => {
+            createNewBatch(name.trim() || undefined);
+            showToast(`Batch "${getActiveBatch()?.name}" created!`, 'success');
+        });
     });
 }
 
@@ -3433,8 +3439,74 @@ function trapFocus(container) {
     return handler;
 }
 
+/* ── Styled Confirm Modal (non-destructive) ─────────────────────────────── */
+function showStyledConfirm(title, message, confirmLabel, onConfirm) {
+    $('#modalTitle').textContent = '';
+    $('#modalMessage').innerHTML = `
+        <div class="confirm-delete-body">
+            <div class="confirm-delete-icon" style="background:var(--primary-wash);color:var(--primary)">⚠</div>
+            <div class="confirm-delete-title">${escHtml(title)}</div>
+            <div class="confirm-delete-msg">${escHtml(message)}</div>
+            <div class="confirm-delete-actions">
+                <button class="btn-confirm-cancel" id="confirmCancelBtn">Cancel</button>
+                <button class="btn-confirm-delete" style="background:var(--primary)" id="confirmDeleteBtn">${escHtml(confirmLabel || 'Confirm')}</button>
+            </div>
+        </div>
+    `;
+    $('#modalConfirm').style.display = 'none';
+    $('#modalCancel').style.display = 'none';
+    $('#modalOverlay').style.display = 'flex';
+    const close = () => {
+        $('#modalOverlay').style.display = 'none';
+        $('#modalConfirm').style.display = '';
+        $('#modalCancel').style.display = '';
+    };
+    $('#confirmCancelBtn').addEventListener('click', close, { once: true });
+    $('#confirmDeleteBtn').addEventListener('click', () => { close(); onConfirm(); }, { once: true });
+    const oc = (e) => { if (e.target === $('#modalOverlay')) { close(); $('#modalOverlay').removeEventListener('click', oc); } };
+    $('#modalOverlay').addEventListener('click', oc);
+}
+
+/* ── Styled Prompt Modal (text input) ───────────────────────────────────── */
+function showStyledPrompt(title, message, defaultVal, onSubmit) {
+    $('#modalTitle').textContent = '';
+    $('#modalMessage').innerHTML = `
+        <div class="confirm-delete-body">
+            <div class="confirm-delete-icon" style="background:var(--primary-wash);color:var(--primary)">✏️</div>
+            <div class="confirm-delete-title">${escHtml(title)}</div>
+            <div class="confirm-delete-msg">${escHtml(message)}</div>
+            <div style="margin:0.75rem 0">
+                <input type="text" id="styledPromptInput" class="input" value="${escAttr(defaultVal || '')}" style="text-align:center;font-weight:600" aria-label="${escAttr(message)}">
+            </div>
+            <div class="confirm-delete-actions">
+                <button class="btn-confirm-cancel" id="confirmCancelBtn">Cancel</button>
+                <button class="btn-confirm-delete" style="background:var(--primary)" id="confirmDeleteBtn">Create</button>
+            </div>
+        </div>
+    `;
+    $('#modalConfirm').style.display = 'none';
+    $('#modalCancel').style.display = 'none';
+    $('#modalOverlay').style.display = 'flex';
+    const inp = $('#styledPromptInput');
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
+    const close = () => {
+        $('#modalOverlay').style.display = 'none';
+        $('#modalConfirm').style.display = '';
+        $('#modalCancel').style.display = '';
+    };
+    const submit = () => {
+        const val = inp.value.trim();
+        close();
+        if (val) onSubmit(val);
+    };
+    $('#confirmCancelBtn').addEventListener('click', close, { once: true });
+    $('#confirmDeleteBtn').addEventListener('click', submit, { once: true });
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    const oc = (e) => { if (e.target === $('#modalOverlay')) { close(); $('#modalOverlay').removeEventListener('click', oc); } };
+    $('#modalOverlay').addEventListener('click', oc);
+}
+
 // Apply focus trap when modal opens
-const _origModalDisplay = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'style');
 (function observeModal() {
     const overlay = document.getElementById('modalOverlay');
     if (!overlay) return;

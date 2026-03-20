@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="description" content="Scan handwritten receipts instantly with AI-powered OCR. Fast, accurate, elegant.">
     <title>Receipt Scanner — Instant Handwritten OCR</title>
-    <link rel="stylesheet" href="/static/styles.css?v=2.2.2">
+    <link rel="stylesheet" href="/static/styles.css?v=2.4.0">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
@@ -149,7 +149,7 @@
                             <i data-lucide="camera" style="width:18px;height:18px"></i>
                             Scan with Camera
                         </button>
-                        <label for="fileInput" class="btn btn-ghost btn-upload" id="browseBtn">
+                        <label for="fileInput" class="btn btn-ghost btn-upload" id="browseBtn" tabindex="0" role="button">
                             <i data-lucide="image-plus" style="width:16px;height:16px"></i>
                             Choose from Gallery
                         </label>
@@ -609,16 +609,21 @@
                 <div class="table-wrapper">
                     <table class="data-table" id="catalogTable">
                         <thead>
-                            <tr>
-                                <th>Code</th>
-                                <th>Product Name</th>
-                                <th>Category</th>
-                                <th>Unit</th>
+                            <tr class="catalog-sort-header">
+                                <th data-sort="product_code">Code <span class="sort-icon">⇅</span></th>
+                                <th data-sort="product_name">Product Name <span class="sort-icon">⇅</span></th>
+                                <th data-sort="category">Category <span class="sort-icon">⇅</span></th>
+                                <th data-sort="unit">Unit <span class="sort-icon">⇅</span></th>
                                 <th></th>
                             </tr>
                         </thead>
                         <tbody id="catalogBody"></tbody>
                     </table>
+                </div>
+                <div class="catalog-pagination" id="catalogPagination" style="display:none">
+                    <button class="btn btn-ghost btn-sm" id="catalogPrevBtn" aria-label="Previous page">← Prev</button>
+                    <span class="page-info" id="catalogPageInfo">Page 1</span>
+                    <button class="btn btn-ghost btn-sm" id="catalogNextBtn" aria-label="Next page">Next →</button>
                 </div>
             </div>
         </section>
@@ -1098,6 +1103,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=2.2.2"></script>
+    <script src="/static/app.js?v=2.4.0"></script>
 </body>
 </html>

@@ -271,79 +271,162 @@ class HybridOCREngine:
             except Exception as e:
                 logger.debug(f"[Hybrid] Quality check failed: {e}")
 
-        # ── Step 2: Run local OCR FIRST (always free, fast) ─────────────
+        # ── Step 2: Smart local screening + Azure routing ─────────────
+        # PERFORMANCE FIX v2: Parallel fast-screen + Azure image prep.
+        #   A) When Azure is available:
+        #      - Run fast single-pass screening (~3-4s) CONCURRENTLY with
+        #        Azure image optimization (~30ms). Image bytes are ready
+        #        the instant screening finishes → zero wait for Azure prep.
+        #      - If good enough → run full local pipeline for quality
+        #      - If insufficient → send pre-built bytes DIRECTLY to Azure
+        #   B) When Azure is NOT available: full local pipeline as before
+        #   C) SPECULATIVE PARALLEL: when enabled, fires Azure API call
+        #      concurrently with fast screen (saves 1-3s but always burns a page).
         local_result = None
+        _azure_is_viable = self.azure_engine is not None
+        _azure_image_bytes = None  # Pre-optimized bytes for Azure (prepared in parallel)
+
+        # ── Step 2a: Try speculative parallel if enabled ──
+        from app.config import AZURE_SPECULATIVE_PARALLEL
+        if AZURE_SPECULATIVE_PARALLEL and _azure_is_viable and processed_image is not None:
+            try:
+                spec_result = self._run_speculative_parallel(
+                    image_path, processed_image, is_structured,
+                    original_color=original_color, quality_info=quality_info,
+                    total_start=total_start, metadata=metadata, cache_key=cache_key,
+                )
+                if spec_result is not None:
+                    return spec_result
+            except Exception as e:
+                logger.warning(f"[Hybrid] Speculative parallel failed, falling back: {e}")
+            # Fall through to normal flow if speculative failed
+
+        # ── Step 2b: Normal fast-screen + Azure prep (non-speculative) ──
         if processed_image is not None:
             try:
-                local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color, quality_info=quality_info)
-                local_conf = local_result.get("confidence_avg", 0)
-                local_items = len(local_result.get("ocr_detections", []))
+                if _azure_is_viable:
+                    # ── Parallel: fast screen + Azure image prep ──
+                    # While the fast OCR screen runs (~3-4s), prepare the Azure
+                    # upload bytes from the already-loaded color image in a
+                    # background thread. This saves ~30-50ms of sequential I/O.
+                    from concurrent.futures import ThreadPoolExecutor as _ScreenPool
 
-                # ── Calibrated confidence: adjusts for EasyOCR's inflated scores ──
-                # EasyOCR often reports 0.70-0.90 on garbled handwritten text.
-                # Calibration penalizes short/noisy/repetitive detections.
-                local_dets = local_result.get("ocr_detections", [])
-                calibrated_conf = self._calibrated_avg_confidence(local_dets)
+                    screen_start = time.time()
+                    from app.ocr.preprocessor import ImagePreprocessor
+                    _cropped = ImagePreprocessor.crop_to_content_static(processed_image)
 
-                # ── Catalog match rate: what % of detections match known products ──
-                # High raw confidence on garbage text means nothing if the words
-                # don't match any product codes in the catalog.
-                catalog_match_rate = self._catalog_match_rate(local_dets)
+                    def _prep_azure_bytes():
+                        """Pre-optimize image for Azure upload while screening runs."""
+                        try:
+                            # Pass the pre-loaded color image to avoid cv2.imread disk re-read
+                            return self.azure_engine._optimize_image_for_upload(
+                                image_path, preloaded_image=original_color,
+                            )
+                        except Exception as _e:
+                            logger.debug(f"[Hybrid] Azure image prep failed: {_e}")
+                            return None
 
-                metadata["attempts"].append({
-                    "engine": "local-first",
-                    "detections": local_items,
-                    "confidence": round(local_conf, 4),
-                    "calibrated_confidence": round(calibrated_conf, 4),
-                    "catalog_match_rate": round(catalog_match_rate, 4),
-                })
+                    with _ScreenPool(max_workers=2) as _pool:
+                        _azure_prep_future = _pool.submit(_prep_azure_bytes)
+                        # Fast screen runs on main thread (uses local_engine reader)
+                        fast_dets = self.local_engine.extract_text_fast(_cropped)
+                        # Collect Azure bytes (should already be done — ~30ms vs ~3s)
+                        _azure_image_bytes = _azure_prep_future.result(timeout=5)
 
-                # Smart skip: THREE conditions must ALL be met to skip Azure:
-                #   1. Calibrated confidence >= threshold (genuinely well-read text)
-                #   2. Enough detections found (it actually found content)
-                #   3. Catalog match rate >= threshold (detected text matches known products)
-                # For handwritten receipts, also require higher confidence since
-                # EasyOCR is weaker on handwriting than on printed text.
-                effective_threshold = LOCAL_CONFIDENCE_SKIP_THRESHOLD
-                if not is_structured:
-                    # Handwritten: require even higher confidence to skip Azure
-                    effective_threshold = max(effective_threshold, 0.88)
+                    screen_ms = int((time.time() - screen_start) * 1000)
 
-                skip_azure = (
-                    calibrated_conf >= effective_threshold
-                    and local_items >= LOCAL_MIN_DETECTIONS_SKIP
-                    and catalog_match_rate >= LOCAL_CATALOG_MATCH_SKIP_THRESHOLD
-                )
+                    local_items = len(fast_dets)
+                    raw_conf = self._avg_confidence(fast_dets)
+                    calibrated_conf = self._calibrated_avg_confidence(fast_dets)
+                    catalog_match_rate = self._catalog_match_rate(fast_dets)
 
-                if skip_azure:
+                    metadata["attempts"].append({
+                        "engine": "local-fast-screen",
+                        "detections": local_items,
+                        "confidence": round(raw_conf, 4),
+                        "calibrated_confidence": round(calibrated_conf, 4),
+                        "catalog_match_rate": round(catalog_match_rate, 4),
+                        "screen_ms": screen_ms,
+                    })
+
+                    effective_threshold = LOCAL_CONFIDENCE_SKIP_THRESHOLD
+                    if not is_structured:
+                        effective_threshold = max(effective_threshold, 0.88)
+
+                    skip_azure = (
+                        calibrated_conf >= effective_threshold
+                        and local_items >= LOCAL_MIN_DETECTIONS_SKIP
+                        and catalog_match_rate >= LOCAL_CATALOG_MATCH_SKIP_THRESHOLD
+                    )
+
+                    if skip_azure:
+                        # Good enough → run full local pipeline for best quality
+                        logger.info(
+                            f"[Hybrid] ✅ Fast screen GOOD in {screen_ms}ms "
+                            f"(cal_conf={calibrated_conf:.3f}, raw_conf={raw_conf:.3f}, "
+                            f"items={local_items}, catalog={catalog_match_rate:.1%}), "
+                            f"running full local pipeline..."
+                        )
+                        local_result = self._run_local_pipeline(
+                            processed_image, image_path, is_structured,
+                            original_color=original_color, quality_info=quality_info,
+                        )
+                        total_ms = int((time.time() - total_start) * 1000)
+                        local_result["ocr_time_ms"] = total_ms
+                        local_result["metadata"] = {
+                            **metadata,
+                            "strategy": "auto-local-skip",
+                            "azure_pages_used": 0,
+                            "reason": (
+                                f"Calibrated confidence {calibrated_conf:.3f} >= {effective_threshold} "
+                                f"AND {local_items} detections >= {LOCAL_MIN_DETECTIONS_SKIP} "
+                                f"AND catalog match {catalog_match_rate:.1%} >= {LOCAL_CATALOG_MATCH_SKIP_THRESHOLD:.0%}"
+                            ),
+                        }
+                        logger.info(
+                            f"[Hybrid] ✅ Local OCR GOOD ENOUGH "
+                            f"(cal_conf={calibrated_conf:.3f}, items={local_items}), "
+                            f"Azure page SAVED ({total_ms}ms)"
+                        )
+                        return local_result
+                    else:
+                        # NOT good enough → build lightweight fallback from fast screen,
+                        # proceed DIRECTLY to Azure (skip expensive full multi-pass!)
+                        logger.info(
+                            f"[Hybrid] Fast screen INSUFFICIENT in {screen_ms}ms "
+                            f"(cal_conf={calibrated_conf:.3f}, raw_conf={raw_conf:.3f}, "
+                            f"items={local_items}, catalog={catalog_match_rate:.1%}), "
+                            f"routing DIRECTLY to Azure (full local pipeline skipped)..."
+                        )
+                        local_result = {
+                            "engine_used": "local",
+                            "ocr_detections": fast_dets,
+                            "azure_structured": None,
+                            "ocr_time_ms": screen_ms,
+                            "ocr_passes": 1,
+                            "confidence_avg": round(raw_conf, 4),
+                            "metadata": {"strategy": "local-fast-screen"},
+                        }
+                        # Proceed to Step 3 (Azure) with fast result as fallback
+
+                else:
+                    # ── No Azure → full local pipeline (original behavior) ──
+                    local_result = self._run_local_pipeline(
+                        processed_image, image_path, is_structured,
+                        original_color=original_color, quality_info=quality_info,
+                    )
+                    # No Azure to route to, just return local result
                     total_ms = int((time.time() - total_start) * 1000)
                     local_result["ocr_time_ms"] = total_ms
                     local_result["metadata"] = {
                         **metadata,
-                        "strategy": "auto-local-skip",
+                        "strategy": "auto-local-only",
                         "azure_pages_used": 0,
-                        "reason": (
-                            f"Calibrated confidence {calibrated_conf:.3f} >= {effective_threshold} "
-                            f"AND {local_items} detections >= {LOCAL_MIN_DETECTIONS_SKIP} "
-                            f"AND catalog match {catalog_match_rate:.1%} >= {LOCAL_CATALOG_MATCH_SKIP_THRESHOLD:.0%}"
-                        ),
                     }
-                    logger.info(
-                        f"[Hybrid] ✅ Local OCR GOOD ENOUGH "
-                        f"(cal_conf={calibrated_conf:.3f}, raw_conf={local_conf:.3f}, "
-                        f"items={local_items}, catalog={catalog_match_rate:.1%}), "
-                        f"Azure page SAVED ({total_ms}ms)"
-                    )
                     return local_result
-                else:
-                    logger.info(
-                        f"[Hybrid] Local OCR insufficient "
-                        f"(cal_conf={calibrated_conf:.3f}, raw_conf={local_conf:.3f}, "
-                        f"items={local_items}, catalog={catalog_match_rate:.1%}), "
-                        f"proceeding to Azure..."
-                    )
+
             except Exception as e:
-                logger.warning(f"[Hybrid] Local-first pass failed: {e}")
+                logger.warning(f"[Hybrid] Local screening/pipeline failed: {e}")
 
         # ── Step 3: Check Azure usage limits before calling ─────────────
         if self.azure_engine is not None:
@@ -358,8 +441,9 @@ class HybridOCREngine:
                         "engine": "azure-blocked",
                         "reason": reason,
                     })
-                    if local_result is None:
-                        local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color, quality_info=quality_info)
+                    # Azure blocked → run full local pipeline for best quality
+                    # (fast screening result is insufficient, so give it the full treatment)
+                    local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color, quality_info=quality_info)
                     total_ms = int((time.time() - total_start) * 1000)
                     local_result["ocr_time_ms"] = total_ms
                     local_result["metadata"] = {
@@ -381,6 +465,8 @@ class HybridOCREngine:
                 logger.debug(f"[Hybrid] Usage check failed: {e}")
 
         # ── Step 4: Call Azure — SINGLE model only (1 page consumed) ────
+        # Pass pre-optimized image bytes when available (from parallel prep
+        # in Step 2) to skip the disk re-read inside Azure engine.
         if self.azure_engine is not None:
             try:
                 attempt_start = time.time()
@@ -389,7 +475,9 @@ class HybridOCREngine:
                     if AZURE_MODEL_STRATEGY == "receipt-only":
                         # Use receipt model (more expensive but structured output)
                         logger.info("[Hybrid] Azure: Using receipt model (receipt-only strategy)")
-                        azure_result = self.azure_engine.extract_receipt_structured(image_path)
+                        azure_result = self.azure_engine.extract_receipt_structured(
+                            image_path, image_bytes=_azure_image_bytes,
+                        )
                         azure_items = azure_result.get("items", [])
                         azure_detections = azure_result.get("ocr_detections", [])
                         model_used = "azure-receipt"
@@ -398,7 +486,9 @@ class HybridOCREngine:
                     elif AZURE_MODEL_STRATEGY == "receipt-then-read":
                         # Legacy: try receipt, fall back to read (CAN BURN 2 PAGES!)
                         logger.info("[Hybrid] Azure: receipt-then-read strategy (may use 2 pages!)")
-                        azure_result = self.azure_engine.extract_receipt_structured(image_path)
+                        azure_result = self.azure_engine.extract_receipt_structured(
+                            image_path, image_bytes=_azure_image_bytes,
+                        )
                         azure_items = azure_result.get("items", [])
                         azure_detections = azure_result.get("ocr_detections", [])
                         model_used = "azure-receipt"
@@ -414,7 +504,9 @@ class HybridOCREngine:
                                 pass
 
                             if can_call_read:
-                                read_detections = self.azure_engine.extract_text_read(image_path)
+                                read_detections = self.azure_engine.extract_text_read(
+                                    image_path, image_bytes=_azure_image_bytes,
+                                )
                                 if read_detections:
                                     azure_detections = read_detections
                                     model_used = "azure-read"
@@ -424,7 +516,9 @@ class HybridOCREngine:
                     else:
                         # DEFAULT: read-only — cheapest, best for handwritten ($0.0015/page)
                         logger.info("[Hybrid] Azure: Using read model (read-only strategy — most efficient)")
-                        read_detections = self.azure_engine.extract_text_read(image_path)
+                        read_detections = self.azure_engine.extract_text_read(
+                            image_path, image_bytes=_azure_image_bytes,
+                        )
                         azure_result = {"items": [], "ocr_detections": read_detections}
                         azure_items = []
                         azure_detections = read_detections
@@ -511,7 +605,10 @@ class HybridOCREngine:
             metadata["attempts"].append({"engine": "azure-skipped", "reason": "not configured"})
 
         # ── Step 5: Local EasyOCR fallback ───────────────────────────────
-        if local_result is None:
+        # If Azure failed or wasn't available, run full local pipeline
+        # for best quality (not just the fast screening result)
+        if local_result is None or local_result.get("metadata", {}).get("strategy") == "local-fast-screen":
+            logger.info("[Hybrid] Running full local pipeline as fallback...")
             local_result = self._run_local_pipeline(processed_image, image_path, is_structured, original_color=original_color, quality_info=quality_info)
 
         local_result["metadata"] = {**metadata, **local_result.get("metadata", {})}
@@ -537,6 +634,244 @@ class HybridOCREngine:
                 logger.debug(f"[Hybrid] Cross-verify skipped (Azure error): {e}")
 
         return local_result
+
+    def _run_speculative_parallel(
+        self,
+        image_path: str,
+        processed_image,
+        is_structured: bool,
+        original_color=None,
+        quality_info: dict = None,
+        total_start: float = 0,
+        metadata: dict = None,
+        cache_key: str = None,
+    ) -> dict | None:
+        """
+        Speculative parallel: fire Azure API + fast screen concurrently.
+
+        The Azure API call (~2-5s) runs in a background thread while the fast
+        local screen (~3-4s) runs on the calling thread. When the screen
+        finishes first:
+          - "Good enough" + Azure done → use Azure result (already paid, better quality)
+          - "Good enough" + Azure not done → use full local pipeline (don't wait)
+          - "Insufficient" → wait for Azure result (it's already in-flight)
+
+        Trade-off: ALWAYS consumes an Azure page ($0.01) even when local is
+        sufficient. Enable via AZURE_SPECULATIVE_PARALLEL=true when speed
+        matters more than cost.
+
+        Returns:
+            Result dict if speculative path handled the request.
+            None if it couldn't handle it (caller falls back to normal flow).
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        from app.config import (
+            AZURE_API_TIMEOUT,
+            AZURE_MODEL_STRATEGY,
+            LOCAL_CATALOG_MATCH_SKIP_THRESHOLD,
+            LOCAL_CONFIDENCE_SKIP_THRESHOLD,
+            LOCAL_MIN_DETECTIONS_SKIP,
+        )
+        from app.ocr.preprocessor import ImagePreprocessor
+
+        if metadata is None:
+            metadata = {"strategy": "speculative", "attempts": [], "azure_pages_used": 0}
+
+        _cropped = ImagePreprocessor.crop_to_content_static(processed_image)
+        screen_start = time.time()
+
+        def _azure_full_pipeline():
+            """Image prep + usage check + Azure API call (runs in background thread)."""
+            try:
+                usage_check = self.usage_tracker.can_call_azure()
+                can_call = usage_check.get("allowed", False) if isinstance(usage_check, dict) else usage_check
+                if not can_call:
+                    reason = usage_check.get("reason", "limit") if isinstance(usage_check, dict) else "limit"
+                    return {"status": "blocked", "reason": reason}
+
+                img_bytes = self.azure_engine._optimize_image_for_upload(
+                    image_path, preloaded_image=original_color,
+                )
+
+                if AZURE_MODEL_STRATEGY == "receipt-only":
+                    result = self.azure_engine.extract_receipt_structured(
+                        image_path, image_bytes=img_bytes,
+                    )
+                    return {
+                        "status": "success", "result": result,
+                        "model": "azure-receipt", "pages": 1,
+                    }
+                else:
+                    dets = self.azure_engine.extract_text_read(
+                        image_path, image_bytes=img_bytes,
+                    )
+                    return {
+                        "status": "success",
+                        "result": {"items": [], "ocr_detections": dets},
+                        "model": "azure-read", "pages": 1,
+                    }
+            except Exception as e:
+                logger.warning(f"[Hybrid] Speculative Azure thread failed: {e}")
+                return {"status": "error", "error": str(e)}
+
+        # Fire both concurrently — use wait=False so we don't block on exit
+        pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="spec-ocr")
+        try:
+            azure_future = pool.submit(_azure_full_pipeline)
+            fast_dets = self.local_engine.extract_text_fast(_cropped)
+        except Exception as e:
+            pool.shutdown(wait=False)
+            logger.warning(f"[Hybrid] Speculative parallel startup failed: {e}")
+            return None
+
+        screen_ms = int((time.time() - screen_start) * 1000)
+
+        # Compute screening metrics
+        local_items = len(fast_dets)
+        raw_conf = self._avg_confidence(fast_dets)
+        calibrated_conf = self._calibrated_avg_confidence(fast_dets)
+        catalog_match_rate = self._catalog_match_rate(fast_dets)
+
+        metadata["attempts"].append({
+            "engine": "local-fast-screen-speculative",
+            "detections": local_items,
+            "confidence": round(raw_conf, 4),
+            "calibrated_confidence": round(calibrated_conf, 4),
+            "catalog_match_rate": round(catalog_match_rate, 4),
+            "screen_ms": screen_ms,
+        })
+
+        effective_threshold = LOCAL_CONFIDENCE_SKIP_THRESHOLD
+        if not is_structured:
+            effective_threshold = max(effective_threshold, 0.88)
+
+        skip_azure = (
+            calibrated_conf >= effective_threshold
+            and local_items >= LOCAL_MIN_DETECTIONS_SKIP
+            and catalog_match_rate >= LOCAL_CATALOG_MATCH_SKIP_THRESHOLD
+        )
+
+        def _build_azure_result(spec):
+            """Build a unified result dict from speculative Azure output."""
+            azure_res = spec["result"]
+            azure_items = azure_res.get("items", [])
+            azure_dets = azure_res.get("ocr_detections", [])
+            model = spec["model"]
+
+            avg_conf = (
+                sum(i.get("confidence", 0) for i in azure_items) / len(azure_items)
+                if azure_items
+                else self._avg_confidence(azure_dets)
+            )
+            total_ms = int((time.time() - total_start) * 1000)
+
+            _has_meta = bool(
+                azure_items or azure_res.get("total")
+                or azure_res.get("subtotal") or azure_res.get("merchant")
+            )
+            r = {
+                "engine_used": model,
+                "ocr_detections": azure_dets,
+                "azure_structured": azure_res if _has_meta else None,
+                "ocr_time_ms": total_ms,
+                "ocr_passes": 1,
+                "confidence_avg": round(avg_conf, 4),
+                "metadata": {**metadata, "azure_pages_used": spec["pages"]},
+            }
+
+            # Cache result (only if quality is high enough)
+            _cache_worthy = len(azure_dets) >= 2 or (azure_items and avg_conf > 0.5)
+            if cache_key and _cache_worthy:
+                with contextlib.suppress(Exception):
+                    self.image_cache.put(cache_key, r)
+
+            return r
+
+        if skip_azure:
+            # Screen says local is good enough
+            # Check if Azure already finished (use it — already paid for!)
+            if azure_future.done():
+                try:
+                    spec = azure_future.result(timeout=0)
+                    if spec["status"] == "success":
+                        result = _build_azure_result(spec)
+                        result["metadata"]["strategy"] = "speculative-azure-bonus"
+                        logger.info(
+                            f"[Hybrid] ✅ Speculative Azure DONE in {screen_ms}ms — "
+                            f"using Azure result (already paid): "
+                            f"{len(spec['result'].get('ocr_detections', []))} dets"
+                        )
+                        pool.shutdown(wait=False)
+                        return result
+                except Exception:
+                    pass
+
+            # Azure not done or failed — use full local pipeline
+            pool.shutdown(wait=False)  # Let Azure finish in background (page consumed)
+            logger.info(
+                f"[Hybrid] ✅ Fast screen GOOD in {screen_ms}ms "
+                f"(cal_conf={calibrated_conf:.3f}, items={local_items}). "
+                f"Speculative Azure still running — using local pipeline"
+            )
+            local_result = self._run_local_pipeline(
+                processed_image, image_path, is_structured,
+                original_color=original_color, quality_info=quality_info,
+            )
+            total_ms = int((time.time() - total_start) * 1000)
+            local_result["ocr_time_ms"] = total_ms
+            local_result["metadata"] = {
+                **metadata,
+                "strategy": "speculative-local-skip",
+                "azure_pages_used": 1,  # Page consumed by speculative call
+            }
+            return local_result
+
+        else:
+            # Screen says insufficient — wait for Azure result (already in-flight!)
+            logger.info(
+                f"[Hybrid] Fast screen INSUFFICIENT in {screen_ms}ms "
+                f"(cal_conf={calibrated_conf:.3f}, items={local_items}) — "
+                f"waiting for speculative Azure..."
+            )
+            try:
+                spec = azure_future.result(timeout=AZURE_API_TIMEOUT)
+                pool.shutdown(wait=False)
+
+                if spec["status"] == "success":
+                    result = _build_azure_result(spec)
+                    result["metadata"]["strategy"] = "speculative-azure-direct"
+                    total_ms = int((time.time() - total_start) * 1000)
+                    result["ocr_time_ms"] = total_ms
+                    logger.info(
+                        f"[Hybrid] ✅ Speculative Azure SUCCESS: {spec['model']}, "
+                        f"{len(spec['result'].get('ocr_detections', []))} dets, "
+                        f"{total_ms}ms total"
+                    )
+                    return result
+
+                elif spec["status"] == "blocked":
+                    logger.warning(f"[Hybrid] Azure BLOCKED in speculative: {spec.get('reason')}")
+                else:
+                    logger.warning(f"[Hybrid] Speculative Azure error: {spec.get('error')}")
+
+            except Exception as e:
+                pool.shutdown(wait=False)
+                logger.warning(f"[Hybrid] Speculative Azure timeout/error: {e}")
+
+            # Azure failed/blocked — run full local pipeline
+            local_result = self._run_local_pipeline(
+                processed_image, image_path, is_structured,
+                original_color=original_color, quality_info=quality_info,
+            )
+            total_ms = int((time.time() - total_start) * 1000)
+            local_result["ocr_time_ms"] = total_ms
+            local_result["metadata"] = {
+                **metadata,
+                "strategy": "speculative-fallback-local",
+                "azure_pages_used": 0,
+            }
+            return local_result
 
     def _run_azure_pipeline(
         self,
@@ -894,12 +1229,22 @@ class HybridOCREngine:
             else:
                 gray = img
 
+            # Downscale for faster Laplacian (~4× speedup on 1600px images)
+            h, w = gray.shape[:2]
+            _qg_target = 500
+            if max(h, w) > _qg_target:
+                _qg_scale = _qg_target / max(h, w)
+                gray_small = cv2.resize(gray, None, fx=_qg_scale, fy=_qg_scale,
+                                        interpolation=cv2.INTER_AREA)
+            else:
+                gray_small = gray
+
             # Sharpness: Laplacian variance (higher = sharper)
-            laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+            laplacian = cv2.Laplacian(gray_small, cv2.CV_64F)
             result["sharpness"] = float(laplacian.var())
 
-            # Brightness: mean pixel value
-            result["brightness"] = float(np.mean(gray))
+            # Brightness: mean pixel value (on downscaled — scale-invariant)
+            result["brightness"] = float(np.mean(gray_small))
 
             # Check thresholds
             reasons = []
@@ -945,6 +1290,11 @@ class HybridOCREngine:
         preserved as two distinct detections.
         y_bucket = round(y_center / 60) gives 60-pixel row bands.
         """
+        # Fast path: if secondary is empty, return primary as-is
+        if not secondary:
+            return primary
+        if not primary:
+            return secondary
         def _det_key(det: dict):
             text_upper = det["text"].upper().strip()
             bbox = det.get("bbox", [])

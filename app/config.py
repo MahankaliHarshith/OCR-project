@@ -99,8 +99,12 @@ OCR_MIN_SIZE = 10  # Lower to catch small handwritten digits (single-digit quant
 # Smart OCR pass strategy: run gray first (faster), only add color pass if
 # the first pass yields fewer items than expected.  This cuts OCR time ~45%
 # on typical receipts while preserving accuracy via fallback.
-OCR_SMART_PASS_THRESHOLD = 3   # Low threshold: skip 2nd pass once 3+ items found (same-receipt-type optimization)
+OCR_SMART_PASS_THRESHOLD = 4   # Skip 2nd pass once 4+ items found — balances speed vs accuracy
 OCR_PARALLEL_DUAL_PASS = True  # Use ThreadPoolExecutor for dual-pass OCR
+
+# PyTorch CPU inference thread count. 0 = auto-detect from CPU core count.
+# For parallel dual-pass, each reader gets threads/2, so set to total available cores.
+PYTORCH_NUM_THREADS = int(os.getenv("PYTORCH_NUM_THREADS", "0"))
 
 
 # ─── Azure Document Intelligence (Hybrid OCR) ────────────────────────────────
@@ -180,7 +184,7 @@ LOCAL_CATALOG_MATCH_SKIP_THRESHOLD = float(os.getenv("LOCAL_CATALOG_MATCH_SKIP_T
 
 # ─── Image Cache (prevents paying twice for same image) ──────────────────────
 # Max cached OCR results (each ~2-5KB in memory)
-IMAGE_CACHE_MAX_SIZE = int(os.getenv("IMAGE_CACHE_MAX_SIZE", "200"))
+IMAGE_CACHE_MAX_SIZE = int(os.getenv("IMAGE_CACHE_MAX_SIZE", "500"))  # ~2.5 KB per entry = ~1.2 MB at max
 
 # Cache TTL: how long to reuse a cached result (seconds).
 # 24 hours = same receipt re-scanned during the workday won't burn another Azure page.
@@ -194,11 +198,26 @@ AZURE_IMAGE_MAX_DIMENSION = 1500
 # JPEG quality for Azure uploads (lower = smaller file = faster upload)
 AZURE_IMAGE_QUALITY = 85
 
+# WebP image format for Azure uploads (25-34% smaller than JPEG at same quality).
+# Azure Document Intelligence supports WebP natively. Falls back to JPEG if
+# OpenCV WebP codec is unavailable. Set to "jpeg" to force JPEG.
+AZURE_IMAGE_FORMAT = os.getenv("AZURE_IMAGE_FORMAT", "webp")
+
+# Speculative parallel: fire Azure API call concurrently with fast local screen.
+# When True: saves 1-3s per scan, but ALWAYS consumes an Azure page (even when
+# local OCR is sufficient). Trades cost ($0.01/scan) for speed.
+# When False (default): screen first, Azure only if screening says "insufficient".
+AZURE_SPECULATIVE_PARALLEL = os.getenv("AZURE_SPECULATIVE_PARALLEL", "false").lower() == "true"
+
+# Azure API polling interval (seconds). Lower = detect completion faster.
+# Default Azure SDK uses ~1s intervals. 0.5s cuts "last poll wait" in half (~200ms savings).
+AZURE_POLLING_INTERVAL = float(os.getenv("AZURE_POLLING_INTERVAL", "0.5"))
+
 
 # ─── Image Preprocessing ─────────────────────────────────────────────────────
 IMAGE_MIN_WIDTH = 400
 IMAGE_MIN_HEIGHT = 300
-IMAGE_MAX_DIMENSION = 1800  # Higher resolution preserves handwriting detail
+IMAGE_MAX_DIMENSION = 1600  # Optimized: 1600px captures all handwriting detail while reducing pixel count ~21% vs 1800
 GAUSSIAN_BLUR_KERNEL = (3, 3)  # Gentler blur for handwriting (was 5,5)
 ADAPTIVE_THRESH_BLOCK_SIZE = 31  # Larger block for handwriting (was 11)
 ADAPTIVE_THRESH_C = 10  # Higher C preserves ink strokes (was 2)
@@ -242,6 +261,14 @@ MAX_RECEIPTS_PER_BATCH = 50
 MAX_FILE_SIZE_MB = 20
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 AUTO_SAVE_INTERVAL_SECONDS = 30
+
+# Server-Sent Events (SSE) for real-time scan progress
+# When True: POST /api/receipts/scan-stream returns SSE events during processing
+SSE_PROGRESS_ENABLED = os.getenv("SSE_PROGRESS_ENABLED", "true").lower() == "true"
+
+# Batch processing: max concurrent Azure API calls per batch.
+# Higher than single-scan concurrency since Azure calls are I/O-bound.
+BATCH_AZURE_MAX_CONCURRENT = int(os.getenv("BATCH_AZURE_MAX_CONCURRENT", "5"))
 
 
 # ─── Logging Settings ─────────────────────────────────────────────────────────

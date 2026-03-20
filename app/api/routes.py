@@ -67,6 +67,7 @@ from app.ocr.hybrid_engine import get_hybrid_engine  # noqa: E402
 from app.services.excel_service import excel_service  # noqa: E402
 from app.services.product_service import product_service  # noqa: E402
 from app.services.receipt_service import receipt_service  # noqa: E402
+from app.services.tally_service import tally_service  # noqa: E402
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -290,21 +291,20 @@ class ExcelGenerateRequest(BaseModel):
     receipt_ids: list[int]
 
 
-# ─── Receipt Processing Endpoints ────────────────────────────────────────────
+# ─── Receipt Upload Validation Helper ─────────────────────────────────────────
 
-@router.post("/api/receipts/scan", tags=["Receipts"])
-async def scan_receipt(file: UploadFile = File(...)):
+async def _validate_and_save_upload(file: UploadFile) -> tuple[str, Path]:
     """
-    Upload and process a receipt image.
+    Validate an uploaded file and save it to disk.
 
-    Accepts JPEG, PNG, BMP, TIFF, or WebP images.
-    Returns structured receipt data with OCR results.
+    Checks: file extension, file size, magic bytes.
+    Returns: (file_extension, upload_path)
+    Raises: HTTPException on validation failure.
     """
-    # Validate file extension
     ext = Path(file.filename or "").suffix.lower()
-    # Sanitize filename for logging to prevent log injection via newlines/control chars
     safe_log_name = (file.filename or "").replace("\n", "_").replace("\r", "_").replace("\t", "_")[:200]
     logger.info(f"Receipt scan request: filename={safe_log_name!r}, content_type={file.content_type}")
+
     if ext not in ALLOWED_IMAGE_EXTENSIONS:
         raise HTTPException(
             status_code=400,
@@ -312,10 +312,10 @@ async def scan_receipt(file: UploadFile = File(...)):
                    f"Allowed: {', '.join(ALLOWED_IMAGE_EXTENSIONS)}",
         )
 
-    # Validate file size — stream-read in chunks to avoid OOM on huge files
+    # Stream-read in chunks to avoid OOM on huge files
     max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
     contents = bytearray()
-    chunk_size = 1024 * 1024  # Read 1MB at a time
+    chunk_size = 1024 * 1024
     while True:
         chunk = await file.read(chunk_size)
         if not chunk:
@@ -330,15 +330,14 @@ async def scan_receipt(file: UploadFile = File(...)):
     size_mb = len(contents) / (1024 * 1024)
     logger.debug(f"Upload file size: {size_mb:.2f} MB")
 
-    # Validate file magic bytes (prevents disguised uploads)
+    # Validate magic bytes
     _MAGIC = {
-        b'\xff\xd8\xff': '.jpg',       # JPEG
-        b'\x89PNG': '.png',             # PNG
-        b'BM': '.bmp',                  # BMP
-        b'II\x2a\x00': '.tiff',        # TIFF (little-endian)
-        b'MM\x00\x2a': '.tiff',        # TIFF (big-endian)
+        b'\xff\xd8\xff': '.jpg',
+        b'\x89PNG': '.png',
+        b'BM': '.bmp',
+        b'II\x2a\x00': '.tiff',
+        b'MM\x00\x2a': '.tiff',
     }
-    # WebP needs a two-part check: RIFF header + WEBP at offset 8
     is_webp = (len(contents) >= 12 and contents[:4] == b'RIFF' and contents[8:12] == b'WEBP')
     magic_ok = is_webp or any(contents[:len(sig)] == sig for sig in _MAGIC)
     if not magic_ok:
@@ -348,15 +347,29 @@ async def scan_receipt(file: UploadFile = File(...)):
                    "Upload a real JPEG, PNG, BMP, TIFF, or WebP image.",
         )
 
-    # Save uploaded file (uuid suffix prevents collision on concurrent uploads)
+    # Save uploaded file
     import uuid
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique = uuid.uuid4().hex[:6]
     filename = f"upload_{timestamp}_{unique}{ext}"
     upload_path = UPLOAD_DIR / filename
-
     with open(upload_path, "wb") as f:
         f.write(contents)
+
+    return ext, upload_path
+
+
+# ─── Receipt Processing Endpoints ────────────────────────────────────────────
+
+@router.post("/api/receipts/scan", tags=["Receipts"])
+async def scan_receipt(file: UploadFile = File(...)):
+    """
+    Upload and process a receipt image.
+
+    Accepts JPEG, PNG, BMP, TIFF, or WebP images.
+    Returns structured receipt data with OCR results.
+    """
+    ext, upload_path = await _validate_and_save_upload(file)
 
     # Process receipt (run in thread to avoid blocking the async event loop)
     try:
@@ -375,6 +388,106 @@ async def scan_receipt(file: UploadFile = File(...)):
         with contextlib.suppress(OSError):
             upload_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="Receipt processing failed. Please check the server logs.") from None
+
+
+@router.post("/api/receipts/scan-stream", tags=["Receipts"])
+async def scan_receipt_stream(file: UploadFile = File(...)):
+    """
+    Upload and process a receipt image with real-time SSE progress updates.
+
+    Returns a Server-Sent Events stream with progress events during processing,
+    followed by a final 'result' event containing the full receipt data.
+
+    Event types:
+        progress — {step, message, progress} — pipeline step update
+        result   — {success, receipt_data, ...} — final result
+        error    — {error} — processing failure
+
+    Frontend usage:
+        const response = await fetch('/api/receipts/scan-stream', {method:'POST', body: formData});
+        const reader = response.body.getReader();
+        // Parse SSE events from stream chunks
+    """
+    import asyncio
+    import queue
+    import threading
+
+    from fastapi.responses import StreamingResponse
+
+    from app.config import SSE_PROGRESS_ENABLED
+
+    if not SSE_PROGRESS_ENABLED:
+        # SSE disabled — fall back to regular scan
+        return await scan_receipt(file)
+
+    ext, upload_path = await _validate_and_save_upload(file)
+
+    progress_queue: queue.Queue = queue.Queue()
+    result_holder: list = [None]
+    error_holder: list = [None]
+
+    def progress_callback(step: str, message: str, pct: int):
+        """Thread-safe progress callback — puts events into the queue."""
+        progress_queue.put({"step": step, "message": message, "progress": pct})
+
+    def process_in_thread():
+        """Run receipt processing in a background thread with progress callbacks."""
+        try:
+            result = receipt_service.process_receipt(str(upload_path), progress_callback=progress_callback)
+            _convert_numpy_inplace(result)
+            result_holder[0] = result
+        except Exception as e:
+            logger.error(f"SSE receipt processing failed: {e}", exc_info=True)
+            error_holder[0] = str(e)
+        finally:
+            progress_queue.put(None)  # Sentinel: processing complete
+
+    # Start processing in background thread
+    thread = threading.Thread(target=process_in_thread, daemon=True)
+    thread.start()
+
+    async def event_generator():
+        """Async generator that yields SSE events from the progress queue."""
+        while True:
+            try:
+                # Use asyncio.to_thread to avoid blocking the event loop
+                event = await asyncio.to_thread(progress_queue.get, True, 2.0)
+
+                if event is None:
+                    # Processing complete — send final result or error
+                    if error_holder[0]:
+                        yield f"event: error\ndata: {json.dumps({'error': error_holder[0]})}\n\n"
+                    elif result_holder[0]:
+                        yield f"event: result\ndata: {json.dumps(result_holder[0], cls=NumpyEncoder)}\n\n"
+                    else:
+                        yield f"event: error\ndata: {json.dumps({'error': 'No result produced'})}\n\n"
+                    break
+                else:
+                    yield f"event: progress\ndata: {json.dumps(event)}\n\n"
+
+            except Exception:
+                # Queue timeout — send heartbeat to keep connection alive
+                yield ": heartbeat\n\n"
+
+                # Safety check: if thread is done but we missed the sentinel
+                if not thread.is_alive():
+                    if error_holder[0]:
+                        yield f"event: error\ndata: {json.dumps({'error': error_holder[0]})}\n\n"
+                    elif result_holder[0]:
+                        yield f"event: result\ndata: {json.dumps(result_holder[0], cls=NumpyEncoder)}\n\n"
+                    else:
+                        yield f"event: error\ndata: {json.dumps({'error': 'Processing thread exited unexpectedly'})}\n\n"
+                    break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/api/receipts/scan-batch", tags=["Receipts"])
@@ -871,9 +984,9 @@ async def download_file(filename: str):
     safe_name = Path(filename).name
     if not safe_name or safe_name != filename:
         raise HTTPException(status_code=400, detail="Invalid filename.")
-    # Only allow .xlsx and .csv downloads
-    if not (safe_name.endswith(".xlsx") or safe_name.endswith(".csv")):
-        raise HTTPException(status_code=400, detail="Only .xlsx and .csv files can be downloaded.")
+    # Only allow .xlsx, .csv, .xml, and .json downloads
+    if not (safe_name.endswith(".xlsx") or safe_name.endswith(".csv") or safe_name.endswith(".xml") or safe_name.endswith(".json")):
+        raise HTTPException(status_code=400, detail="Only .xlsx, .csv, .xml, and .json files can be downloaded.")
     filepath = EXPORT_DIR / safe_name
     # Extra guard: resolved path must be inside EXPORT_DIR
     try:
@@ -886,9 +999,105 @@ async def download_file(filename: str):
     media_type = (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         if safe_name.endswith(".xlsx")
+        else "application/xml" if safe_name.endswith(".xml")
+        else "application/json" if safe_name.endswith(".json")
         else "text/csv"
     )
     return FileResponse(str(filepath), media_type=media_type, filename=safe_name)
+
+
+# ─── Tally Export Endpoints ──────────────────────────────────────────────────
+
+class TallyExportRequest(BaseModel):
+    receipt_ids: list[int]
+    company_name: str = "My Company"
+    purchase_ledger: str = "Purchase Account"
+    party_ledger: str = "Cash"
+    format: str = "xml"  # "xml" or "json"
+
+
+@router.post("/api/export/tally", tags=["Export"])
+async def generate_tally_export(data: TallyExportRequest):
+    """Generate a Tally-compatible XML or JSON file from receipt IDs."""
+    logger.debug(f"POST /api/export/tally: ids={data.receipt_ids}, fmt={data.format}")
+    try:
+        from app.database import db
+
+        receipts = []
+        for rid in data.receipt_ids:
+            r = db.get_receipt(rid)
+            if r:
+                receipts.append(r)
+
+        if not receipts:
+            raise ValueError("No receipts found for the given IDs.")
+
+        if data.format == "json":
+            filepath = tally_service.generate_json_export(receipts)
+        else:
+            filepath = tally_service.generate_xml(
+                receipts,
+                company_name=data.company_name,
+                purchase_ledger=data.purchase_ledger,
+                party_ledger=data.party_ledger,
+            )
+
+        return {
+            "message": f"Tally {data.format.upper()} generated successfully.",
+            "file_name": Path(filepath).name,
+            "download_url": f"/api/export/download/{Path(filepath).name}",
+            "format": data.format,
+            "voucher_count": len(receipts),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    except Exception as e:
+        logger.error(f"Tally export failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Tally export failed. Please try again."
+        ) from None
+
+
+@router.get("/api/export/tally/daily", tags=["Export"])
+async def generate_tally_daily(
+    date: str | None = None,
+    company_name: str = "My Company",
+    format: str = "xml",
+):
+    """Generate a Tally-compatible file for all receipts on a given date."""
+    if date is not None and not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    try:
+        from app.database import db
+
+        if date is None:
+            date = datetime.now().strftime("%Y-%m-%d")
+
+        db_receipts = db.get_receipts_by_date(date)
+        if not db_receipts:
+            raise ValueError(f"No receipts found for date: {date}")
+
+        if format == "json":
+            filepath = tally_service.generate_json_export(db_receipts)
+        else:
+            filepath = tally_service.generate_xml(
+                db_receipts, company_name=company_name
+            )
+
+        return {
+            "message": f"Tally daily {format.upper()} generated successfully.",
+            "file_name": Path(filepath).name,
+            "download_url": f"/api/export/download/{Path(filepath).name}",
+            "format": format,
+            "voucher_count": len(db_receipts),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    except Exception as e:
+        logger.error(f"Tally daily export failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Tally daily export failed."
+        ) from None
 
 
 # ─── Secure Upload Image Access ──────────────────────────────────────────────

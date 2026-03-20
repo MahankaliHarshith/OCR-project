@@ -1,0 +1,211 @@
+======================================================================
+  SRI RAMA PAINTS - OCR SCAN TEST (LOCAL ENGINE)
+======================================================================
+  [OK] srirama_paints_filled.jpg (361 KB) - Filled table receipt
+  [OK] srirama_paints_handwritten.jpg (97 KB) - Handwritten detailed receipt
+
+Loading OCR engine...
+OCR engine loaded in 36.7s
+
+----------------------------------------------------------------------
+SCANNING: srirama_paints_filled.jpg
+  (Filled table receipt)
+----------------------------------------------------------------------
+
+  [PREPROCESS] 522ms
+    Doc scanner: No
+    Deskew     : No
+
+  [OCR] Running EasyOCR full pass (grayscale)...
+    Gray pass: 21735ms, 88 detections
+    Best pass: 88 detections
+
+  [RAW TEXT] (88 regions):
+    [  1] (conf=?) "{'bbox': [[135.0, 198.0], [550.0, 198.0], [550.0, 264.0], [135.0, 264.0]], 'text': 'SRI RAMA PAINTS', 'confidence': 0.9264, 'needs_review': False}"
+    [  2] (conf=?) "{'bbox': [[228.0, 244.0], [469.0, 244.0], [469.0, 283.0], [228.0, 283.0]], 'text': 'And Pipe Filling Storos', 'confidence': 0.6616, 'needs_review': False}"
+    [  3] (conf=?) "{'bbox': [[919.0, 262.0], [1033.0, 262.0], [1033.0, 293.0], [919.0, 293.0]], 'text': 'SCAM & PA', 'confidence': 0.5715, 'needs_review': False}"
+    [  4] (conf=?) "{'bbox': [[23.0, 273.0], [874.0, 273.0], [874.0, 339.0], [23.0, 339.0]], 'text': '4E6n2i2064/2,Opp Post Office Near Metro Piller No ^ 1199,Lakikapul, Khairatabad,', 'confidence': 0.2085, 'needs_review': True}"
+    [  5] (conf=?) "{'bbox': [[27.0, 291.0], [1075.0, 291.0], [1075.0, 378.0], [27.0, 378.0]], 'text': 'Emai; viaysrframapant-@gmaxon  Webst No 4 ! honnexbtataov, Koad-tab2zHrderabas,596004', 'confidence': 0.0012, 'needs_review': True}"
+    [  6] (conf=?) "{'bbox': [[353.0, 356.0], [749.0, 356.0], [749.0, 413.0], [353.0, 413.0]], 'text': 'QUOTATIONIESTIMATION', 'confidence': 0.9872, 'needs_review': False}"
+    [  7] (conf=?) "{'bbox': [[749.0, 434.0], [825.0, 434.0], [825.0, 474.0], [749.0, 474.0]], 'text': 'Date:', 'confidence': 0.955, 'needs_review': False}"
+    [  8] (conf=?) "{'bbox': [[27.0, 529.0], [138.0, 529.0], [138.0, 560.0], [27.0, 560.0]], 'text': 's.Nol Q1', 'confidence': 0.6065, 'needs_review': False}"
+    [  9] (conf=?) "{'bbox': [[169.0, 529.0], [210.0, 529.0], [210.0, 560.0], [169.0, 560.0]], 'text': 'Q2', 'confidence': 0.6496, 'needs_review': False}"
+    [ 10] (conf=?) "{'bbox': [[354.0, 527.0], [470.0, 527.0], [470.0, 558.0], [354.0, 558.0]], 'text': 'PRODUCT', 'confidence': 0.9804, 'needs_review': False}"
+    [ 11] (conf=?) "{'bbox': [[602.0, 529.0], [850.0, 529.0], [850.0, 560.0], [602.0, 560.0]], 'text': 'SHADE CODE | UNIT RATE', 'confidence': 0.732, 'needs_review': False}"
+    [ 12] (conf=?) "{'bbox': [[897.0, 529.0], [983.0, 529.0], [983.0, 560.0], [897.0, 560.0]], 'text': 'TOTAL', 'confidence': 0.9929, 'needs_review': False}"
+    [ 13] (conf=?) "{'bbox': [[36.0, 559.0], [364.0, 559.0], [364.0, 616.0], [36.0, 616.0]], 'text': '@EZAYZ', 'confidence': 0.1274, 'needs_review': True}"
+    [ 14] (conf=?) "{'bbox': [[387.0, 565.0], [517.0, 565.0], [517.0, 610.0], [387.0, 610.0]], 'text': 'L+43', 'confidence': 0.0515, 'needs_review': True}"
+    [ 15] (conf=?) "{'bbox': [[160.0, 605.0], [220.0, 605.0], [220.0, 650.0], [160.0, 650.0]], 'text': '2K', 'confidence': 0.1015, 'needs_review': True}"
+    [ 16] (conf=?) "{'bbox': [[245.0, 597.0], [342.0, 597.0], [342.0, 652.0], [245.0, 652.0]], 'text': '72', 'confidence': 0.1744, 'needs_review': True}"
+    [ 17] (conf=?) "{'bbox': [[375.0, 607.0], [500.0, 607.0], [500.0, 652.0], [375.0, 652.0]], 'text': '443', 'confidence': 0.4547, 'needs_review': False}"
+    [ 18] (conf=?) "{'bbox': [[743.0, 600.0], [846.0, 600.0], [846.0, 644.0], [743.0, 644.0]], 'text': '1use', 'confidence': 0.4812, 'needs_review': False}"
+    [ 19] (conf=?) "{'bbox': [[867.0, 594.0], [1009.0, 594.0], [1009.0, 649.0], [867.0, 649.0]], 'text': '4e1E2', 'confidence': 0.0332, 'needs_review': True}"
+    [ 20] (conf=?) "{'bbox': [[749.0, 639.0], [1016.0, 639.0], [1016.0, 691.0], [749.0, 691.0]], 'text': '57225752', 'confidence': 0.4847, 'needs_review': False}"
+    [ 21] (conf=?) "{'bbox': [[156.0, 676.0], [413.0, 676.0], [413.0, 731.0], [156.0, 731.0]], 'text': 'EHLPayaie', 'confidence': 0.1441, 'needs_review': True}"
+    [ 22] (conf=?) "{'bbox': [[611.0, 674.0], [723.0, 674.0], [723.0, 730.0], [611.0, 730.0]], 'text': 'Ll3', 'confidence': 0.3631, 'needs_review': True}"
+    [ 23] (conf=?) "{'bbox': [[751.0, 674.0], [1009.0, 674.0], [1009.0, 732.0], [751.0, 732.0]], 'text': '56 726524', 'confidence': 0.1593, 'needs_review': True}"
+    [ 24] (conf=?) "{'bbox': [[105.0, 713.0], [241.0, 713.0], [241.0, 779.0], [105.0, 779.0]], 'text': 'Lizalt', 'confidence': 0.2271, 'needs_review': True}"
+    [ 25] (conf=?) "{'bbox': [[311.0, 719.0], [426.0, 719.0], [426.0, 771.0], [311.0, 771.0]], 'text': 'Pee', 'confidence': 0.2862, 'needs_review': True}"
+    [ 26] (conf=?) "{'bbox': [[612.0, 720.0], [720.0, 720.0], [720.0, 767.0], [612.0, 767.0]], 'text': 'Ll?', 'confidence': 0.6157, 'needs_review': False}"
+    [ 27] (conf=?) "{'bbox': [[752.0, 717.0], [862.0, 717.0], [862.0, 762.0], [752.0, 762.0]], 'text': '559', 'confidence': 0.4256, 'needs_review': False}"
+    [ 28] (conf=?) "{'bbox': [[877.0, 717.0], [1005.0, 717.0], [1005.0, 762.0], [877.0, 762.0]], 'text': '3752', 'confidence': 0.3957, 'needs_review': True}"
+    [ 29] (conf=?) "{'bbox': [[165.0, 762.0], [235.0, 762.0], [235.0, 810.0], [165.0, 810.0]], 'text': '2GL', 'confidence': 0.1186, 'needs_review': True}"
+    [ 30] (conf=?) "{'bbox': [[290.0, 760.0], [382.0, 760.0], [382.0, 807.0], [290.0, 807.0]], 'text': 'PEg', 'confidence': 0.5275, 'needs_review': False}"
+    [ 31] (conf=?) "{'bbox': [[607.0, 754.0], [1008.0, 754.0], [1008.0, 808.0], [607.0, 808.0]], 'text': 'WWIZ[5232[2632', 'confidence': 0.0976, 'needs_review': True}"
+    [ 32] (conf=?) "{'bbox': [[111.0, 796.0], [243.0, 796.0], [243.0, 853.0], [111.0, 853.0]], 'text': 'FD', 'confidence': 0.1706, 'needs_review': True}"
+    [ 33] (conf=?) "{'bbox': [[261.0, 794.0], [495.0, 794.0], [495.0, 846.0], [261.0, 846.0]], 'text': 'Akex 1xT', 'confidence': 0.1414, 'needs_review': True}"
+    [ 34] (conf=?) "{'bbox': [[609.0, 796.0], [723.0, 796.0], [723.0, 848.0], [609.0, 848.0]], 'text': '0624', 'confidence': 0.5167, 'needs_review': False}"
+    [ 35] (conf=?) "{'bbox': [[750.0, 797.0], [1002.0, 797.0], [1002.0, 845.0], [750.0, 845.0]], 'text': '565212222', 'confidence': 0.7309, 'needs_review': False}"
+    [ 36] (conf=?) "{'bbox': [[164.0, 841.0], [243.0, 841.0], [243.0, 896.0], [164.0, 896.0]], 'text': 'Lz', 'confidence': 0.2505, 'needs_review': True}"
+    [ 37] (conf=?) "{'bbox': [[271.0, 834.0], [596.0, 834.0], [596.0, 886.0], [271.0, 886.0]], 'text': 'ATTEF5+', 'confidence': 0.1399, 'needs_review': True}"
+    [ 38] (conf=?) "{'bbox': [[765.0, 850.0], [784.0, 850.0], [784.0, 872.0], [765.0, 872.0]], 'text': '(', 'confidence': 0.9997, 'needs_review': False}"
+    [ 39] (conf=?) "{'bbox': [[780.0, 837.0], [847.0, 837.0], [847.0, 882.0], [780.0, 882.0]], 'text': '32_', 'confidence': 0.73, 'needs_review': False}"
+    [ 40] (conf=?) "{'bbox': [[895.0, 837.0], [987.0, 837.0], [987.0, 882.0], [895.0, 882.0]], 'text': '520', 'confidence': 0.9571, 'needs_review': False}"
+    [ 41] (conf=?) "{'bbox': [[54.0, 887.0], [83.0, 887.0], [83.0, 920.0], [54.0, 920.0]], 'text': '6', 'confidence': 0.9524, 'needs_review': False}"
+    [ 42] (conf=?) "{'bbox': [[159.0, 876.0], [233.0, 876.0], [233.0, 933.0], [159.0, 933.0]], 'text': '1z', 'confidence': 0.4831, 'needs_review': False}"
+    [ 43] (conf=?) "{'bbox': [[275.0, 868.0], [520.0, 868.0], [520.0, 931.0], [275.0, 931.0]], 'text': 'ZVLPaHL', 'confidence': 0.0219, 'needs_review': True}"
+    [ 44] (conf=?) "{'bbox': [[773.0, 878.0], [841.0, 878.0], [841.0, 919.0], [773.0, 919.0]], 'text': '22', 'confidence': 0.9996, 'needs_review': False}"
+    [ 45] (conf=?) "{'bbox': [[890.0, 872.0], [995.0, 872.0], [995.0, 920.0], [890.0, 920.0]], 'text': '229', 'confidence': 0.4411, 'needs_review': False}"
+    [ 46] (conf=?) "{'bbox': [[56.0, 921.0], [91.0, 921.0], [91.0, 956.0], [56.0, 956.0]], 'text': '7', 'confidence': 0.7913, 'needs_review': False}"
+    [ 47] (conf=?) "{'bbox': [[162.0, 920.0], [237.0, 920.0], [237.0, 967.0], [162.0, 967.0]], 'text': 'Jis_', 'confidence': 0.2655, 'needs_review': True}"
+    [ 48] (conf=?) "{'bbox': [[290.0, 915.0], [350.0, 915.0], [350.0, 960.0], [290.0, 960.0]], 'text': '4"', 'confidence': 0.5816, 'needs_review': False}"
+    [ 49] (conf=?) "{'bbox': [[382.0, 906.0], [522.0, 906.0], [522.0, 964.0], [382.0, 964.0]], 'text': 'Zicd ,', 'confidence': 0.0301, 'needs_review': True}"
+    [ 50] (conf=?) "{'bbox': [[782.0, 919.0], [825.0, 919.0], [825.0, 950.0], [782.0, 950.0]], 'text': '(0', 'confidence': 0.9936, 'needs_review': False}"
+    [ 51] (conf=?) "{'bbox': [[915.0, 915.0], [995.0, 915.0], [995.0, 962.0], [915.0, 962.0]], 'text': 'L', 'confidence': 0.9582, 'needs_review': False}"
+    [ 52] (conf=?) "{'bbox': [[59.0, 964.0], [88.0, 964.0], [88.0, 1000.0], [59.0, 1000.0]], 'text': '9', 'confidence': 0.954, 'needs_review': False}"
+    [ 53] (conf=?) "{'bbox': [[165.0, 957.0], [242.0, 957.0], [242.0, 1005.0], [165.0, 1005.0]], 'text': '[?iz_', 'confidence': 0.2391, 'needs_review': True}"
+    [ 54] (conf=?) "{'bbox': [[284.0, 949.0], [548.0, 949.0], [548.0, 1003.0], [284.0, 1003.0]], 'text': 'AEx7 Pe1e7', 'confidence': 0.0894, 'needs_review': True}"
+    [ 55] (conf=?) "{'bbox': [[768.0, 953.0], [846.0, 953.0], [846.0, 994.0], [768.0, 994.0]], 'text': '220', 'confidence': 0.9613, 'needs_review': False}"
+    [ 56] (conf=?) "{'bbox': [[893.0, 949.0], [1000.0, 949.0], [1000.0, 1005.0], [893.0, 1005.0]], 'text': 'Lo', 'confidence': 0.1861, 'needs_review': True}"
+    [ 57] (conf=?) "{'bbox': [[60.0, 1008.0], [79.0, 1008.0], [79.0, 1029.0], [60.0, 1029.0]], 'text': '0', 'confidence': 0.883, 'needs_review': False}"
+    [ 58] (conf=?) "{'bbox': [[168.0, 995.0], [242.0, 995.0], [242.0, 1057.0], [168.0, 1057.0]], 'text': 'E', 'confidence': 0.5574, 'needs_review': False}"
+    [ 59] (conf=?) "{'bbox': [[280.0, 966.0], [664.0, 966.0], [664.0, 1049.0], [280.0, 1049.0]], 'text': '4447242,&+', 'confidence': 0.0367, 'needs_review': True}"
+    [ 60] (conf=?) "{'bbox': [[775.0, 994.0], [862.0, 994.0], [862.0, 1032.0], [775.0, 1032.0]], 'text': 'Lcc(', 'confidence': 0.3039, 'needs_review': True}"
+    [ 61] (conf=?) "{'bbox': [[896.0, 993.0], [994.0, 993.0], [994.0, 1034.0], [896.0, 1034.0]], 'text': 'YSz', 'confidence': 0.2356, 'needs_review': True}"
+    [ 62] (conf=?) "{'bbox': [[57.0, 1049.0], [95.0, 1049.0], [95.0, 1080.0], [57.0, 1080.0]], 'text': '(D', 'confidence': 0.5854, 'needs_review': False}"
+    [ 63] (conf=?) "{'bbox': [[168.0, 1026.0], [488.0, 1026.0], [488.0, 1092.0], [168.0, 1092.0]], 'text': 'E I QaRez', 'confidence': 0.1091, 'needs_review': True}"
+    [ 64] (conf=?) "{'bbox': [[793.0, 1036.0], [859.0, 1036.0], [859.0, 1076.0], [793.0, 1076.0]], 'text': 'I', 'confidence': 0.2257, 'needs_review': True}"
+    [ 65] (conf=?) "{'bbox': [[896.0, 1031.0], [994.0, 1031.0], [994.0, 1071.0], [896.0, 1071.0]], 'text': '452', 'confidence': 0.9982, 'needs_review': False}"
+    [ 66] (conf=?) "{'bbox': [[57.0, 1087.0], [88.0, 1087.0], [88.0, 1120.0], [57.0, 1120.0]], 'text': '(', 'confidence': 0.9851, 'needs_review': False}"
+    [ 67] (conf=?) "{'bbox': [[164.0, 1074.0], [241.0, 1074.0], [241.0, 1128.0], [164.0, 1128.0]], 'text': 'H5', 'confidence': 0.1758, 'needs_review': True}"
+    [ 68] (conf=?) "{'bbox': [[302.0, 1066.0], [454.0, 1066.0], [454.0, 1123.0], [302.0, 1123.0]], 'text': 'ZJa', 'confidence': 0.248, 'needs_review': True}"
+    [ 69] (conf=?) "{'bbox': [[786.0, 1073.0], [876.0, 1073.0], [876.0, 1109.0], [786.0, 1109.0]], 'text': '4541', 'confidence': 0.1603, 'needs_review': True}"
+    [ 70] (conf=?) "{'bbox': [[923.0, 1071.0], [989.0, 1071.0], [989.0, 1111.0], [923.0, 1111.0]], 'text': '22', 'confidence': 0.131, 'needs_review': True}"
+    [ 71] (conf=?) "{'bbox': [[61.0, 1121.0], [104.0, 1121.0], [104.0, 1156.0], [61.0, 1156.0]], 'text': '12', 'confidence': 0.8854, 'needs_review': False}"
+    [ 72] (conf=?) "{'bbox': [[168.0, 1108.0], [249.0, 1108.0], [249.0, 1169.0], [168.0, 1169.0]], 'text': 'Tey]', 'confidence': 0.0694, 'needs_review': True}"
+    [ 73] (conf=?) "{'bbox': [[296.0, 1108.0], [552.0, 1108.0], [552.0, 1171.0], [296.0, 1171.0]], 'text': 'ABo TaPz', 'confidence': 0.1169, 'needs_review': True}"
+    [ 74] (conf=?) "{'bbox': [[793.0, 1108.0], [879.0, 1108.0], [879.0, 1146.0], [793.0, 1146.0]], 'text': '2514', 'confidence': 0.5623, 'needs_review': False}"
+    [ 75] (conf=?) "{'bbox': [[906.0, 1111.0], [996.0, 1111.0], [996.0, 1151.0], [906.0, 1151.0]], 'text': '152', 'confidence': 0.9618, 'needs_review': False}"
+    [ 76] (conf=?) "{'bbox': [[58.0, 1163.0], [106.0, 1163.0], [106.0, 1199.0], [58.0, 1199.0]], 'text': '19', 'confidence': 0.5283, 'needs_review': False}"
+    [ 77] (conf=?) "{'bbox': [[174.0, 1151.0], [248.0, 1151.0], [248.0, 1208.0], [174.0, 1208.0]], 'text': 'pu', 'confidence': 0.2087, 'needs_review': True}"
+    [ 78] (conf=?) "{'bbox': [[297.0, 1155.0], [380.0, 1155.0], [380.0, 1200.0], [297.0, 1200.0]], 'text': '950', 'confidence': 0.7721, 'needs_review': False}"
+    [ 79] (conf=?) "{'bbox': [[399.0, 1149.0], [546.0, 1149.0], [546.0, 1201.0], [399.0, 1201.0]], 'text': 'Pokez', 'confidence': 0.2067, 'needs_review': True}"
+    [ 80] (conf=?) "{'bbox': [[779.0, 1146.0], [880.0, 1146.0], [880.0, 1187.0], [779.0, 1187.0]], 'text': "252'1", 'confidence': 0.3105, 'needs_review': True}"
+    [ 81] (conf=?) "{'bbox': [[904.0, 1146.0], [1002.0, 1146.0], [1002.0, 1185.0], [904.0, 1185.0]], 'text': '589', 'confidence': 0.2988, 'needs_review': True}"
+    [ 82] (conf=?) "{'bbox': [[886.0, 1334.0], [1046.0, 1334.0], [1046.0, 1391.0], [886.0, 1391.0]], 'text': 'L42', 'confidence': 0.1563, 'needs_review': True}"
+    [ 83] (conf=?) "{'bbox': [[63.0, 1388.0], [1051.0, 1388.0], [1051.0, 1429.0], [63.0, 1429.0]], 'text': 'Zunorisedt Stockists: ASTAN PAINTS (INDIA) LTd, KANSAI NEROLAC PAINTS LTo, NIPPON PAINtS, SNOWCEM PAINTS PVT. Lto.', 'confidence': 0.1004, 'needs_review': True}"
+    [ 84] (conf=?) "{'bbox': [[155.0, 1419.0], [970.0, 1419.0], [970.0, 1466.0], [155.0, 1466.0]], 'text': 'AKZO NOBEL INDIA LTD,   Area Distributors: BIRLA WHITE CEMEnt, BIRLA OPUS PAINTS, zydeX PAINTS', 'confidence': 0.2906, 'needs_review': True}"
+    [ 85] (conf=?) "{'bbox': [[47.0, 1472.0], [522.0, 1472.0], [522.0, 1520.0], [47.0, 1520.0]], 'text': 'Home Total | Silky Touch Emulslon', 'confidence': 0.6615, 'needs_review': False}"
+    [ 86] (conf=?) "{'bbox': [[539.0, 1471.0], [1073.0, 1471.0], [1073.0, 1525.0], [539.0, 1525.0]], 'text': 'Srl Rama Enterprlses | Srl Rama Traders', 'confidence': 0.6382, 'needs_review': False}"
+    [ 87] (conf=?) "{'bbox': [[231.0, 1523.0], [896.0, 1523.0], [896.0, 1576.0], [231.0, 1576.0]], 'text': 'We deal in all types of Paints, Sanitary, Bath Fittings, Wood Finishes,', 'confidence': 0.6482, 'needs_review': False}"
+    [ 88] (conf=?) "{'bbox': [[185.0, 1557.0], [942.0, 1557.0], [942.0, 1600.0], [185.0, 1600.0]], 'text': 'Waterproofing Chemicals, Wallpapers, Texture; Cleaning Chemicals and more', 'confidence': 0.5606, 'needs_review': False}"
+
+  [PARSE] 146ms
+    Items found : 0
+    Bill total  : 0
+    Store name  : SRI RAMA PAINTS
+    Receipt date: None
+
+  [TOTAL TIME] 22418ms
+
+----------------------------------------------------------------------
+SCANNING: srirama_paints_handwritten.jpg
+  (Handwritten detailed receipt)
+----------------------------------------------------------------------
+
+  [PREPROCESS] 165ms
+    Doc scanner: No
+    Deskew     : No
+
+  [OCR] Running EasyOCR full pass (grayscale)...
+    Gray pass: 18127ms, 61 detections
+    Best pass: 61 detections
+
+  [RAW TEXT] (61 regions):
+    [  1] (conf=?) "{'bbox': [[53.0, 92.0], [253.0, 92.0], [253.0, 123.0], [53.0, 123.0]], 'text': 'Sri RAMA PAINTS', 'confidence': 0.6454, 'needs_review': False}"
+    [  2] (conf=?) "{'bbox': [[98.0, 115.0], [215.0, 115.0], [215.0, 134.0], [98.0, 134.0]], 'text': 'Ardt Fipe FAdax) Stcyes', 'confidence': 0.0177, 'needs_review': True}"
+    [  3] (conf=?) "{'bbox': [[439.0, 126.0], [468.0, 126.0], [468.0, 137.0], [439.0, 137.0]], 'text': 'Fcam', 'confidence': 0.0722, 'needs_review': True}"
+    [  4] (conf=?) "{'bbox': [[0.0, 127.0], [515.0, 127.0], [515.0, 165.0], [0.0, 165.0]], 'text': 'F5x.106472 Cep Post Offce Nex Metro Pilet Ko ^ !99, Lakditapud Kharatabad #rlerabad SCOO04', 'confidence': 0.0047, 'needs_review': True}"
+    [  5] (conf=?) "{'bbox': [[3.0, 145.0], [338.0, 145.0], [338.0, 176.0], [3.0, 176.0]], 'text': 'Emad: vijay sriramapaints@ email com  Websie: Wnw hometotalan', 'confidence': 0.0961, 'needs_review': True}"
+    [  6] (conf=?) "{'bbox': [[341.0, 162.0], [353.0, 162.0], [353.0, 173.0], [341.0, 173.0]], 'text': '7', 'confidence': 0.1704, 'needs_review': True}"
+    [  7] (conf=?) "{'bbox': [[349.0, 152.0], [511.0, 152.0], [511.0, 179.0], [349.0, 179.0]], 'text': ':040-23242717, 8125159535', 'confidence': 0.6105, 'needs_review': False}"
+    [  8] (conf=?) "{'bbox': [[157.0, 168.0], [352.0, 168.0], [352.0, 200.0], [157.0, 200.0]], 'text': 'QuotATiONiESTimATION', 'confidence': 0.3427, 'needs_review': True}"
+    [  9] (conf=?) "{'bbox': [[349.0, 197.0], [491.0, 197.0], [491.0, 237.0], [349.0, 237.0]], 'text': 'Dale_Kkslzns', 'confidence': 0.148, 'needs_review': True}"
+    [ 10] (conf=?) "{'bbox': [[18.0, 244.0], [66.0, 244.0], [66.0, 274.0], [18.0, 274.0]], 'text': '"', 'confidence': 0.0617, 'needs_review': True}"
+    [ 11] (conf=?) "{'bbox': [[77.0, 246.0], [355.0, 246.0], [355.0, 300.0], [77.0, 300.0]], 'text': '6tzzzhleo(Liws)s=', 'confidence': 0.0614, 'needs_review': True}"
+    [ 12] (conf=?) "{'bbox': [[18.0, 271.0], [76.0, 271.0], [76.0, 306.0], [18.0, 306.0]], 'text': '26', 'confidence': 0.2285, 'needs_review': True}"
+    [ 13] (conf=?) "{'bbox': [[87.0, 276.0], [221.0, 276.0], [221.0, 312.0], [87.0, 312.0]], 'text': 'Tvemiuw Emlien _', 'confidence': 0.0781, 'needs_review': True}"
+    [ 14] (conf=?) "{'bbox': [[334.0, 292.0], [359.0, 292.0], [359.0, 307.0], [334.0, 307.0]], 'text': '~', 'confidence': 0.1331, 'needs_review': True}"
+    [ 15] (conf=?) "{'bbox': [[345.0, 268.0], [503.0, 268.0], [503.0, 300.0], [345.0, 300.0]], 'text': 'louol _ Icu ~', 'confidence': 0.2405, 'needs_review': True}"
+    [ 16] (conf=?) "{'bbox': [[24.0, 298.0], [234.0, 298.0], [234.0, 335.0], [24.0, 335.0]], 'text': '2 k Remlum Enuilon', 'confidence': 0.1613, 'needs_review': True}"
+    [ 17] (conf=?) "{'bbox': [[208.0, 275.0], [304.0, 275.0], [304.0, 338.0], [208.0, 338.0]], 'text': 'k3', 'confidence': 0.1988, 'needs_review': True}"
+    [ 18] (conf=?) "{'bbox': [[338.0, 317.0], [353.0, 317.0], [353.0, 323.0], [338.0, 323.0]], 'text': 'Lo', 'confidence': 0.0336, 'needs_review': True}"
+    [ 19] (conf=?) "{'bbox': [[354.0, 286.0], [407.0, 286.0], [407.0, 339.0], [354.0, 339.0]], 'text': 'S7;', 'confidence': 0.1773, 'needs_review': True}"
+    [ 20] (conf=?) "{'bbox': [[452.0, 296.0], [506.0, 296.0], [506.0, 319.0], [452.0, 319.0]], 'text': 'SASC', 'confidence': 0.653, 'needs_review': False}"
+    [ 21] (conf=?) "{'bbox': [[451.0, 312.0], [507.0, 312.0], [507.0, 340.0], [451.0, 340.0]], 'text': '640', 'confidence': 0.123, 'needs_review': True}"
+    [ 22] (conf=?) "{'bbox': [[20.0, 324.0], [367.0, 324.0], [367.0, 371.0], [20.0, 371.0]], 'text': '4xdf #rx lxl) emlnco(o6xw) _^.', 'confidence': 0.0278, 'needs_review': True}"
+    [ 23] (conf=?) "{'bbox': [[442.0, 334.0], [514.0, 334.0], [514.0, 356.0], [442.0, 356.0]], 'text': '22720', 'confidence': 0.401, 'needs_review': False}"
+    [ 24] (conf=?) "{'bbox': [[31.0, 349.0], [197.0, 349.0], [197.0, 388.0], [31.0, 388.0]], 'text': 'UK ` Alltk_ Set', 'confidence': 0.2043, 'needs_review': True}"
+    [ 25] (conf=?) "{'bbox': [[341.0, 361.0], [364.0, 361.0], [364.0, 376.0], [341.0, 376.0]], 'text': 'A', 'confidence': 0.4853, 'needs_review': False}"
+    [ 26] (conf=?) "{'bbox': [[465.0, 354.0], [504.0, 354.0], [504.0, 375.0], [465.0, 375.0]], 'text': 's2', 'confidence': 0.252, 'needs_review': True}"
+    [ 27] (conf=?) "{'bbox': [[39.0, 378.0], [90.0, 378.0], [90.0, 404.0], [39.0, 404.0]], 'text': '#No', 'confidence': 0.175, 'needs_review': True}"
+    [ 28] (conf=?) "{'bbox': [[104.0, 379.0], [128.0, 379.0], [128.0, 398.0], [104.0, 398.0]], 'text': 'L', 'confidence': 0.6557, 'needs_review': False}"
+    [ 29] (conf=?) "{'bbox': [[118.0, 368.0], [273.0, 368.0], [273.0, 413.0], [118.0, 413.0]], 'text': "'Tohl  2 , Hal", 'confidence': 0.0384, 'needs_review': True}"
+    [ 30] (conf=?) "{'bbox': [[462.0, 373.0], [502.0, 373.0], [502.0, 395.0], [462.0, 395.0]], 'text': '20', 'confidence': 0.3435, 'needs_review': True}"
+    [ 31] (conf=?) "{'bbox': [[31.0, 391.0], [288.0, 391.0], [288.0, 457.0], [31.0, 457.0]], 'text': '7 Hoe)de&', 'confidence': 0.0086, 'needs_review': True}"
+    [ 32] (conf=?) "{'bbox': [[326.0, 278.0], [457.0, 278.0], [457.0, 555.0], [326.0, 555.0]], 'text': 'H', 'confidence': 0.1654, 'needs_review': True}"
+    [ 33] (conf=?) "{'bbox': [[341.0, 399.0], [380.0, 399.0], [380.0, 446.0], [341.0, 446.0]], 'text': '3', 'confidence': 0.2304, 'needs_review': True}"
+    [ 34] (conf=?) "{'bbox': [[454.0, 391.0], [503.0, 391.0], [503.0, 440.0], [454.0, 440.0]], 'text': 'u', 'confidence': 0.596, 'needs_review': False}"
+    [ 35] (conf=?) "{'bbox': [[454.0, 434.0], [518.0, 434.0], [518.0, 457.0], [454.0, 457.0]], 'text': '4927', 'confidence': 0.2298, 'needs_review': True}"
+    [ 36] (conf=?) "{'bbox': [[33.0, 439.0], [83.0, 439.0], [83.0, 470.0], [33.0, 470.0]], 'text': 'Axo', 'confidence': 0.4781, 'needs_review': False}"
+    [ 37] (conf=?) "{'bbox': [[98.0, 442.0], [216.0, 442.0], [216.0, 471.0], [98.0, 471.0]], 'text': 'Ambex ` Asiuat', 'confidence': 0.0758, 'needs_review': True}"
+    [ 38] (conf=?) "{'bbox': [[224.0, 449.0], [249.0, 449.0], [249.0, 470.0], [224.0, 470.0]], 'text': "4'", 'confidence': 0.8567, 'needs_review': False}"
+    [ 39] (conf=?) "{'bbox': [[353.0, 445.0], [384.0, 445.0], [384.0, 464.0], [353.0, 464.0]], 'text': '7', 'confidence': 0.2072, 'needs_review': True}"
+    [ 40] (conf=?) "{'bbox': [[459.0, 455.0], [499.0, 455.0], [499.0, 477.0], [459.0, 477.0]], 'text': 'Lu', 'confidence': 0.7976, 'needs_review': False}"
+    [ 41] (conf=?) "{'bbox': [[39.0, 462.0], [228.0, 462.0], [228.0, 494.0], [39.0, 494.0]], 'text': 'St  Nrln TTY', 'confidence': 0.0672, 'needs_review': True}"
+    [ 42] (conf=?) "{'bbox': [[234.0, 469.0], [262.0, 469.0], [262.0, 483.0], [234.0, 483.0]], 'text': '47o', 'confidence': 0.0326, 'needs_review': True}"
+    [ 43] (conf=?) "{'bbox': [[353.0, 460.0], [387.0, 460.0], [387.0, 482.0], [353.0, 482.0]], 'text': '7c', 'confidence': 0.1062, 'needs_review': True}"
+    [ 44] (conf=?) "{'bbox': [[42.0, 481.0], [92.0, 481.0], [92.0, 511.0], [42.0, 511.0]], 'text': 'Se', 'confidence': 0.0612, 'needs_review': True}"
+    [ 45] (conf=?) "{'bbox': [[104.0, 484.0], [227.0, 484.0], [227.0, 515.0], [104.0, 515.0]], 'text': 'Cloll (ou', 'confidence': 0.3586, 'needs_review': True}"
+    [ 46] (conf=?) "{'bbox': [[358.0, 483.0], [393.0, 483.0], [393.0, 502.0], [358.0, 502.0]], 'text': '7', 'confidence': 0.8832, 'needs_review': False}"
+    [ 47] (conf=?) "{'bbox': [[461.0, 478.0], [497.0, 478.0], [497.0, 500.0], [461.0, 500.0]], 'text': 'Ic', 'confidence': 0.3142, 'needs_review': True}"
+    [ 48] (conf=?) "{'bbox': [[44.0, 503.0], [98.0, 503.0], [98.0, 530.0], [44.0, 530.0]], 'text': '6 no', 'confidence': 0.3955, 'needs_review': True}"
+    [ 49] (conf=?) "{'bbox': [[108.0, 503.0], [272.0, 503.0], [272.0, 539.0], [108.0, 539.0]], 'text': 'Mig +1(', 'confidence': 0.0235, 'needs_review': True}"
+    [ 50] (conf=?) "{'bbox': [[463.0, 498.0], [499.0, 498.0], [499.0, 519.0], [463.0, 519.0]], 'text': '1S', 'confidence': 0.332, 'needs_review': True}"
+    [ 51] (conf=?) "{'bbox': [[41.0, 518.0], [292.0, 518.0], [292.0, 558.0], [41.0, 558.0]], 'text': 'Sn} 4569 (Ra4OPcke,', 'confidence': 0.0018, 'needs_review': True}"
+    [ 52] (conf=?) "{'bbox': [[360.0, 517.0], [419.0, 517.0], [419.0, 545.0], [360.0, 545.0]], 'text': '3c%', 'confidence': 0.1745, 'needs_review': True}"
+    [ 53] (conf=?) "{'bbox': [[450.0, 513.0], [503.0, 513.0], [503.0, 544.0], [450.0, 544.0]], 'text': 'Sc', 'confidence': 0.3348, 'needs_review': True}"
+    [ 54] (conf=?) "{'bbox': [[70.0, 539.0], [179.0, 539.0], [179.0, 577.0], [70.0, 577.0]], 'text': 'Ll', 'confidence': 0.2034, 'needs_review': True}"
+    [ 55] (conf=?) "{'bbox': [[425.0, 550.0], [516.0, 550.0], [516.0, 578.0], [425.0, 578.0]], 'text': '47,422', 'confidence': 0.3844, 'needs_review': True}"
+    [ 56] (conf=?) "{'bbox': [[138.0, 637.0], [266.0, 637.0], [266.0, 666.0], [138.0, 666.0]], 'text': "147 .'", 'confidence': 0.4907, 'needs_review': False}"
+    [ 57] (conf=?) "{'bbox': [[14.0, 680.0], [503.0, 680.0], [503.0, 708.0], [14.0, 708.0]], 'text': 'Authorded Soctats ASAN FNNTS (NDAV UD, VARSA NEROLAc F4 NTS LTD, NefonaanTS ShoncemFX VTS FVT Ud', 'confidence': 0.0002, 'needs_review': True}"
+    [ 58] (conf=?) "{'bbox': [[59.0, 697.0], [462.0, 697.0], [462.0, 724.0], [59.0, 724.0]], 'text': 'Axzo noeel INDUA LTD [ Area Dstre tors: BRLA WHUTE CeWENI BRLA OAUS FA NTS Iroex ta NtS', 'confidence': 0.0015, 'needs_review': True}"
+    [ 59] (conf=?) "{'bbox': [[7.0, 723.0], [511.0, 723.0], [511.0, 751.0], [7.0, 751.0]], 'text': 'Home Total ! Silky Touch Emulslon ! Srl Rama Enterprlses I Srl Rama Traders', 'confidence': 0.3765, 'needs_review': True}"
+    [ 60] (conf=?) "{'bbox': [[98.0, 749.0], [426.0, 749.0], [426.0, 777.0], [98.0, 777.0]], 'text': 'We deal In all types of Palnts, Sanitary Bath Fittings, Wood Finishes,', 'confidence': 0.4881, 'needs_review': False}"
+    [ 61] (conf=?) "{'bbox': [[73.0, 766.0], [448.0, 766.0], [448.0, 794.0], [73.0, 794.0]], 'text': 'Waterproofing Chemicals, Wallpapers, Texture, Cleaning Chemicals and more _', 'confidence': 0.4461, 'needs_review': False}"
+
+  [PARSE] 73ms
+    Items found : 0
+    Bill total  : 0
+    Store name  : Sri RAMA PAINTS
+    Receipt date: None
+
+  [TOTAL TIME] 18377ms
+
+======================================================================
+  GROUND TRUTH (from manual reading)
+======================================================================
+  Filled receipt: 13-15 line items, Total = Rs.47,422
+  Key items: Royale L-143, PEP L-143, PEP White, Apex Ext 0684,
+  Antek Set, L Patti blades, A.Ext Roller, Int Roller, Paper, Cloth,
+  BSO Tape, 950 Roller

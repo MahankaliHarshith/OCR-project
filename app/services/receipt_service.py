@@ -82,12 +82,15 @@ class ReceiptService:
                 self._parser = ReceiptParser(catalog)
             self._catalog_last_refresh = now
 
-    def process_receipt(self, image_path: str) -> dict:
+    def process_receipt(self, image_path: str, progress_callback=None) -> dict:
         """
         Process a single receipt image through the full pipeline.
 
         Args:
             image_path: Path to the receipt image.
+            progress_callback: Optional callable(step: str, message: str, pct: int)
+                              Called at each pipeline step for real-time SSE progress.
+                              Thread-safe — called from the processing thread.
 
         Returns:
             Structured receipt data with items, confidence scores,
@@ -96,6 +99,14 @@ class ReceiptService:
         total_start = time.time()
         self.refresh_catalog()
         logger.info(f"Starting receipt processing pipeline for: {image_path}")
+
+        def _emit(step: str, message: str, pct: int):
+            """Emit progress event if callback is provided."""
+            if progress_callback:
+                try:
+                    progress_callback(step, message, pct)
+                except Exception:
+                    pass
 
         result = {
             "success": False,
@@ -136,6 +147,7 @@ class ReceiptService:
         # ─── Step 0: Early cache check (skip preprocessing on cache hits) ──────
         # Compute hash of the raw upload BEFORE any heavy OpenCV work.
         # If it's a cache hit, we bypass Steps 2+3 entirely (~200-400ms saved).
+        _emit("cache_check", "Checking image cache...", 5)
         _early_cache_key = None
         try:
             from app.ocr.image_cache import get_image_cache
@@ -156,6 +168,7 @@ class ReceiptService:
             logger.debug(f"[Step 0/5] Early cache check failed: {_e}")
 
         # ─── Step 1: Save uploaded image ─────────────────────────────────
+        _emit("save_image", "Saving uploaded image...", 10)
         try:
             if not result["metadata"].get("image_path"):
                 logger.debug("[Step 1/5] Saving uploaded image...")
@@ -182,9 +195,11 @@ class ReceiptService:
         if result["metadata"].get("early_cache_hit"):
             result["metadata"]["processed_image_path"] = processed_path
             logger.debug("[Step 2/5] Skipped (early cache hit)")
+            _emit("cache_hit", "\u2705 Cache hit \u2014 using previous result", 90)
         else:
             try:
                 logger.debug("[Step 2/5] Preprocessing image...")
+                _emit("preprocess", "Enhancing image quality...", 15)
                 step_start = time.time()
                 with optional_span(_tracer, "preprocess_image") as _pp_span:
                     processed_image, preprocess_meta = self.preprocessor.preprocess(saved_path)
@@ -192,12 +207,13 @@ class ReceiptService:
                     _pp_span.set_attribute("preprocess.duration_ms", preprocess_ms)
                 logger.debug(f"[Step 2/5] Preprocessing done in {preprocess_ms}ms")
 
-                # Save processed image
+                # Compute processed_path now but DEFER the disk write until
+                # after OCR finishes — OCR reads from the numpy array in memory,
+                # not from disk, so writing first just wastes ~15ms blocking I/O.
                 processed_path = str(
                     UPLOAD_DIR / f"processed_{Path(saved_path).name}"
                 )
-                self.preprocessor.save_processed_image(processed_image, processed_path)
-                logger.debug(f"[Step 2/5] Processed image saved: {processed_path}")
+                logger.debug(f"[Step 2/5] Processed image ready (disk save deferred)")
 
                 # Extract the color image for reuse, then pop it (non-serializable)
                 _color_img = preprocess_meta.pop("_color_image", None)
@@ -216,6 +232,7 @@ class ReceiptService:
 
             # ── Short-circuit: use cached OCR result if Step 0 hit the cache ──
             if result["metadata"].get("_cached_hybrid_result"):
+                _emit("ocr_cached", "\u2705 Using cached OCR result", 60)
                 hybrid_result = result["metadata"].pop("_cached_hybrid_result")
                 # Use the is_structured flag that was cached alongside the result,
                 # NOT from hybrid metadata (which never stores it)
@@ -233,6 +250,11 @@ class ReceiptService:
                 #   LOCAL mode: EasyOCR multi-pass (original behavior)
                 #   AZURE mode: Azure only
                 logger.debug(f"[Step 3/5] Running hybrid OCR engine (mode={self.hybrid_engine.mode})...")
+                _engine_mode = self.hybrid_engine.mode
+                if _engine_mode == "auto" and hasattr(self.hybrid_engine, '_azure_ok') and self.hybrid_engine._azure_ok:
+                    _emit("ocr_azure", "Analyzing receipt with AI...", 35)
+                else:
+                    _emit("ocr_local", "Extracting text from image...", 35)
 
                 # Pass the already-loaded color image to avoid reloading from disk
                 # Also pass quality info from preprocessing for dynamic OCR tuning
@@ -250,10 +272,12 @@ class ReceiptService:
                     _ocr_span.set_attribute("ocr.time_ms", hybrid_result.get("ocr_time_ms", 0))
 
                 # Store is_structured in image cache so cache hits use correct parse mode
+                # Reuse _early_cache_key from Step 0 to avoid recomputing SHA-256
+                # (saves ~10ms per scan on 5MB images)
                 try:
                     from app.ocr.image_cache import get_image_cache
                     _cache = get_image_cache()
-                    _hash = _cache.compute_hash(saved_path)
+                    _hash = _early_cache_key or _cache.compute_hash(saved_path)
                     _cache.put_meta(_hash, "is_structured", is_structured)
                 except Exception:
                     pass
@@ -267,6 +291,18 @@ class ReceiptService:
                 f"[Step 3/5] Hybrid OCR done: engine={engine_used}, "
                 f"{len(ocr_results)} detections, {ocr_ms}ms"
             )
+
+            # ── Deferred processed image save (from Step 2) ──
+            # Write to disk NOW (after OCR), in a background thread so
+            # parsing (Step 4) can start immediately.
+            if processed_image is not None and processed_path:
+                def _bg_save():
+                    try:
+                        self.preprocessor.save_processed_image(processed_image, processed_path)
+                        logger.debug(f"[Step 3/5] Deferred processed image saved: {processed_path}")
+                    except Exception as _e:
+                        logger.warning(f"Deferred image save failed: {_e}")
+                threading.Thread(target=_bg_save, daemon=True).start()
 
             if not ocr_results and not azure_structured:
                 result["errors"].append(
@@ -314,6 +350,7 @@ class ReceiptService:
         # ─── Step 4: Parse receipt data ──────────────────────────────────
         try:
             logger.debug("[Step 4/5] Parsing receipt data...")
+            _emit("parse", "Structuring receipt data...", 65)
             step_start = time.time()
 
             # ── If Azure receipt model returned structured items, use them directly ──
@@ -361,6 +398,7 @@ class ReceiptService:
         # ─── Steps 4b-4f: Post-OCR verification (parallelized) ──────────
         # These steps are all non-fatal and mostly independent. Running them
         # concurrently via ThreadPoolExecutor saves ~1-3s compared to serial.
+        _emit("verify", "Verifying & validating results...", 80)
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         catalog_full = {}
@@ -485,11 +523,26 @@ class ReceiptService:
                 logger.warning(f"[Step 4f] Dedup check failed (non-fatal): {e}")
                 return ("4f", "", "", None)
 
-        # Launch independent tasks in parallel
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        def _step_4d_validation():
+            """Step 4d: Smart Validation (catalog prices already enriched above)"""
+            try:
+                historical_stats = receipt_validator.get_historical_stats(self.db)
+                vr = receipt_validator.validate(
+                    items=receipt_data.get("items", []),
+                    catalog=catalog_full or None,
+                    historical_stats=historical_stats or None,
+                )
+                return ("4d", vr)
+            except Exception as e:
+                logger.warning(f"[Step 4d] Validation failed (non-fatal): {e}")
+                return ("4d", None)
+
+        # Launch independent tasks in parallel (4b, 4c, 4d, 4f all read items without mutating)
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = [
                 executor.submit(_step_4b_total_verification),
                 executor.submit(_step_4c_math_verification),
+                executor.submit(_step_4d_validation),
                 executor.submit(_step_4f_dedup),
             ]
             for future in as_completed(futures):
@@ -532,28 +585,19 @@ class ReceiptService:
                         if _dedup_result:
                             receipt_data["duplicate_warning"] = _dedup_result
                             result["metadata"]["duplicate_warning"] = _dedup_result
+                    elif res[0] == "4d" and res[1] is not None:
+                        validation_result = res[1]
+                        receipt_data["validation"] = validation_result
+                        result["metadata"]["validation"] = validation_result.get("summary", {})
+                        logger.info(
+                            f"[Step 4d] Validation: valid={validation_result['valid']}, "
+                            f"warnings={validation_result['summary']['total_warnings']}, "
+                            f"corrections={validation_result['summary']['auto_corrections']}"
+                        )
                 except Exception as e:
                     logger.warning(f"[Step 4] Parallel task failed: {e}")
 
-        # ─── Step 4d: Smart Validation (depends on 4c catalog prices) ────
-        try:
-            historical_stats = receipt_validator.get_historical_stats(self.db)
-            validation_result = receipt_validator.validate(
-                items=receipt_data.get("items", []),
-                catalog=catalog_full or None,
-                historical_stats=historical_stats or None,
-            )
-            receipt_data["validation"] = validation_result
-            result["metadata"]["validation"] = validation_result.get("summary", {})
-            logger.info(
-                f"[Step 4d] Validation: valid={validation_result['valid']}, "
-                f"warnings={validation_result['summary']['total_warnings']}, "
-                f"corrections={validation_result['summary']['auto_corrections']}"
-            )
-        except Exception as e:
-            logger.warning(f"[Step 4d] Validation failed (non-fatal): {e}")
-
-        # ─── Step 4e: Quality Score (depends on 4b, 4c) ─────────────────
+        # ─── Step 4e: Quality Score (depends on 4b, 4c — must be serial) ──
         try:
             quality_result = quality_scorer.score(
                 items=receipt_data.get("items", []),
@@ -574,6 +618,7 @@ class ReceiptService:
         # ─── Step 5: Save to database ────────────────────────────────────
         try:
             logger.debug("[Step 5/5] Saving to database...")
+            _emit("save_db", "Saving to database...", 92)
             with optional_span(_tracer, "database_save") as _db_span:
                 receipt_id = self.db.create_receipt(
                     receipt_number=receipt_data["receipt_id"],
@@ -639,6 +684,7 @@ class ReceiptService:
                 f"{receipt_data['total_items']} items | "
                 f"{total_ms}ms total"
             )
+            _emit("complete", f"\u2705 Done! {receipt_data['total_items']} items found", 100)
 
         except Exception as e:
             result["errors"].append(f"Database save failed: {e}")

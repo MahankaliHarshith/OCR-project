@@ -9,9 +9,9 @@ import logging
 import re
 import threading
 from datetime import datetime
-from difflib import get_close_matches
+from difflib import SequenceMatcher, get_close_matches
 
-from app.config import FUZZY_MAX_RESULTS
+from app.config import FUZZY_MAX_RESULTS, get_adaptive_fuzzy_cutoff
 from app.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -1308,6 +1308,14 @@ class ReceiptParser:
         'e': 'C',   # e ↔ c in rushed handwriting
         'a': 'O',   # a ↔ o (open loop)
         'f': 'F',   # f ↔ F
+        'd': 'D',   # d ↔ D (case)
+        'r': 'P',   # r ↔ p (mirror of p→R)
+        'v': 'U',   # v ↔ u (inverse of u→V)
+        'h': 'N',   # h ↔ n (inverse of n→H)
+        'm': 'W',   # m ↔ w (inverse of w→M)
+        'j': 'J',   # j ↔ J (case confusion)
+        't': 'T',   # t ↔ T (case)
+        'g': 'Q',   # g ↔ q (inverse of q→G)
     }
 
     # Patterns for line-number-like fragments: "2 .", "[.", "%.", standalone single digits
@@ -1635,7 +1643,7 @@ class ReceiptParser:
         Last-resort: extract tokens (including mixed alpha-digit) from the text,
         apply OCR character substitution, and try fuzzy matching against the catalog.
         """
-        from app.config import get_adaptive_fuzzy_cutoff as _gafc
+        _gafc = get_adaptive_fuzzy_cutoff
 
         # Split by whitespace and delimiters to get clean tokens
         raw_tokens = re.split(r'[\s\-\u2013\u2014.,;:]+', text)
@@ -1670,7 +1678,6 @@ class ReceiptParser:
                                 "raw_text": text,
                             }
                         # Also try fuzzy match
-                        from app.config import get_adaptive_fuzzy_cutoff as _gafc
                         matches = get_close_matches(variant, self.product_catalog.keys(), n=1, cutoff=_gafc(len(variant)))
                         if matches:
                             best = matches[0]
@@ -2187,20 +2194,18 @@ class ReceiptParser:
                 return result
 
         # Fuzzy match on original + all variants — find BEST match across all
-        from difflib import SequenceMatcher as _SM
         best_fuzzy_match = None
         best_fuzzy_ratio = 0.0
         best_fuzzy_variant = None
         for variant in variants:
-            from app.config import get_adaptive_fuzzy_cutoff as _gafc2
             matches = get_close_matches(
                 variant,
                 self.product_catalog.keys(),
                 n=FUZZY_MAX_RESULTS,
-                cutoff=_gafc2(len(variant)),
+                cutoff=get_adaptive_fuzzy_cutoff(len(variant)),
             )
             for match in matches:
-                ratio = _SM(None, variant, match).ratio()
+                ratio = SequenceMatcher(None, variant, match).ratio()
                 if ratio > best_fuzzy_ratio:
                     best_fuzzy_ratio = ratio
                     best_fuzzy_match = match

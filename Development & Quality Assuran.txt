@@ -1,0 +1,535 @@
+# 🛡️ Development & Quality Assurance Guide
+
+> **Purpose**: This file is the definitive checklist for any AI agent or developer working on this project.  
+> **Rule #1**: Every feature MUST be production-ready on the FIRST implementation. No "fix it later" mentality.  
+> **Rule #2**: Read this ENTIRE file before writing a single line of code.
+
+---
+
+## 📋 Table of Contents
+
+1. [Project Architecture](#1-project-architecture)
+2. [Pre-Development Checklist](#2-pre-development-checklist)
+3. [JavaScript / Frontend Rules](#3-javascript--frontend-rules)
+4. [Python / Backend Rules](#4-python--backend-rules)
+5. [Performance Standards](#5-performance-standards)
+6. [Testing Protocol](#6-testing-protocol)
+7. [Common Pitfalls Registry](#7-common-pitfalls-registry)
+8. [Code Review Checklist](#8-code-review-checklist)
+9. [DO NOT TOUCH Constants](#9-do-not-touch-constants)
+
+---
+
+## 1. Project Architecture
+
+```
+Backend:  FastAPI + Uvicorn (Python 3.12)
+Frontend: Vanilla JavaScript (NO frameworks) — single app.js (~5,700 lines)
+Database: SQLite (local, at %LOCALAPPDATA%\ReceiptScanner\)
+OCR:      EasyOCR (local) + Azure Computer Vision (cloud hybrid)
+Styling:  Single styles.css (~4,700 lines)
+HTML:     Single index.html with tab-based SPA
+Cache:    Service Worker with versioned cache (update version on ANY static change)
+```
+
+### Critical Files & Their Sizes
+| File | Lines | Complexity | Risk Level |
+|------|-------|-----------|------------|
+| `app/static/app.js` | ~5,700 | VERY HIGH | 🔴 Extreme care |
+| `app/static/styles.css` | ~4,700 | HIGH | 🟡 Medium |
+| `app/static/index.html` | ~1,100 | MEDIUM | 🟡 Medium |
+| `app/api/routes.py` | ~1,250 | HIGH | 🔴 High |
+| `app/services/receipt_service.py` | ~1,100 | HIGH | 🔴 High |
+| `app/database.py` | ~1,200 | HIGH | 🔴 High |
+| `app/ocr/parser.py` | ~2,600 | VERY HIGH | 🔴 Extreme care |
+| `app/ocr/hybrid_engine.py` | ~1,350 | VERY HIGH | 🔴 Extreme care |
+| `app/ocr/preprocessor.py` | ~1,100 | HIGH | 🔴 High |
+
+---
+
+## 2. Pre-Development Checklist
+
+Before writing ANY code, complete these steps:
+
+### 2.1 Understand the Context
+- [ ] Read the function/module you're modifying (at least 100 lines around the target)
+- [ ] Identify ALL callers of the function you're changing (use `grep_search`)
+- [ ] Check if the code runs in a loop, re-render cycle, or repeated invocation path
+- [ ] Identify the target OS: **Windows** (primary), but code must work cross-platform
+
+### 2.2 Plan the Implementation
+- [ ] Will this code be called once or many times? (affects listener/timer strategy)
+- [ ] Does this generate dynamic DOM elements? (affects event binding strategy)
+- [ ] Does this involve file I/O or date formatting? (affects cross-platform strategy)
+- [ ] Does this touch the cache version? (if yes, bump `?v=X.X.X` in index.html)
+- [ ] Does this add new API endpoints? (if yes, add error handling + input validation)
+
+### 2.3 Design for Failure
+- [ ] What happens if the network is down?
+- [ ] What happens if the input is empty, null, undefined, or malformed?
+- [ ] What happens if the database is locked?
+- [ ] What happens if this function is called 100 times in rapid succession?
+
+---
+
+## 3. JavaScript / Frontend Rules
+
+### 🔴 RULE 3.1: ALWAYS Use Event Delegation for Dynamic Content
+
+**NEVER** attach event listeners directly to dynamically created elements.  
+**ALWAYS** use event delegation on a stable parent.
+
+```javascript
+// ❌ BAD — Listeners pile up on every re-render
+function renderTable() {
+    tbody.querySelectorAll('.editable').forEach(inp => {
+        inp.addEventListener('input', handler);  // LEAK: adds new listeners every call
+    });
+}
+
+// ✅ GOOD — Single listener on stable parent, no leaks
+function renderTable() {
+    // Register ONCE on the tbody (which persists across re-renders)
+    tbody.addEventListener('input', (e) => {
+        if (e.target.classList.contains('editable')) {
+            handler(e);
+        }
+    });
+}
+```
+
+**When to use direct listeners**: ONLY on elements that exist once in the DOM and are never re-created (e.g., nav buttons, global controls, static buttons).
+
+### 🔴 RULE 3.2: Temporary Listeners MUST Use `{ once: true }`
+
+Any listener meant to fire once (modals, confirmations, inline edits):
+
+```javascript
+// ❌ BAD — Listener persists forever
+input.addEventListener('blur', save);
+
+// ✅ GOOD — Auto-removes after first fire
+input.addEventListener('blur', save, { once: true });
+```
+
+### 🔴 RULE 3.3: NEVER Register Listeners in Functions Called Multiple Times
+
+If a function like `loadCatalog()` or `renderEditableTable()` can be called repeatedly:
+- Register listeners ONCE globally (at file scope)
+- Or use event delegation
+- NEVER register inside the function body without cleanup
+
+```javascript
+// ❌ BAD — Adds new listeners every time loadCatalog() runs
+async function loadCatalog() {
+    document.querySelectorAll('th[data-sort]').forEach(th => {
+        th.addEventListener('click', sortHandler);  // DUPLICATES!
+    });
+}
+
+// ✅ GOOD — Registered once at module scope
+document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', sortHandler);  // Runs only once
+});
+async function loadCatalog() {
+    // Just load data, don't touch listeners
+}
+```
+
+### 🔴 RULE 3.4: Always Clear Timers and Intervals
+
+Every `setInterval` and `setTimeout` MUST have a corresponding `clearInterval`/`clearTimeout`.
+
+```javascript
+// ❌ BAD — Orphaned interval
+setInterval(poll, 5000);
+
+// ✅ GOOD — Tracked and clearable
+let pollTimer = setInterval(poll, 5000);
+// ...later:
+clearInterval(pollTimer);
+pollTimer = null;
+```
+
+### 🟡 RULE 3.5: Cache Version Must Be Updated
+
+Any change to `app.js`, `styles.css`, or `index.html` REQUIRES bumping the cache version:
+
+```html
+<!-- In index.html, find and update: -->
+<link rel="stylesheet" href="styles.css?v=2.3.1">
+<script src="app.js?v=2.3.1"></script>
+```
+
+Also update the service worker cache name if one exists.
+
+### 🟡 RULE 3.6: Use `escHtml()` for ALL User Content
+
+Never inject raw user strings into `innerHTML`. Always sanitize:
+
+```javascript
+// ❌ BAD — XSS vulnerability
+el.innerHTML = `<span>${userInput}</span>`;
+
+// ✅ GOOD — Sanitized
+el.innerHTML = `<span>${escHtml(userInput)}</span>`;
+```
+
+### 🟡 RULE 3.7: Abort Controllers for API Calls
+
+Any fetch that could become stale (tab switches, re-renders) MUST use AbortController:
+
+```javascript
+let controller = new AbortController();
+const res = await fetch('/api/data', { signal: controller.signal });
+// On cleanup:
+controller.abort();
+```
+
+### 🟡 RULE 3.8: State Caching for Restore Operations
+
+When implementing features like search/filter that temporarily change displayed data:
+- Cache the full dataset BEFORE filtering
+- Restore from cache when filter is cleared (don't re-fetch)
+
+```javascript
+// ❌ BAD — Re-fetches on clear, loses sort state
+searchInput.addEventListener('input', async (e) => {
+    if (!e.target.value) {
+        await loadFullList();  // Loses sort order, page position
+    }
+});
+
+// ✅ GOOD — Restores from cache
+let _fullListCache = null;
+async function loadList() {
+    const data = await fetch('/api/items').then(r => r.json());
+    _fullListCache = data;  // Cache it
+    renderList(data);
+}
+searchInput.addEventListener('input', (e) => {
+    if (!e.target.value) {
+        renderList(_fullListCache);  // Instant restore, keeps sort
+    }
+});
+```
+
+---
+
+## 4. Python / Backend Rules
+
+### 🔴 RULE 4.1: Windows-Compatible Date Formatting
+
+**NEVER** use `%-d`, `%-m`, `%-H`, `%-I` in `strftime()`. These are Unix-only and CRASH on Windows.
+
+```python
+# ❌ BAD — Crashes on Windows with "Invalid format string"
+date_str = now.strftime("%-d %B %Y")
+
+# ✅ GOOD — Cross-platform
+day = str(now.day)  # No leading zero, works everywhere
+date_str = f"{day} {now.strftime('%B %Y')}"
+
+# ✅ ALSO GOOD — Strip leading zero manually
+date_str = now.strftime("%d %B %Y").lstrip("0")
+```
+
+**Platform-safe format codes**: `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, `%B`, `%b`, `%A`, `%a`  
+**UNSAFE on Windows**: `%-d`, `%-m`, `%-H`, `%-I`, `%-M`, `%-S`
+
+### 🔴 RULE 4.2: XML Generation — Avoid Duplicate Declarations
+
+When using `xml.dom.minidom.toprettyxml()`:
+
+```python
+# ❌ BAD — toprettyxml() adds its own <?xml?> declaration
+xml_str = '<?xml version="1.0"?>\n' + dom.toprettyxml(indent="  ")
+# Result: TWO <?xml?> declarations → browser error
+
+# ✅ GOOD — Filter out the auto-generated declaration
+lines = dom.toprettyxml(indent="  ").split("\n")
+body = "\n".join(line for line in lines if not line.startswith("<?xml"))
+xml_str = '<?xml version="1.0" encoding="utf-8"?>\n' + body
+```
+
+### 🔴 RULE 4.3: Always Use `encoding="utf-8"` for File I/O
+
+```python
+# ❌ BAD — Uses system default encoding (varies by OS/locale)
+with open(path, "w") as f:
+    f.write(content)
+
+# ✅ GOOD — Explicit UTF-8
+with open(path, "w", encoding="utf-8") as f:
+    f.write(content)
+```
+
+### 🔴 RULE 4.4: Path Handling — Use `pathlib.Path`
+
+```python
+# ❌ BAD — String concatenation breaks on different OSes
+path = base_dir + "/" + filename
+
+# ✅ GOOD — Cross-platform path handling
+from pathlib import Path
+path = Path(base_dir) / filename
+```
+
+### 🟡 RULE 4.5: API Endpoints Must Have Complete Error Handling
+
+Every endpoint MUST have:
+1. Input validation (Pydantic models or manual checks)
+2. try/except with specific exception types first, then generic
+3. Proper HTTP status codes (400 for bad input, 404 for not found, 500 for server error)
+4. Structured error response `{"detail": "Human-readable message"}`
+
+```python
+# ✅ GOOD — Complete endpoint pattern
+@router.post("/api/something")
+async def do_something(request: SomeModel):
+    try:
+        # Validate
+        if not request.data:
+            raise HTTPException(status_code=400, detail="Data is required")
+        
+        # Process
+        result = service.process(request.data)
+        
+        return {"success": True, "result": result}
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+```
+
+### 🟡 RULE 4.6: Database Operations Must Use Transactions
+
+```python
+# ❌ BAD — Partial writes on error
+conn.execute("INSERT INTO table1 ...")
+conn.execute("INSERT INTO table2 ...")  # If this fails, table1 is corrupted
+
+# ✅ GOOD — Atomic transaction
+with conn:
+    conn.execute("INSERT INTO table1 ...")
+    conn.execute("INSERT INTO table2 ...")
+```
+
+### 🟡 RULE 4.7: Never Swallow Exceptions Silently in Production Paths
+
+```python
+# ❌ BAD — Hides bugs
+except Exception:
+    pass
+
+# ✅ GOOD — At minimum, log it
+except Exception as e:
+    logger.warning(f"Non-critical error in {context}: {e}")
+```
+
+**Exception**: Import fallbacks (e.g., `try: import optional_lib`) can use bare `except`.
+
+---
+
+## 5. Performance Standards
+
+### 5.1 Frontend Performance Targets
+| Metric | Target | How to Verify |
+|--------|--------|--------------|
+| First Contentful Paint | < 1.5s | Lighthouse |
+| Time to Interactive | < 3s | Lighthouse |
+| Memory after 50 receipts | < 100MB | Chrome DevTools → Memory |
+| Input latency | < 50ms | Chrome DevTools → Performance |
+| Event listeners (total) | < 200 | `getEventListeners(document)` |
+| DOM nodes | < 5,000 | Chrome DevTools → Elements |
+
+### 5.2 Backend Performance Targets
+| Metric | Target | How to Verify |
+|--------|--------|--------------|
+| API response (non-OCR) | < 200ms | `/api/stats`, `/api/products` |
+| Single receipt OCR | < 30s | POST `/api/receipts/scan` |
+| Database query | < 100ms | SQLite EXPLAIN QUERY PLAN |
+| Export generation | < 5s | Excel/Tally export endpoints |
+| Memory per request | < 50MB | Python `tracemalloc` |
+
+### 5.3 Accuracy Targets
+| Metric | Target |
+|--------|--------|
+| Product name OCR accuracy | > 85% |
+| Price OCR accuracy | > 90% |
+| Quantity OCR accuracy | > 90% |
+| Total calculation accuracy | > 95% |
+
+---
+
+## 6. Testing Protocol
+
+### 6.1 Before Delivering ANY Feature
+
+Run this checklist mentally for every change:
+
+#### Compilation / Syntax
+- [ ] Python: `py_compile.compile(file, doraise=True)` passes
+- [ ] JavaScript: No errors in VS Code Problems panel
+- [ ] CSS: No unclosed braces or invalid properties
+
+#### Functional Testing (simulate mentally)
+- [ ] Happy path: Does it work with valid input?
+- [ ] Empty input: What happens with no data?
+- [ ] Boundary input: Very long strings, zero values, negative numbers?
+- [ ] Rapid fire: What if the user clicks the button 10 times fast?
+- [ ] Concurrent use: What if two tabs are open?
+
+#### Memory / Performance Testing
+- [ ] Is this code inside a re-render path? If yes, does it use delegation?
+- [ ] Are there any `addEventListener` calls without cleanup or `{ once: true }`?
+- [ ] Are there any `setInterval` calls without corresponding `clearInterval`?
+- [ ] Will this cause layout thrashing? (reading then writing DOM in a loop)
+
+#### Cross-Platform Testing
+- [ ] All `strftime` calls use only safe format codes (no `%-`)
+- [ ] All file paths use `pathlib.Path` or `os.path.join`
+- [ ] All file I/O specifies `encoding="utf-8"`
+- [ ] No shell commands assume Unix (e.g., `ls`, `grep`, `cat`)
+
+#### Security Testing
+- [ ] All user input displayed via `innerHTML` uses `escHtml()`
+- [ ] All API inputs are validated before processing
+- [ ] No credentials or API keys in client-side code
+- [ ] File uploads are validated (type, size)
+
+### 6.2 Server Verification
+```bash
+# Compile check all critical files
+python -c "import py_compile; files=['app/api/routes.py','app/services/receipt_service.py','app/database.py','app/main.py']; [py_compile.compile(f, doraise=True) for f in files]; print('OK')"
+
+# Start server and verify
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# Then test: http://localhost:8000/api/health
+```
+
+---
+
+## 7. Common Pitfalls Registry
+
+> Every bug we've encountered is documented here to prevent recurrence.
+
+| # | Bug Pattern | Where Found | Root Cause | Prevention Rule |
+|---|------------|-------------|------------|-----------------|
+| 1 | XML declaration duplicated | `tally_service.py` | `toprettyxml()` adds its own `<?xml?>` | Rule 4.2 |
+| 2 | `%-d` crashes on Windows | `tally_service.py` | Unix-only strftime code | Rule 4.1 |
+| 3 | Catalog search loses sort state | `app.js` | Re-fetched instead of cache restore | Rule 3.8 |
+| 4 | Event listeners pile up on re-render | `app.js` | `addEventListener` inside `renderEditableTable()` | Rule 3.1 |
+| 5 | `{ once: true }` missing on temp listeners | `app.js` | Keydown listener without cleanup | Rule 3.2 |
+| 6 | Duplicate sort header listeners | `app.js` | Listeners registered both globally AND inside function | Rule 3.3 |
+| 7 | Product auto-fill listener leak | `app.js` | Per-input listeners in re-render function | Rule 3.1 |
+| 8 | Excel date format inconsistency | `excel_service.py` | `%d` includes leading zero on Windows | Rule 4.1 |
+
+### Anti-Pattern Quick Reference
+
+```
+❌ addEventListener inside a function called multiple times
+❌ strftime("%-d") or any %-X format code
+❌ toprettyxml() with manual XML declaration prepended
+❌ open(file, "w") without encoding="utf-8"
+❌ innerHTML with unsanitized user input
+❌ setInterval without clearInterval
+❌ Re-fetching data when cache restore would work
+❌ String path concatenation with "/"
+❌ except Exception: pass (in production code paths)
+❌ Hardcoded OS-specific paths or commands
+```
+
+---
+
+## 8. Code Review Checklist
+
+Before finalizing ANY code change, verify:
+
+### JavaScript Changes
+- [ ] No `addEventListener` inside functions that are called more than once
+- [ ] All dynamic content uses event delegation on a stable parent
+- [ ] All temporary listeners use `{ once: true }` or explicit `removeEventListener`
+- [ ] All `setInterval`/`setTimeout` are tracked and clearable
+- [ ] All user content in `innerHTML` is escaped with `escHtml()`
+- [ ] Cache version bumped if static files changed
+- [ ] No `console.log` left in production code (use `console.debug` for dev-only)
+- [ ] Fetch calls include error handling and AbortController where appropriate
+- [ ] No blocking operations in UI thread
+
+### Python Changes
+- [ ] All `strftime` calls use only cross-platform format codes
+- [ ] All file I/O uses `encoding="utf-8"`
+- [ ] All paths use `pathlib.Path` or `os.path.join`
+- [ ] All endpoints have try/except with proper HTTP status codes
+- [ ] No bare `except: pass` in production code
+- [ ] Database operations use transactions for multi-statement writes
+- [ ] Imports are try/excepted only for truly optional dependencies
+- [ ] Type hints on function signatures for new code
+
+### CSS Changes
+- [ ] No `!important` unless absolutely necessary
+- [ ] Responsive breakpoints tested (mobile: 480px, tablet: 768px, desktop: 1024px+)
+- [ ] Print styles tested with `@media print` if applicable
+- [ ] No z-index above 10000 (modals: 9999, tooltips: 9998, toasts: 9997)
+- [ ] Animation/transition uses `transform` and `opacity` (GPU-accelerated)
+
+### HTML Changes
+- [ ] All interactive elements have `aria-label` or visible label
+- [ ] All images have `alt` attributes
+- [ ] Form inputs have associated labels
+- [ ] Tab order is logical (no `tabindex` > 0)
+- [ ] Cache version query strings updated on linked resources
+
+---
+
+## 9. DO NOT TOUCH Constants
+
+These values were manually tuned through extensive testing. **NEVER** change them without explicit user approval:
+
+```python
+# In app/ocr/hybrid_engine.py — OCR tuning parameters
+OCR_CANVAS_SIZE = 1280      # DO NOT CHANGE
+OCR_MAG_RATIO = 1.8         # DO NOT CHANGE
+OCR_TEXT_THRESHOLD = 0.55   # DO NOT CHANGE
+OCR_LINK_THRESHOLD = 0.3    # DO NOT CHANGE
+OCR_LOW_TEXT = 0.3          # DO NOT CHANGE
+OCR_CONTRAST_THS = 0.15    # DO NOT CHANGE
+```
+
+```javascript
+// In app.js — Pagination and timing
+const CATALOG_PAGE_SIZE = 20;     // Products per page
+const SEARCH_DEBOUNCE_MS = 250;   // Search input debounce
+const UNDO_DELETE_TIMEOUT = 5000; // Undo window in ms
+const API_TIMEOUT_MS = 180000;    // 3-minute OCR timeout
+```
+
+---
+
+## 📝 Quick Decision Matrix
+
+| Situation | Action |
+|-----------|--------|
+| Adding listeners to dynamic elements | Use event delegation on parent |
+| Need a listener to fire once | Use `{ once: true }` |
+| Formatting dates for display | Use `str(dt.day)` not `strftime("%-d")` |
+| Writing files | Always add `encoding="utf-8"` |
+| Building file paths | Use `pathlib.Path` / `os.path.join` |
+| Generating XML | Don't prepend `<?xml?>` if using `toprettyxml()` |
+| Displaying user input in HTML | Always use `escHtml()` |
+| Making API calls from frontend | Use `AbortController` + timeout |
+| Changing any static file | Bump cache version in `index.html` |
+| Adding API endpoint | Add try/except, input validation, proper status codes |
+| Storing temporary data for restore | Cache in variable, don't re-fetch |
+| Using setInterval | Track the ID, add clearInterval in cleanup |
+
+---
+
+*Last updated: March 19, 2026*  
+*Bugs prevented by following this guide: ∞*  
+*Bugs that slipped through before this guide: 8*

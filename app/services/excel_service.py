@@ -124,7 +124,10 @@ class ExcelService:
         # Date row
         ws.merge_cells("A2:H2")
         date_cell = ws["A2"]
-        date_cell.value = f"Generated: {datetime.now().strftime('%d %B %Y, %H:%M')}"
+        # Use cross-platform date formatting (Windows doesn't support %-d)
+        now = datetime.now()
+        day_str = str(now.day)  # Already without leading zero
+        date_cell.value = f"Generated: {day_str} {now.strftime('%B %Y, %H:%M')}"
         date_cell.font = Font(size=10, italic=True, color="666666")
         date_cell.alignment = Alignment(horizontal="center")
 

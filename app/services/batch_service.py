@@ -54,10 +54,28 @@ logger = logging.getLogger(__name__)
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 MAX_BATCH_SIZE = 20            # Maximum files per batch
-MAX_CONCURRENT_SCANS = 3       # Parallel OCR workers per batch
+MAX_CONCURRENT_SCANS = 3       # Parallel OCR workers per batch (local-heavy)
 MAX_ACTIVE_BATCHES = 5         # Prevent resource exhaustion
 BATCH_RESULT_TTL = 3600        # Seconds to keep completed batch results (1 hour)
 MAX_STORED_BATCHES = 50        # Maximum stored batch results before cleanup
+
+
+def _get_batch_concurrency() -> int:
+    """Get optimal batch concurrency based on OCR engine mode.
+
+    When Azure is available and is the primary engine, batch processing is
+    mostly I/O-bound (network calls), so higher concurrency is beneficial.
+    When using local OCR only, processing is CPU-bound and should be limited.
+    """
+    try:
+        from app.config import BATCH_AZURE_MAX_CONCURRENT, OCR_ENGINE_MODE
+        from app.ocr.azure_engine import is_azure_available
+
+        if OCR_ENGINE_MODE in ("auto", "azure") and is_azure_available():
+            return BATCH_AZURE_MAX_CONCURRENT  # I/O-bound: more parallelism
+    except Exception:
+        pass
+    return MAX_CONCURRENT_SCANS  # CPU-bound: conservative
 
 
 class BatchStatus(StrEnum):
@@ -156,15 +174,17 @@ class BatchProcessingService:
 
     def __init__(self):
         self._batches: dict[str, BatchJob] = {}
+        # Concurrency is determined dynamically based on Azure availability
+        self._max_concurrent = _get_batch_concurrency()
         self._executor = ThreadPoolExecutor(
-            max_workers=MAX_CONCURRENT_SCANS,
+            max_workers=self._max_concurrent,
             thread_name_prefix="batch-ocr",
         )
         self._lock = asyncio.Lock()
         self._cleanup_task: asyncio.Task | None = None
         logger.info(
             f"BatchProcessingService initialized: "
-            f"max_concurrent={MAX_CONCURRENT_SCANS}, "
+            f"max_concurrent={self._max_concurrent}, "
             f"max_batch_size={MAX_BATCH_SIZE}, "
             f"result_ttl={BATCH_RESULT_TTL}s"
         )
@@ -303,7 +323,7 @@ class BatchProcessingService:
 
         try:
             # Process files with bounded concurrency using semaphore
-            semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCANS)
+            semaphore = asyncio.Semaphore(self._max_concurrent)
 
             async def process_one(index: int, path: str):
                 async with semaphore:

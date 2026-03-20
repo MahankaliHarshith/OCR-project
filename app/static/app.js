@@ -117,6 +117,7 @@ function saveBatchState() {
 async function loadCatalogCache() {
     try {
         const res = await fetch('/api/products');
+        if (!res.ok) return;
         const data = await res.json();
         state.catalogCache = {};
         if (data.products) {
@@ -141,6 +142,7 @@ const perfState = {
 async function loadDashboardStats() {
     try {
         const res = await fetch('/api/dashboard');
+        if (!res.ok) return;
         const data = await res.json();
 
         const todayScans = data.today?.receipts_count ?? 0;
@@ -172,8 +174,8 @@ async function loadDashboardStats() {
             const dailyLimit = usage.today?.pages_limit ?? usage.today?.daily_limit ?? 50;
             const monthlyUsed = usage.this_month?.pages_used ?? 0;
             const monthlyLimit = usage.this_month?.pages_limit ?? 500;
-            const monthlyPct = Math.round((monthlyUsed / monthlyLimit) * 100);
-            const dailyPct = Math.round((todayPages / dailyLimit) * 100);
+            const monthlyPct = monthlyLimit > 0 ? Math.round((monthlyUsed / monthlyLimit) * 100) : 0;
+            const dailyPct = dailyLimit > 0 ? Math.round((todayPages / dailyLimit) * 100) : 0;
 
             azureUsageEl.textContent = `${monthlyUsed}/${monthlyLimit}`;
             azurePill.style.display = 'flex';
@@ -233,9 +235,13 @@ document.addEventListener('visibilitychange', () => {
         clearInterval(_dashboardTimer);
         _dashboardTimer = null;
     } else {
-        loadDashboardStats();                          // refresh immediately on re-focus
-        if (_dashboardTimer) clearInterval(_dashboardTimer);  // prevent duplicate timers
-        _dashboardTimer = setInterval(loadDashboardStats, 30000);
+        // Only restart polling on tabs that show the dashboard stats
+        const currentTab = state.currentTab || 'scan';
+        if (currentTab === 'scan' || currentTab === 'dashboard') {
+            loadDashboardStats();                          // refresh immediately on re-focus
+            if (_dashboardTimer) clearInterval(_dashboardTimer);  // prevent duplicate timers
+            _dashboardTimer = setInterval(loadDashboardStats, 30000);
+        }
     }
 });
 
@@ -264,10 +270,18 @@ window.addEventListener('load', () => {
 window.addEventListener('resize', updateNavIndicator);
 
 // ─── Tab Navigation ──────────────────────────────────────────────────────────
+let _tabAbortController = null;
+
 $$('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const tab = btn.dataset.tab;
         state.currentTab = tab;
+
+        // Cancel any pending API calls from the previous tab
+        if (_tabAbortController) {
+            _tabAbortController.abort();
+        }
+        _tabAbortController = new AbortController();
 
         $$('.nav-btn').forEach(b => {
             b.classList.remove('active');
@@ -281,7 +295,7 @@ $$('.nav-btn').forEach(btn => {
         $(`#tab-${tab}`).classList.add('active');
 
         // Scroll to top on tab switch
-        window.scrollTo({ top: 0, behavior: 'instant' });
+        window.scrollTo({ top: 0, behavior: 'auto' });
 
         // Update URL hash (without triggering hashchange)
         history.replaceState(null, '', `#${tab}`);
@@ -303,14 +317,14 @@ $$('.nav-btn').forEach(btn => {
         }
 
         // Load data for the tab
-        if (tab === 'receipts') loadReceipts();
+        if (tab === 'receipts') loadReceipts(20, _tabAbortController.signal);
         if (tab === 'catalog') {
             // Clear stale search so results match the displayed data
             const searchInput = $('#catalogSearch');
             if (searchInput) searchInput.value = '';
-            loadCatalog();
+            loadCatalog(_tabAbortController.signal);
         }
-        if (tab === 'train') loadTrainingTab();
+        if (tab === 'train') loadTrainingTab(_tabAbortController.signal);
     });
 });
 
@@ -883,7 +897,6 @@ async function processFile(file) {
     dropZone.style.display = 'none';
     $('#processing').style.display = 'block';
     $('#resultsContainer').style.display = 'none';
-    simulateProgress();
 
     // Compress image client-side for faster upload & processing
     let optimizedFile = await compressImage(file);
@@ -902,18 +915,30 @@ async function processFile(file) {
         state._abortController = controller;
         const timeoutId = setTimeout(() => controller.abort(), 180000);
 
-        const res = await fetch('/api/receipts/scan', {
-            method: 'POST',
-            body: formData,
-            signal: controller.signal,
-        });
+        // Try SSE streaming endpoint first for real-time progress
+        let data = null;
+        try {
+            data = await _uploadWithSSE(formData, controller.signal);
+        } catch (sseErr) {
+            // SSE failed — fall back to regular endpoint
+            if (sseErr.name === 'AbortError') throw sseErr;
+            console.warn('SSE scan failed, falling back to regular endpoint:', sseErr.message);
+            simulateProgress();
+            const res = await fetch('/api/receipts/scan', {
+                method: 'POST',
+                body: formData,
+                signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Processing failed.');
+        }
 
         clearTimeout(timeoutId);
 
-        const data = await res.json();
-
-        if (!res.ok) {
-            throw new Error(data.detail || 'Processing failed.');
+        if (!data || data.success === false) {
+            const errMsg = data?.detail || data?.errors?.[0] || 'Processing failed.';
+            throw new Error(errMsg);
         }
 
         // Show results
@@ -932,6 +957,89 @@ async function processFile(file) {
         }
         resetScanUI();
     }
+}
+
+/**
+ * Upload receipt via SSE streaming endpoint for real-time progress.
+ * Returns the final result data, or throws on error.
+ */
+async function _uploadWithSSE(formData, signal) {
+    const response = await fetch('/api/receipts/scan-stream', {
+        method: 'POST',
+        body: formData,
+        signal,
+    });
+
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || `Server error: ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult = null;
+    let lastError = null;
+
+    const fill = $('#progressFill');
+    const status = $('#processingStatus');
+    const tips = $('#processingTips');
+
+    // Hide tips initially — SSE provides real status
+    if (tips) tips.style.display = 'none';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events (separated by double newlines)
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop(); // Keep incomplete event in buffer
+
+        for (const part of parts) {
+            if (!part.trim() || part.startsWith(':')) continue; // Heartbeat or empty
+
+            let eventType = 'message';
+            let eventData = '';
+
+            for (const line of part.split('\n')) {
+                if (line.startsWith('event: ')) {
+                    eventType = line.slice(7).trim();
+                } else if (line.startsWith('data: ')) {
+                    eventData = line.slice(6);
+                }
+            }
+
+            if (!eventData) continue;
+
+            try {
+                const parsed = JSON.parse(eventData);
+
+                if (eventType === 'progress') {
+                    // Update progress UI with real pipeline step
+                    if (fill) fill.style.width = parsed.progress + '%';
+                    if (status) status.textContent = parsed.message;
+                } else if (eventType === 'result') {
+                    finalResult = parsed;
+                } else if (eventType === 'error') {
+                    lastError = parsed.error || 'Processing failed';
+                }
+            } catch (_parseErr) {
+                // Ignore malformed events
+            }
+        }
+    }
+
+    // Complete progress bar
+    if (fill) fill.style.width = '100%';
+    if (status) status.textContent = 'Complete!';
+
+    if (lastError) throw new Error(lastError);
+    if (!finalResult) throw new Error('No result received from server');
+
+    return finalResult;
 }
 
 // Cancel scan button
@@ -1322,8 +1430,8 @@ function displayMathVerification(data) {
     const grandMatch = math.grand_total_match;
     const mismatches = math.catalog_mismatches || [];
 
-    computedEl.textContent = computed != null ? '₹' + computed.toFixed(2) : '—';
-    ocrEl.textContent = ocrGrand != null ? '₹' + ocrGrand.toFixed(2) : 'Not found';
+    computedEl.textContent = computed != null ? '₹' + computed.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—';
+    ocrEl.textContent = ocrGrand != null ? '₹' + ocrGrand.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'Not found';
 
     const linesOkCount = lineChecks.filter(c => c.math_ok).length;
     const linesTotal = lineChecks.length;
@@ -1367,7 +1475,7 @@ function displayMathVerification(data) {
         if (failLines.length > 0) {
             html += '<div class="math-detail-section"><strong>Math errors:</strong><ul>';
             failLines.forEach(c => {
-                html += `<li><code>${escHtml(c.code)}</code>: ${c.qty} × ₹${c.rate} = ₹${c.amount_expected.toFixed(2)} (receipt shows ₹${c.amount_ocr.toFixed(2)})</li>`;
+                html += `<li><code>${escHtml(c.code)}</code>: ${c.qty} × ₹${Number(c.rate).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} = ₹${c.amount_expected.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (receipt shows ₹${c.amount_ocr.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})})</li>`;
             });
             html += '</ul></div>';
         }
@@ -1418,8 +1526,8 @@ function populateItemsTable(items) {
             <td><input class="editable" value="${escHtml(item.code)}" data-idx="${idx}" data-field="code"></td>
             <td><input class="editable" value="${escHtml(item.product)}" data-idx="${idx}" data-field="product"></td>
             <td><input class="editable" type="number" step="1" min="1" max="9999" value="${Math.max(1, Math.round(item.quantity || 0) || 1)}" data-idx="${idx}" data-field="quantity"></td>
-            <td class="price-cell">${hasPrice ? '₹' + rate.toFixed(2) : '—'}</td>
-            <td class="price-cell">${hasPrice ? '₹' + amount.toFixed(2) : '—'}</td>
+            <td class="price-cell">${hasPrice ? '₹' + rate.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'}</td>
+            <td class="price-cell">${hasPrice ? '₹' + amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'}</td>
             <td class="conf-cell ${confClass}">${(item.confidence * 100).toFixed(1)}%</td>
             <td class="math-cell">${mathCell}</td>
             <td><button class="btn btn-sm btn-ghost" onclick="removeRow(${idx})" title="Remove row" style="padding:0.25rem 0.4rem;color:var(--danger)"><i data-lucide="trash-2" style="width:14px;height:14px"></i></button></td>
@@ -1428,9 +1536,13 @@ function populateItemsTable(items) {
     });
 
     // Mark edits as dirty for unsaved-changes tracking
-    tbody.querySelectorAll('.editable').forEach(inp => {
-        inp.addEventListener('input', () => { state.isDirty = true; });
-    });
+    // Use event delegation on tbody instead of individual listeners to prevent memory leaks
+    const handleInput = (e) => {
+        if (e.target.classList.contains('editable')) {
+            state.isDirty = true;
+        }
+    };
+    tbody.addEventListener('input', handleInput);
 
     // Prevent scroll wheel from changing quantity when scrolling the page
     tbody.querySelectorAll('input[type="number"]').forEach(inp => {
@@ -1453,69 +1565,73 @@ function populateItemsTable(items) {
     // Re-init Lucide icons for dynamically added buttons
     if (typeof lucide !== 'undefined') lucide.createIcons();
 
+    // Use event delegation to prevent memory leaks from re-rendering
     // Remove auto-filled styling when user manually edits the product name
-    tbody.querySelectorAll('input[data-field="product"]').forEach(inp => {
-        inp.addEventListener('input', () => {
-            inp.classList.remove('auto-filled');
-        });
+    tbody.addEventListener('input', (e) => {
+        if (e.target.matches('input[data-field="product"]')) {
+            e.target.classList.remove('auto-filled');
+        }
     });
 
-    // Auto-populate product name when a known code is entered/changed/cleared
+    // Auto-populate product name when a known code is entered/changed - use delegation
+    const codeAutoFillState = new Map(); // Track lastAutoName per input
+    
+    // Initialize state for existing code inputs
     tbody.querySelectorAll('input[data-field="code"]').forEach(inp => {
-        let lastAutoName = '';   // track what WE filled in, so manual edits aren't overwritten
-
-        // Initialise: if this row already has a catalog match, record it
         const initCode = inp.value.trim().toUpperCase();
         const initCached = state.catalogCache[initCode];
-        if (initCached) lastAutoName = initCached.name;
+        if (initCached) {
+            codeAutoFillState.set(inp, initCached.name);
+        } else {
+            codeAutoFillState.set(inp, '');
+        }
+    });
 
-        const handleCodeChange = () => {
-            const code = inp.value.trim().toUpperCase();
-            const idx = inp.dataset.idx;
-            const nameInput = tbody.querySelector(`input[data-idx="${idx}"][data-field="product"]`);
-            if (!nameInput) return;
+    // Handle code changes via delegation to prevent listener accumulation
+    const handleCodeInput = (e) => {
+        if (!e.target.matches('input[data-field="code"]')) return;
+        
+        const inp = e.target;
+        const code = inp.value.trim().toUpperCase();
+        const idx = inp.dataset.idx;
+        const nameInput = tbody.querySelector(`input[data-idx="${idx}"][data-field="product"]`);
+        if (!nameInput) return;
 
-            const currentName = nameInput.value.trim();
-            const cached = state.catalogCache[code];
+        const lastAutoName = codeAutoFillState.get(inp) || '';
+        const currentName = nameInput.value.trim();
+        const cached = state.catalogCache[code];
 
-            if (cached) {
-                // Only overwrite if: name is empty, OR name still matches our last auto-fill
-                // This respects manual edits while still being dynamic
+        if (cached) {
+            if (!currentName || currentName === lastAutoName) {
+                nameInput.value = cached.name;
+                nameInput.classList.add('auto-filled');
+                codeAutoFillState.set(inp, cached.name);
+            }
+            if (state.currentReceiptData?.receipt_data?.items[idx]) {
+                const item = state.currentReceiptData.receipt_data.items[idx];
+                item.code = code;
                 if (!currentName || currentName === lastAutoName) {
-                    nameInput.value = cached.name;
-                    nameInput.classList.add('auto-filled');
-                    lastAutoName = cached.name;
-                }
-                // Update backing data
-                if (state.currentReceiptData?.receipt_data?.items[idx]) {
-                    const item = state.currentReceiptData.receipt_data.items[idx];
-                    item.code = code;
-                    if (!currentName || currentName === lastAutoName) {
-                        item.product = cached.name;
-                    }
-                }
-            } else {
-                // Code not in catalog → clear auto-filled name, leave manual names alone
-                if (currentName === lastAutoName) {
-                    nameInput.value = '';
-                    lastAutoName = '';
-                }
-                nameInput.classList.remove('auto-filled');
-                // Update backing data
-                if (state.currentReceiptData?.receipt_data?.items[idx]) {
-                    const item = state.currentReceiptData.receipt_data.items[idx];
-                    item.code = code;
-                    if (item.product === lastAutoName) {
-                        item.product = '';
-                    }
+                    item.product = cached.name;
                 }
             }
-        };
+        } else {
+            if (currentName === lastAutoName) {
+                nameInput.value = '';
+                codeAutoFillState.set(inp, '');
+            }
+            nameInput.classList.remove('auto-filled');
+            if (state.currentReceiptData?.receipt_data?.items[idx]) {
+                const item = state.currentReceiptData.receipt_data.items[idx];
+                item.code = code;
+                if (item.product === lastAutoName) {
+                    item.product = '';
+                }
+            }
+        }
+    };
 
-        // Fire on every keystroke AND on blur/paste for full coverage
-        inp.addEventListener('input', handleCodeChange);
-        inp.addEventListener('change', handleCodeChange);
-    });
+    tbody.addEventListener('input', handleCodeInput);
+    tbody.addEventListener('change', handleCodeInput);
 }
 
 function getConfClass(conf) {
@@ -2222,6 +2338,7 @@ function renderReceiptCard(r) {
     const conf = r.ocr_confidence_avg || 0;
     const confPct = (conf * 100).toFixed(0);
     const confClass = conf >= 0.9 ? 'badge-conf-high' : conf >= 0.7 ? 'badge-conf-mid' : 'badge-conf-low';
+    const confTooltip = conf >= 0.9 ? 'High confidence (≥90%) — very reliable' : conf >= 0.7 ? 'Medium confidence (70-89%) — review recommended' : 'Low confidence (<70%) — manual check needed';
     const storeName = r.store_name ? escHtml(r.store_name) : '';
     return `
         <div class="receipt-card ${isChecked ? 'selected' : ''}" data-receipt-id="${r.id}">
@@ -2231,7 +2348,7 @@ function renderReceiptCard(r) {
                 <p>${escHtml(r.scan_date)} ${escHtml(r.scan_time || '')} · ${r.total_items || 0} items · ${escHtml(r.processing_status || 'N/A')}</p>
                 <div class="receipt-meta-badges">
                     ${total > 0 ? `<span class="receipt-meta-badge badge-amount">₹${total.toLocaleString()}</span>` : ''}
-                    ${conf > 0 ? `<span class="receipt-meta-badge ${confClass}" title="OCR confidence">${confPct}%</span>` : ''}
+                    ${conf > 0 ? `<span class="receipt-meta-badge ${confClass} conf-tooltip" data-tooltip="${confTooltip}" title="${confTooltip}">${confPct}%</span>` : ''}
                     ${storeName ? `<span class="receipt-meta-badge">${storeName}</span>` : ''}
                     ${r.quality_grade ? `<span class="receipt-meta-badge">Grade ${r.quality_grade}</span>` : ''}
                 </div>
@@ -2374,6 +2491,10 @@ function rerenderReceiptCards() {
 
 /* ── Styled Delete Confirmation ─────────────────────────────────────────── */
 function showDeleteConfirm(title, message, onConfirm) {
+    // Clean up previous overlay listener
+    if (_activeOverlayClose) { $('#modalOverlay').removeEventListener('click', _activeOverlayClose); _activeOverlayClose = null; }
+    if (_activeModalClose) { _activeModalClose = null; }
+
     $('#modalTitle').textContent = '';
     $('#modalMessage').innerHTML = `
         <div class="confirm-delete-body">
@@ -2395,13 +2516,17 @@ function showDeleteConfirm(title, message, onConfirm) {
         $('#modalConfirm').style.display = '';
         $('#modalCancel').style.display = '';
         $('#modalCancel').textContent = 'Cancel';
+        $('#modalOverlay').removeEventListener('click', overlayClose);
+        _activeModalClose = null;
+        _activeOverlayClose = null;
     };
 
     $('#confirmCancelBtn').addEventListener('click', close, { once: true });
     $('#confirmDeleteBtn').addEventListener('click', () => { close(); onConfirm(); }, { once: true });
-    // Click outside to cancel
-    const overlayClose = (e) => { if (e.target === $('#modalOverlay')) { close(); $('#modalOverlay').removeEventListener('click', overlayClose); } };
+    const overlayClose = (e) => { if (e.target === $('#modalOverlay')) close(); };
     $('#modalOverlay').addEventListener('click', overlayClose);
+    _activeModalClose = close;
+    _activeOverlayClose = overlayClose;
 }
 
 /* ── Search & Sort ──────────────────────────────────────────────────────── */
@@ -2424,7 +2549,7 @@ function applySortFilter(receipts) {
         case 'amount-desc': sorted.sort((a, b) => (b.bill_total || 0) - (a.bill_total || 0)); break;
         case 'amount-asc': sorted.sort((a, b) => (a.bill_total || 0) - (b.bill_total || 0)); break;
         case 'items-desc': sorted.sort((a, b) => (b.total_items || 0) - (a.total_items || 0)); break;
-        case 'confidence': sorted.sort((a, b) => (a.ocr_confidence_avg || 0) - (b.ocr_confidence_avg || 0)); break;
+        case 'confidence': sorted.sort((a, b) => (b.ocr_confidence_avg || 0) - (a.ocr_confidence_avg || 0)); break;
     }
     return sorted;
 }
@@ -2437,7 +2562,7 @@ $('#receiptSearch').addEventListener('input', () => {
 });
 $('#receiptSortBy').addEventListener('change', () => rerenderReceiptCards());
 
-async function loadReceipts(limit = 20) {
+async function loadReceipts(limit = 20, signal = null) {
     const list = $('#receiptsList');
     // Skeleton loading state
     list.innerHTML = Array.from({ length: 4 }, () =>
@@ -2448,7 +2573,7 @@ async function loadReceipts(limit = 20) {
     updateBulkBar();
 
     try {
-        const res = await fetch(`/api/receipts?limit=${limit}`);
+        const res = await fetch(`/api/receipts?limit=${limit}`, signal ? { signal } : {});
         const data = await res.json();
 
         if (!data.receipts || data.receipts.length === 0) {
@@ -2479,6 +2604,7 @@ async function loadReceipts(limit = 20) {
         if (loadMoreDiv) loadMoreDiv.style.display = state._receiptsHasMore ? 'block' : 'none';
 
     } catch (err) {
+        if (err.name === 'AbortError') return; // Tab switch — ignore silently
         list.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon">⚠️</div>
@@ -2651,14 +2777,15 @@ window.viewReceipt = async function(id) {
                 const lineTotal = it.line_total || 0;
                 const conf = it.ocr_confidence || 0;
                 const confClass = conf >= 0.9 ? 'conf-high' : conf >= 0.7 ? 'conf-mid' : 'conf-low';
+                const confTip = conf >= 0.9 ? 'High confidence (≥90%)' : conf >= 0.7 ? 'Medium confidence (70-89%)' : 'Low confidence (<70%)';
                 return `<tr data-item-id="${it.id}" role="row">
                     <td class="receipt-detail-num">${idx + 1}</td>
                     <td class="editable-cell" data-field="product_code" data-original="${escAttr(it.product_code || '')}" tabindex="0" role="gridcell" aria-label="Product code: ${escAttr(it.product_code || '')}. Click to edit."><span class="receipt-detail-code">${escHtml(it.product_code || '')}</span></td>
                     <td class="editable-cell" data-field="product_name" data-original="${escAttr(it.product_name || '')}" tabindex="0" role="gridcell" aria-label="Product name: ${escAttr(it.product_name || '')}. Click to edit.">${escHtml(it.product_name || '')}</td>
                     <td class="editable-cell receipt-detail-num" data-field="quantity" data-original="${it.quantity || 0}" tabindex="0" role="gridcell" aria-label="Quantity: ${it.quantity || 0}. Click to edit.">${it.quantity || 0}</td>
-                    ${hasPrices ? `<td class="editable-cell receipt-detail-num" data-field="unit_price" data-original="${unitPrice}" tabindex="0" role="gridcell" aria-label="Unit price: ${unitPrice}. Click to edit.">${unitPrice ? unitPrice.toLocaleString() : '—'}</td>` : ''}
-                    ${hasPrices ? `<td class="receipt-detail-num receipt-detail-amount">${lineTotal ? lineTotal.toLocaleString() : '—'}</td>` : ''}
-                    <td><span class="receipt-conf-badge ${confClass}" title="OCR confidence">${(conf * 100).toFixed(0)}%</span></td>
+                    ${hasPrices ? `<td class="editable-cell receipt-detail-num" data-field="unit_price" data-original="${unitPrice}" tabindex="0" role="gridcell" aria-label="Unit price: ${unitPrice}. Click to edit.">${unitPrice ? '₹' + unitPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'}</td>` : ''}
+                    ${hasPrices ? `<td class="receipt-detail-num receipt-detail-amount">${lineTotal ? '₹' + lineTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'}</td>` : ''}
+                    <td><span class="receipt-conf-badge ${confClass} conf-tooltip" data-tooltip="${confTip}" title="${confTip}">${(conf * 100).toFixed(0)}%</span></td>
                     <td class="receipt-detail-num"><button class="btn btn-sm btn-danger" onclick="window._deleteReceiptItem(${it.id}, ${id})" title="Delete item" aria-label="Delete item ${escAttr(it.product_name || '')}" style="padding:0.15rem 0.4rem;font-size:0.68rem">✕</button></td>
                 </tr>`;
               }).join('')
@@ -2676,7 +2803,7 @@ window.viewReceipt = async function(id) {
                     <span class="receipt-stat-label">Total Qty</span>
                 </div>
                 ${hasPrices ? `<div class="receipt-stat-card receipt-stat-highlight">
-                    <span class="receipt-stat-value">₹${(billTotal || computedTotal).toLocaleString()}</span>
+                    <span class="receipt-stat-value">₹${(billTotal || computedTotal).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                     <span class="receipt-stat-label">Grand Total</span>
                 </div>` : ''}
                 <div class="receipt-stat-card">
@@ -2710,7 +2837,7 @@ window.viewReceipt = async function(id) {
                         </div>
                         ${billTotal > 0 ? `<div class="receipt-math-row">
                             <span>${billMatch ? '✅' : '⚠️'} Grand Total</span>
-                            <span class="${billMatch ? 'math-pass' : 'math-warn'}">OCR: ₹${billTotal.toLocaleString()} | Computed: ₹${computedTotal.toLocaleString()}</span>
+                            <span class="${billMatch ? 'math-pass' : 'math-warn'}">OCR: ₹${billTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} | Computed: ₹${computedTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                         </div>` : ''}
                     </div>
                 </div>
@@ -2748,7 +2875,7 @@ window.viewReceipt = async function(id) {
                         <tbody>${itemRows}</tbody>
                         ${hasPrices ? `<tfoot><tr>
                             <td colspan="${hasPrices ? 5 : 3}" class="receipt-detail-total-label">Grand Total</td>
-                            <td class="receipt-detail-total-value">₹${(billTotal || computedTotal).toLocaleString()}</td>
+                            <td class="receipt-detail-total-value">₹${(billTotal || computedTotal).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                             <td colspan="2"></td>
                         </tr></tfoot>` : ''}
                     </table>
@@ -2756,6 +2883,12 @@ window.viewReceipt = async function(id) {
                 <div class="receipt-edit-toolbar">
                     <button class="btn btn-ghost btn-sm" onclick="window._addReceiptItem(${id})" aria-label="Add new item to receipt">
                         <i data-lucide="plus" style="width:14px;height:14px" aria-hidden="true"></i> Add Item
+                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="window._exportTally(${id})" aria-label="Export to Tally" title="Export as Tally XML for import into TallyPrime">
+                        <i data-lucide="file-code" style="width:14px;height:14px" aria-hidden="true"></i> Tally XML
+                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="window.print()" aria-label="Print receipt" title="Print this receipt">
+                        <i data-lucide="printer" style="width:14px;height:14px" aria-hidden="true"></i> Print
                     </button>
                 </div>
                 ${mathSection}
@@ -2770,6 +2903,10 @@ window.viewReceipt = async function(id) {
             $('#modalCancel').removeEventListener('click', _activeModalClose);
             _activeModalClose = null;
         }
+        if (_activeOverlayClose) {
+            $('#modalOverlay').removeEventListener('click', _activeOverlayClose);
+            _activeOverlayClose = null;
+        }
 
         // Close handler (shared with Escape key via _activeModalClose)
         const closeModal = () => {
@@ -2779,11 +2916,13 @@ window.viewReceipt = async function(id) {
             $('#modalCancel').removeEventListener('click', closeModal);
             $('#modalOverlay').removeEventListener('click', overlayClose);
             _activeModalClose = null;
+            _activeOverlayClose = null;
         };
         const overlayClose = (e) => { if (e.target === $('#modalOverlay')) closeModal(); };
         $('#modalCancel').addEventListener('click', closeModal);
         $('#modalOverlay').addEventListener('click', overlayClose);
         _activeModalClose = closeModal;
+        _activeOverlayClose = overlayClose;
 
     } catch (err) {
         showToast('Failed to load receipt.', 'error');
@@ -2791,6 +2930,9 @@ window.viewReceipt = async function(id) {
 };
 
 window.exportReceipt = async function(id) {
+    // Find the clicked button and disable to prevent double-click
+    const btn = document.querySelector(`.receipt-card[data-receipt-id="${id}"] .btn-accent`);
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
     try {
         const res = await fetch('/api/export/excel', {
             method: 'POST',
@@ -2806,6 +2948,55 @@ window.exportReceipt = async function(id) {
         }
     } catch (err) {
         showToast(err.message || 'Export failed.', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Excel'; }
+    }
+};
+
+// ─── Tally XML Export ────────────────────────────────────────────────────────
+window._exportTally = async function(receiptId) {
+    const ids = receiptId ? [receiptId] : (state.selectedReceiptIds || []);
+    if (ids.length === 0) {
+        showToast('No receipts selected for Tally export.', 'warning');
+        return;
+    }
+
+    showToast('Generating Tally XML...', 'info');
+    try {
+        const res = await fetch('/api/export/tally', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                receipt_ids: ids,
+                format: 'xml',
+            }),
+        });
+        const data = await safeJson(res);
+        if (res.ok && data.download_url) {
+            window.open(data.download_url, '_blank');
+            showToast(`Tally XML ready — ${data.voucher_count} voucher(s)`, 'success');
+        } else {
+            throw new Error(data.detail || 'Tally export failed.');
+        }
+    } catch (err) {
+        showToast(err.message || 'Tally export failed.', 'error');
+    }
+};
+
+window._exportTallyDaily = async function(date) {
+    showToast('Generating Tally daily XML...', 'info');
+    try {
+        const url = date ? `/api/export/tally/daily?date=${date}` : '/api/export/tally/daily';
+        const res = await fetch(url);
+        const data = await safeJson(res);
+        if (res.ok && data.download_url) {
+            window.open(data.download_url, '_blank');
+            showToast(`Tally XML ready — ${data.voucher_count} voucher(s)`, 'success');
+        } else {
+            throw new Error(data.detail || 'Tally export failed.');
+        }
+    } catch (err) {
+        showToast(err.message || 'Tally daily export failed.', 'error');
     }
 };
 
@@ -2838,35 +3029,108 @@ window.toggleBatchReceipt = function(id, btn) {
     }
 };
 
+// ─── Undo Delete System ──────────────────────────────────────────────────────
+let _undoDeleteTimer = null;
+let _undoDeleteId = null;
+
+function _cancelPendingUndo() {
+    if (_undoDeleteTimer) {
+        clearTimeout(_undoDeleteTimer);
+        _undoDeleteTimer = null;
+        _undoDeleteId = null;
+    }
+}
+
 window.deleteReceipt = async function(id) {
     showDeleteConfirm(
         'Delete this receipt?',
-        'This will permanently remove the receipt and all its items. This cannot be undone.',
+        'The receipt will be removed. You\'ll have 5 seconds to undo.',
         async () => {
-            // Disable all delete buttons to prevent double-click
-            const btns = document.querySelectorAll('.receipt-actions .btn-danger');
-            btns.forEach(b => { b.disabled = true; b.textContent = '...'; });
-            try {
-                const res = await fetch(`/api/receipts/${id}`, { method: 'DELETE' });
-                if (!res.ok) {
-                    const data = await res.json().catch(() => ({}));
-                    throw new Error(data.detail || 'Delete failed.');
-                }
-                // Remove from all batches if present
-                state.batches.forEach(b => { b.receiptIds = b.receiptIds.filter(rid => rid !== id); });
-                state.selectedReceiptIds = state.selectedReceiptIds.filter(x => x !== id);
-                saveBatchState();
-                updateBatchBar();
-                updateBulkBar();
-                showToast('Receipt deleted.', 'success');
-                loadReceipts();
-            } catch (err) {
-                showToast(err.message || 'Delete failed.', 'error');
-                loadReceipts();
+            // Cancel any previous pending delete
+            _cancelPendingUndo();
+
+            // Immediately hide the card from UI (optimistic removal)
+            const card = document.querySelector(`.receipt-card[data-receipt-id="${id}"]`);
+            if (card) {
+                card.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                card.style.opacity = '0';
+                card.style.transform = 'translateX(30px)';
+                setTimeout(() => card.remove(), 300);
             }
+
+            // Remove from batches/selection in UI state
+            state.batches.forEach(b => { b.receiptIds = b.receiptIds.filter(rid => rid !== id); });
+            state.selectedReceiptIds = state.selectedReceiptIds.filter(x => x !== id);
+            if (state._allLoadedReceipts) {
+                state._allLoadedReceipts = state._allLoadedReceipts.filter(r => r.id !== id);
+            }
+            saveBatchState();
+            updateBatchBar();
+            updateBulkBar();
+
+            // Show undo toast with countdown
+            _undoDeleteId = id;
+            const toastEl = _showUndoToast('Receipt deleted.', () => {
+                // UNDO pressed: cancel the real delete and reload
+                _cancelPendingUndo();
+                showToast('Delete undone — receipt restored.', 'success');
+                loadReceipts();
+            });
+
+            // Schedule actual deletion after 5 seconds
+            _undoDeleteTimer = setTimeout(async () => {
+                _undoDeleteId = null;
+                _undoDeleteTimer = null;
+                try {
+                    const res = await fetch(`/api/receipts/${id}`, { method: 'DELETE' });
+                    if (!res.ok) {
+                        const data = await res.json().catch(() => ({}));
+                        showToast(data.detail || 'Delete failed — receipt may still exist.', 'error');
+                        loadReceipts();
+                    }
+                } catch (err) {
+                    showToast('Delete failed — check connection.', 'error');
+                    loadReceipts();
+                }
+            }, 5000);
         }
     );
 };
+
+/** Show a toast with Undo button and countdown progress bar */
+function _showUndoToast(message, onUndo) {
+    const container = document.querySelector('.toast-container') || (() => {
+        const c = document.createElement('div');
+        c.className = 'toast-container';
+        document.body.appendChild(c);
+        return c;
+    })();
+
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-warning';
+    toast.style.position = 'relative';
+    toast.style.overflow = 'hidden';
+    toast.innerHTML = `
+        <div class="toast-undo">
+            <span>🗑️ ${escHtml(message)}</span>
+            <button class="toast-undo-btn" aria-label="Undo delete">UNDO</button>
+        </div>
+        <div class="toast-undo-progress"></div>
+    `;
+
+    const undoBtn = toast.querySelector('.toast-undo-btn');
+    undoBtn.addEventListener('click', () => {
+        toast.remove();
+        onUndo();
+    });
+
+    container.appendChild(toast);
+
+    // Auto-dismiss after 5.5s (slight buffer past undo window)
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5500);
+
+    return toast;
+}
 
 // Date filter
 $('#filterDateBtn').addEventListener('click', async () => {
@@ -2919,23 +3183,91 @@ $('#showAllBtn').addEventListener('click', () => {
     loadReceipts(100);  // Load up to 100 receipts
 });
 
-// Daily report
+// Daily report — preview before download
 $('#dailyReportBtn').addEventListener('click', async () => {
     const date = $('#dateFilter').value || undefined;
     const btn = $('#dailyReportBtn');
     btn.disabled = true;
     btn.textContent = 'Generating...';
     try {
-        const url = date ? `/api/export/daily?date=${date}` : '/api/export/daily';
-        const res = await fetch(url);
-        const data = await safeJson(res);
+        // First, fetch the receipts data for preview
+        const dateParam = date || new Date().toISOString().split('T')[0];
+        const receiptRes = await fetch(`/api/receipts/date/${dateParam}`);
+        const receiptData = await receiptRes.json();
 
-        if (res.ok && data.download_url) {
-            window.open(data.download_url, '_blank');
-            showToast('Daily report downloaded!', 'success');
-        } else {
-            throw new Error(data.detail || 'Report generation failed.');
+        if (!receiptData.receipts || receiptData.receipts.length === 0) {
+            showToast(`No receipts found for ${dateParam}`, 'warning');
+            return;
         }
+
+        // Also generate the report file in the background
+        const reportUrl = date ? `/api/export/daily?date=${date}` : '/api/export/daily';
+        const reportRes = await fetch(reportUrl);
+        const reportData = await safeJson(reportRes);
+
+        // Build a preview
+        const receipts = receiptData.receipts;
+        const totalReceipts = receipts.length;
+        const totalItems = receipts.reduce((s, r) => s + (r.total_items || 0), 0);
+        const totalAmount = receipts.reduce((s, r) => s + (r.bill_total || 0), 0);
+        const avgConf = receipts.reduce((s, r) => s + (r.ocr_confidence_avg || 0), 0) / totalReceipts;
+
+        const previewHtml = `
+            <div class="daily-report-preview">
+                <div class="report-summary">
+                    <div class="report-stat">
+                        <span class="report-stat-value">${totalReceipts}</span>
+                        <span class="report-stat-label">Receipts</span>
+                    </div>
+                    <div class="report-stat">
+                        <span class="report-stat-value">${totalItems}</span>
+                        <span class="report-stat-label">Total Items</span>
+                    </div>
+                    <div class="report-stat">
+                        <span class="report-stat-value">₹${totalAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                        <span class="report-stat-label">Total Amount</span>
+                    </div>
+                    <div class="report-stat">
+                        <span class="report-stat-value">${(avgConf * 100).toFixed(0)}%</span>
+                        <span class="report-stat-label">Avg Confidence</span>
+                    </div>
+                </div>
+                <table>
+                    <thead>
+                        <tr><th>#</th><th>Receipt</th><th>Time</th><th>Items</th><th>Total</th><th>Store</th></tr>
+                    </thead>
+                    <tbody>
+                        ${receipts.map((r, i) => `
+                            <tr>
+                                <td>${i + 1}</td>
+                                <td><strong>${escHtml(r.receipt_number || '')}</strong></td>
+                                <td>${escHtml(r.scan_time || '-')}</td>
+                                <td>${r.total_items || 0}</td>
+                                <td>₹${(r.bill_total || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                                <td>${escHtml(r.store_name || '-')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                <div class="daily-report-actions">
+                    ${reportRes.ok && reportData.download_url
+                        ? `<button class="btn btn-primary btn-sm" onclick="window.open('${reportData.download_url}', '_blank');closeActiveModal()">
+                            <i data-lucide="download" style="width:14px;height:14px"></i> Download Excel
+                           </button>`
+                        : ''}
+                    <button class="btn btn-accent btn-sm" onclick="window._exportTallyDaily('${dateParam}');closeActiveModal()">
+                        <i data-lucide="file-code" style="width:14px;height:14px"></i> Tally XML
+                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="closeActiveModal()">Close</button>
+                </div>
+            </div>
+        `;
+
+        $('#modalTitle').textContent = `📊 Daily Report — ${dateParam}`;
+        $('#modalMessage').innerHTML = previewHtml;
+        $('#modalOverlay').style.display = 'flex';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+
     } catch (err) {
         showToast(err.message || 'Report generation failed.', 'error');
     } finally {
@@ -2946,7 +3278,83 @@ $('#dailyReportBtn').addEventListener('click', async () => {
 });
 
 // ─── Catalog Tab ─────────────────────────────────────────────────────────────
-async function loadCatalog() {
+const CATALOG_PAGE_SIZE = 20;
+let _catalogAllProducts = [];
+let _catalogPage = 1;
+let _catalogSortKey = 'product_code';
+let _catalogSortAsc = true;
+
+function _sortCatalogProducts(products) {
+    const key = _catalogSortKey;
+    const dir = _catalogSortAsc ? 1 : -1;
+    return [...products].sort((a, b) => {
+        const av = (a[key] || '').toString().toLowerCase();
+        const bv = (b[key] || '').toString().toLowerCase();
+        return av < bv ? -dir : av > bv ? dir : 0;
+    });
+}
+
+function _renderCatalogPage() {
+    const tbody = $('#catalogBody');
+    const sorted = _sortCatalogProducts(_catalogAllProducts);
+    const totalPages = Math.max(1, Math.ceil(sorted.length / CATALOG_PAGE_SIZE));
+    if (_catalogPage > totalPages) _catalogPage = totalPages;
+    const start = (_catalogPage - 1) * CATALOG_PAGE_SIZE;
+    const page = sorted.slice(start, start + CATALOG_PAGE_SIZE);
+
+    tbody.innerHTML = page.map(p => `
+        <tr>
+            <td><strong>${escHtml(p.product_code)}</strong></td>
+            <td>${escHtml(p.product_name)}</td>
+            <td>${escHtml(p.category || '-')}</td>
+            <td>${escHtml(p.unit || 'Piece')}</td>
+            <td>
+                <button class="btn btn-sm btn-outline" onclick="editProduct('${escAttr(p.product_code)}')" aria-label="Edit product ${escAttr(p.product_code)}">Edit</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteProduct('${escAttr(p.product_code)}')" aria-label="Delete product ${escAttr(p.product_code)}">Delete</button>
+            </td>
+        </tr>
+    `).join('');
+
+    // Update pagination controls
+    const pag = $('#catalogPagination');
+    if (pag) {
+        pag.style.display = sorted.length > CATALOG_PAGE_SIZE ? 'flex' : 'none';
+        const info = $('#catalogPageInfo');
+        if (info) info.textContent = `Page ${_catalogPage} of ${totalPages} (${sorted.length} products)`;
+        const prev = $('#catalogPrevBtn');
+        const next = $('#catalogNextBtn');
+        if (prev) prev.disabled = _catalogPage <= 1;
+        if (next) next.disabled = _catalogPage >= totalPages;
+    }
+
+    // Update sort header icons
+    document.querySelectorAll('.catalog-sort-header th[data-sort]').forEach(th => {
+        const icon = th.querySelector('.sort-icon');
+        if (th.dataset.sort === _catalogSortKey) {
+            th.classList.add('sort-active');
+            if (icon) icon.textContent = _catalogSortAsc ? '▲' : '▼';
+        } else {
+            th.classList.remove('sort-active');
+            if (icon) icon.textContent = '⇅';
+        }
+    });
+}
+
+// Catalog sort header clicks - ONLY register once globally, not in loadCatalog
+document.querySelectorAll('.catalog-sort-header th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        if (_catalogSortKey === key) {
+            _catalogSortAsc = !_catalogSortAsc;
+        } else {
+            _catalogSortKey = key;
+            _catalogSortAsc = true;
+        }
+        _renderCatalogPage();
+    });
+});
+
+async function loadCatalog(signal = null) {
     const tbody = $('#catalogBody');
     // Skeleton loading state
     tbody.innerHTML = Array.from({ length: 5 }, () =>
@@ -2954,39 +3362,56 @@ async function loadCatalog() {
     ).join('');
 
     try {
-        const res = await fetch('/api/products');
+        const res = await fetch('/api/products', signal ? { signal } : {});
         const data = await res.json();
 
         if (!data.products || data.products.length === 0) {
+            _catalogAllProducts = [];
             tbody.innerHTML = '<tr><td colspan="5" class="placeholder">No products. Add your first product!</td></tr>';
+            const pag = $('#catalogPagination');
+            if (pag) pag.style.display = 'none';
             return;
         }
 
-        tbody.innerHTML = data.products.map(p => `
-            <tr>
-                <td><strong>${escHtml(p.product_code)}</strong></td>
-                <td>${escHtml(p.product_name)}</td>
-                <td>${escHtml(p.category || '-')}</td>
-                <td>${escHtml(p.unit || 'Piece')}</td>
-                <td>
-                    <button class="btn btn-sm btn-outline" onclick="editProduct('${escAttr(p.product_code)}')" aria-label="Edit product ${escAttr(p.product_code)}">Edit</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteProduct('${escAttr(p.product_code)}')" aria-label="Delete product ${escAttr(p.product_code)}">Delete</button>
-                </td>
-            </tr>
-        `).join('');
+        _catalogAllProducts = data.products;
+        _catalogFullProductList = data.products; // Cache for search restore
+        _catalogPage = 1;
+        _renderCatalogPage();
 
     } catch (err) {
+        if (err.name === 'AbortError') return; // Tab switch — ignore
         tbody.innerHTML = '<tr><td colspan="5" class="placeholder">Failed to load catalog.</td></tr>';
     }
 }
 
+// Catalog pagination buttons
+if ($('#catalogPrevBtn')) {
+    $('#catalogPrevBtn').addEventListener('click', () => {
+        if (_catalogPage > 1) { _catalogPage--; _renderCatalogPage(); }
+    });
+}
+if ($('#catalogNextBtn')) {
+    $('#catalogNextBtn').addEventListener('click', () => {
+        const totalPages = Math.ceil(_catalogAllProducts.length / CATALOG_PAGE_SIZE);
+        if (_catalogPage < totalPages) { _catalogPage++; _renderCatalogPage(); }
+    });
+}
+
 // Search (debounced)
 let _catalogSearchTimer = null;
+let _catalogFullProductList = []; // Cache full list for search restore
 $('#catalogSearch').addEventListener('input', async (e) => {
     const q = e.target.value.trim();
     if (q.length === 0) {
         clearTimeout(_catalogSearchTimer);
-        loadCatalog();
+        // Restore full list without re-fetching
+        if (_catalogFullProductList.length > 0) {
+            _catalogAllProducts = _catalogFullProductList;
+            _catalogPage = 1;
+            _renderCatalogPage();
+        } else {
+            loadCatalog();
+        }
         return;
     }
     // Debounce: wait 250ms after last keystroke
@@ -3003,22 +3428,16 @@ async function searchCatalog(q) {
         const tbody = $('#catalogBody');
 
         if (!data.products || data.products.length === 0) {
+            _catalogAllProducts = [];
             tbody.innerHTML = `<tr><td colspan="5" class="placeholder">No matches for "${escHtml(q)}"</td></tr>`;
+            const pag = $('#catalogPagination');
+            if (pag) pag.style.display = 'none';
             return;
         }
 
-        tbody.innerHTML = data.products.map(p => `
-            <tr>
-                <td><strong>${escHtml(p.product_code)}</strong></td>
-                <td>${escHtml(p.product_name)}</td>
-                <td>${escHtml(p.category || '-')}</td>
-                <td>${escHtml(p.unit || 'Piece')}</td>
-                <td>
-                    <button class="btn btn-sm btn-outline" onclick="editProduct('${escAttr(p.product_code)}')" aria-label="Edit product ${escAttr(p.product_code)}">Edit</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteProduct('${escAttr(p.product_code)}')" aria-label="Delete product ${escAttr(p.product_code)}">Delete</button>
-                </td>
-            </tr>
-        `).join('');
+        _catalogAllProducts = data.products;
+        _catalogPage = 1;
+        _renderCatalogPage();
     } catch (err) { /* ignore */ }
 }
 
@@ -3056,6 +3475,7 @@ $('#cancelProductBtn').addEventListener('click', () => {
 
 // Centralized modal close (cleans up any active close handlers)
 let _activeModalClose = null;
+let _activeOverlayClose = null;
 function closeActiveModal() {
     if (_activeModalClose) {
         _activeModalClose();
@@ -3080,13 +3500,35 @@ document.addEventListener('keydown', (e) => {
 });
 
 $('#saveProductBtn').addEventListener('click', async () => {
-    const code = $('#prodCode').value.trim().toUpperCase();
-    const name = $('#prodName').value.trim();
+    const codeInput = $('#prodCode');
+    const nameInput = $('#prodName');
+    const code = codeInput.value.trim().toUpperCase();
+    const name = nameInput.value.trim();
     const category = $('#prodCategory').value.trim();
     const unit = $('#prodUnit').value;
 
-    if (!code || !name) {
+    // Clear previous validation errors
+    codeInput.classList.remove('input-error');
+    nameInput.classList.remove('input-error');
+
+    // Validate with inline highlighting
+    let hasError = false;
+    if (!code) {
+        codeInput.classList.add('input-error');
+        hasError = true;
+    }
+    if (!name) {
+        nameInput.classList.add('input-error');
+        hasError = true;
+    }
+    if (hasError) {
         showToast('Product code and name are required.', 'warning');
+        // Focus the first invalid field
+        (code ? nameInput : codeInput).focus();
+        // Auto-clear error styling when user types (using 'once' option to prevent leak)
+        const clearError = (e) => e.target.classList.remove('input-error');
+        if (!code) codeInput.addEventListener('input', clearError, { once: true });
+        if (!name) nameInput.addEventListener('input', clearError, { once: true });
         return;
     }
 
@@ -3334,8 +3776,8 @@ document.addEventListener('click', (e) => {
                 const price = parseFloat(priceCell?.dataset.original || 0);
                 const amountTd = row.querySelector('.receipt-detail-amount');
                 if (amountTd) {
-                    const lt = qty * price;
-                    amountTd.textContent = lt ? lt.toLocaleString() : '—';
+                    const lt = Math.round(qty * price * 100) / 100;
+                    amountTd.textContent = lt ? '₹' + lt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—';
                 }
             }
         } catch (err) {
@@ -3360,7 +3802,7 @@ document.addEventListener('click', (e) => {
             const next = allCells[e.shiftKey ? idx - 1 : idx + 1];
             if (next) setTimeout(() => next.click(), 50);
         }
-    });
+    }, { once: true });
 });
 
 // Also allow Enter key on editable cells to start editing
@@ -3373,9 +3815,12 @@ document.addEventListener('keydown', (e) => {
 function restoreCell(cell, field, value) {
     if (field === 'product_code') {
         cell.innerHTML = `<span class="receipt-detail-code">${escHtml(value)}</span>`;
-    } else if (field === 'quantity' || field === 'unit_price') {
+    } else if (field === 'quantity') {
         const num = parseFloat(value) || 0;
-        cell.textContent = num ? num.toLocaleString() : '—';
+        cell.textContent = num.toLocaleString();
+    } else if (field === 'unit_price') {
+        const num = parseFloat(value) || 0;
+        cell.textContent = num ? '₹' + num.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—';
     } else {
         cell.textContent = value;
     }
@@ -3441,6 +3886,9 @@ function trapFocus(container) {
 
 /* ── Styled Confirm Modal (non-destructive) ─────────────────────────────── */
 function showStyledConfirm(title, message, confirmLabel, onConfirm) {
+    if (_activeOverlayClose) { $('#modalOverlay').removeEventListener('click', _activeOverlayClose); _activeOverlayClose = null; }
+    if (_activeModalClose) { _activeModalClose = null; }
+
     $('#modalTitle').textContent = '';
     $('#modalMessage').innerHTML = `
         <div class="confirm-delete-body">
@@ -3460,15 +3908,23 @@ function showStyledConfirm(title, message, confirmLabel, onConfirm) {
         $('#modalOverlay').style.display = 'none';
         $('#modalConfirm').style.display = '';
         $('#modalCancel').style.display = '';
+        $('#modalOverlay').removeEventListener('click', oc);
+        _activeModalClose = null;
+        _activeOverlayClose = null;
     };
     $('#confirmCancelBtn').addEventListener('click', close, { once: true });
     $('#confirmDeleteBtn').addEventListener('click', () => { close(); onConfirm(); }, { once: true });
-    const oc = (e) => { if (e.target === $('#modalOverlay')) { close(); $('#modalOverlay').removeEventListener('click', oc); } };
+    const oc = (e) => { if (e.target === $('#modalOverlay')) close(); };
     $('#modalOverlay').addEventListener('click', oc);
+    _activeModalClose = close;
+    _activeOverlayClose = oc;
 }
 
 /* ── Styled Prompt Modal (text input) ───────────────────────────────────── */
 function showStyledPrompt(title, message, defaultVal, onSubmit) {
+    if (_activeOverlayClose) { $('#modalOverlay').removeEventListener('click', _activeOverlayClose); _activeOverlayClose = null; }
+    if (_activeModalClose) { _activeModalClose = null; }
+
     $('#modalTitle').textContent = '';
     $('#modalMessage').innerHTML = `
         <div class="confirm-delete-body">
@@ -3493,6 +3949,9 @@ function showStyledPrompt(title, message, defaultVal, onSubmit) {
         $('#modalOverlay').style.display = 'none';
         $('#modalConfirm').style.display = '';
         $('#modalCancel').style.display = '';
+        $('#modalOverlay').removeEventListener('click', oc);
+        _activeModalClose = null;
+        _activeOverlayClose = null;
     };
     const submit = () => {
         const val = inp.value.trim();
@@ -3502,8 +3961,10 @@ function showStyledPrompt(title, message, defaultVal, onSubmit) {
     $('#confirmCancelBtn').addEventListener('click', close, { once: true });
     $('#confirmDeleteBtn').addEventListener('click', submit, { once: true });
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
-    const oc = (e) => { if (e.target === $('#modalOverlay')) { close(); $('#modalOverlay').removeEventListener('click', oc); } };
+    const oc = (e) => { if (e.target === $('#modalOverlay')) close(); };
     $('#modalOverlay').addEventListener('click', oc);
+    _activeModalClose = close;
+    _activeOverlayClose = oc;
 }
 
 // Apply focus trap when modal opens
@@ -4218,7 +4679,7 @@ const trainState = {
 
 // ─── Load Training Tab ───────────────────────────────────────────────────────
 
-async function loadTrainingTab() {
+async function loadTrainingTab(signal = null) {
     await Promise.all([
         loadTrainingStatus(),
         loadTrainingSamples(),

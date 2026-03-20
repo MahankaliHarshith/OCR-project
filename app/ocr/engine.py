@@ -51,6 +51,35 @@ class OCREngine:
         logger.info(f"Initializing EasyOCR reader (lang={language}, gpu={use_gpu})...")
         start = time.time()
 
+        # ── PyTorch CPU inference optimizations ──────────────────────────
+        # Applied once at first engine init. Safe for inference-only workloads.
+        try:
+            import torch
+
+            # Disable gradient computation globally (we never train)
+            # Saves memory + speeds up forward passes (~5-10% on CPU)
+            torch.set_grad_enabled(False)
+
+            # Set optimal thread count for CPU inference
+            from app.config import PYTORCH_NUM_THREADS
+            import os as _os
+            _cpu_count = _os.cpu_count() or 4
+            _num_threads = PYTORCH_NUM_THREADS if PYTORCH_NUM_THREADS > 0 else max(1, _cpu_count)
+            torch.set_num_threads(_num_threads)
+            # Inter-op parallelism: allow parallel execution of independent ops
+            torch.set_num_interop_threads(max(1, _cpu_count // 4))
+
+            # Enable MKL-DNN (oneDNN) optimizations if available
+            with contextlib.suppress(AttributeError):
+                torch.backends.mkldnn.enabled = True
+
+            logger.info(
+                f"PyTorch CPU optimizations: threads={_num_threads}, "
+                f"interop={max(1, _cpu_count // 4)}, grad=off, mkldnn=on"
+            )
+        except Exception as _torch_err:
+            logger.debug(f"PyTorch optimization setup skipped: {_torch_err}")
+
         self.reader = easyocr.Reader(
             [language],
             gpu=use_gpu,
@@ -65,18 +94,21 @@ class OCREngine:
         elapsed = time.time() - start
         logger.info(f"EasyOCR reader initialized in {elapsed:.1f}s")
 
-        # Warmup: run a realistically-sized dummy image through OCR to trigger
+        # Warmup: run realistically-sized dummy images through OCR to trigger
         # PyTorch JIT compilation. Without this, the first real scan pays ~5-8s
         # of JIT overhead on CPU, making structured receipts appear slow.
-        # Use the PRODUCTION canvas_size (1280) so CRAFT JIT-compiles the
-        # exact tensor shapes used in real scans. A mismatched warmup size
-        # causes a re-JIT on the first real call, negating the warmup.
+        # We warm up at BOTH canvas sizes used in production:
+        #   - 1280 (OCR_CANVAS_SIZE) for standard images
+        #   - 1024 for high-quality images (quality score >= 70)
+        # This prevents re-JIT on the first high-quality scan.
         warmup_start = time.time()
-        dummy = np.full((960, 1280), 200, dtype=np.uint8)  # matches OCR_CANVAS_SIZE=1280
+        dummy = np.full((960, 1280), 200, dtype=np.uint8)
         with contextlib.suppress(Exception):
             self.reader.readtext(dummy, detail=0, canvas_size=OCR_CANVAS_SIZE, mag_ratio=1.0)
+        with contextlib.suppress(Exception):
+            self.reader.readtext(dummy, detail=0, canvas_size=1024, mag_ratio=1.0)
         warmup_ms = int((time.time() - warmup_start) * 1000)
-        logger.info(f"OCR warmup completed in {warmup_ms}ms")
+        logger.info(f"OCR warmup completed in {warmup_ms}ms (2 canvas sizes)")
 
     def extract_text(self, image: np.ndarray, quality_info: dict = None) -> list[dict]:
         """
@@ -117,6 +149,12 @@ class OCREngine:
                 low_text = max(0.15, low_text - 0.1)
                 add_margin = 0.20  # Larger margin for fuzzy character boundaries
                 logger.debug("  OCR params: BLURRY mode (lower thresholds, standard mag)")
+            elif quality_info.get("score", 0) >= 70:
+                # HIGH QUALITY image: use slightly smaller canvas for speed.
+                # Clear handwriting doesn't need 1280px resolution — 1024px
+                # captures all characters while giving ~20% faster CRAFT.
+                canvas_size = 1024
+                logger.debug("  OCR params: HIGH QUALITY mode (canvas=1024 for speed)")
             if quality_info.get("is_low_contrast"):
                 # Low contrast: lower contrast threshold so EasyOCR doesn't skip faint text
                 # NOTE: Do NOT set adjust_contrast > 0.9 — the preprocessor already
@@ -189,9 +227,9 @@ class OCREngine:
 
     def extract_text_fast(self, image: np.ndarray) -> list[dict]:
         """
-        Fast-path OCR with optimized canvas & mag_ratio for speed.
-        Tuned to capture enough detail on the FIRST pass that a second
-        pass is rarely needed for same-type receipt scanning.
+        Fast-path OCR with reduced canvas for genuine speed improvement.
+        Uses canvas_size=960 (vs 1280 full) for ~35% faster CRAFT detection
+        while retaining enough resolution for handwritten receipt text.
         """
         start = time.time()
         logger.debug(f"extract_text_fast called | image shape={image.shape}")
@@ -205,7 +243,7 @@ class OCREngine:
                 text_threshold=OCR_TEXT_THRESHOLD,
                 low_text=OCR_LOW_TEXT,
                 link_threshold=OCR_LINK_THRESHOLD,
-                canvas_size=OCR_CANVAS_SIZE,          # Use production size for better accuracy
+                canvas_size=960,                          # Reduced from 1280 for ~35% speed gain
                 mag_ratio=1.5,                            # Slightly lower than full for speed
                 batch_size=1,
                 contrast_ths=0.2,

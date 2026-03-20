@@ -770,14 +770,6 @@ body {
     background: var(--primary-wash, rgba(79, 107, 246, 0.08));
 }
 
-.btn-confirmed {
-    background: var(--accent) !important;
-    color: white !important;
-    pointer-events: none;
-    opacity: 0.85;
-    box-shadow: none !important;
-}
-
 .btn-in-batch {
     background: var(--accent) !important;
     color: white !important;
@@ -1004,9 +996,9 @@ button:disabled, .btn:disabled {
     letter-spacing: 0.01em;
 }
 
-.confidence-high { background: #ECFDF5; color: #065F46; }
-.confidence-medium { background: #FFFBEB; color: #92400E; }
-.confidence-low { background: #FEF2F2; color: #991B1B; }
+.confidence-high { background: rgba(16, 185, 129, 0.1); color: var(--accent-dark); }
+.confidence-medium { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
+.confidence-low { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    DATA TABLE — Clean & airy
@@ -1086,14 +1078,14 @@ button:disabled, .btn:disabled {
 .data-table .editable:focus {
     outline: none;
     border-color: var(--primary);
-    background: white;
+    background: var(--surface);
     box-shadow: 0 0 0 3px var(--primary-wash);
 }
 
 .data-table .editable.auto-filled {
-    background: #F0FDF4;
-    border-color: #BBF7D0;
-    color: #166534;
+    background: rgba(16, 185, 129, 0.08);
+    border-color: rgba(16, 185, 129, 0.3);
+    color: var(--accent-dark);
 }
 
 .conf-cell {
@@ -1106,7 +1098,7 @@ button:disabled, .btn:disabled {
 .conf-low { color: var(--danger); }
 
 .row-low-confidence {
-    background: #FFFBEB !important;
+    background: rgba(245, 158, 11, 0.06) !important;
 }
 
 /* ─── Bill Total Verification Panel ────────────────────────────────────── */
@@ -1118,16 +1110,16 @@ button:disabled, .btn:disabled {
     transition: background 0.2s;
 }
 .total-verification-panel.total-verified {
-    background: #F0FFF4;
-    border-top-color: #C6F6D5;
+    background: rgba(16, 185, 129, 0.06);
+    border-top-color: rgba(16, 185, 129, 0.2);
 }
 .total-verification-panel.total-mismatch {
-    background: #FFFBEB;
-    border-top-color: #FEFCBF;
+    background: rgba(245, 158, 11, 0.06);
+    border-top-color: rgba(245, 158, 11, 0.2);
 }
 .total-verification-panel.total-no-total {
-    background: #EBF8FF;
-    border-top-color: #BEE3F8;
+    background: rgba(59, 130, 246, 0.06);
+    border-top-color: rgba(59, 130, 246, 0.2);
 }
 
 .total-verification-header {
@@ -1156,16 +1148,16 @@ button:disabled, .btn:disabled {
     margin-left: auto;
 }
 .badge-match {
-    background: #C6F6D5;
-    color: #22543D;
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--accent-dark);
 }
 .badge-mismatch {
-    background: #FEFCBF;
-    color: #975A16;
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
 }
 .badge-no-total {
-    background: #BEE3F8;
-    color: #2A4365;
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--primary);
 }
 
 .total-verification-body {
@@ -1292,7 +1284,7 @@ button:disabled, .btn:disabled {
     border-radius: var(--radius-sm);
     padding: 0.65rem 0.85rem;
     margin: 0.75rem 1rem;
-    color: #92400E;
+    color: var(--warning);
     font-size: 0.8rem;
     line-height: 1.5;
 }
@@ -1424,8 +1416,8 @@ button:disabled, .btn:disabled {
    POST-CONFIRM PANEL
    ═══════════════════════════════════════════════════════════════════════════ */
 .post-confirm-panel {
-    background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #f0f9ff 100%);
-    border: 1px solid #86efac;
+    background: rgba(16, 185, 129, 0.06);
+    border: 1px solid rgba(16, 185, 129, 0.25);
     border-radius: var(--radius);
     padding: 1rem 1.25rem;
     margin-top: 0.5rem;
@@ -1447,7 +1439,7 @@ button:disabled, .btn:disabled {
 
 .post-confirm-header strong {
     font-size: 0.95rem;
-    color: #166534;
+    color: var(--accent-dark);
 }
 
 .post-confirm-id {
@@ -1812,6 +1804,16 @@ button:disabled, .btn:disabled {
     padding: 0.3rem 0.65rem;
     border: 1px solid rgba(255,255,255,0.3);
 }
+.receipt-bulk-actions .btn-primary {
+    background: rgba(255,255,255,0.2);
+    border-color: rgba(255,255,255,0.4);
+    color: #fff;
+    box-shadow: none;
+}
+.receipt-bulk-actions .btn-primary:hover {
+    background: rgba(255,255,255,0.35);
+    box-shadow: none;
+}
 .receipt-bulk-actions .btn-danger {
     background: var(--danger);
     border-color: var(--danger);
@@ -1894,16 +1896,16 @@ button:disabled, .btn:disabled {
     font-weight: 600;
 }
 .receipt-meta-badge.badge-conf-high {
-    background: color-mix(in srgb, #22c55e 12%, transparent);
-    color: #16a34a;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent-dark);
 }
 .receipt-meta-badge.badge-conf-mid {
-    background: color-mix(in srgb, #f59e0b 12%, transparent);
-    color: #d97706;
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
+    color: var(--warning);
 }
 .receipt-meta-badge.badge-conf-low {
-    background: color-mix(in srgb, #ef4444 12%, transparent);
-    color: #dc2626;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
 }
 
 .receipt-actions {
@@ -2007,7 +2009,7 @@ button:disabled, .btn:disabled {
     position: fixed;
     bottom: 1.25rem;
     right: 1.25rem;
-    z-index: 1000;
+    z-index: 10001;
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
@@ -3626,16 +3628,16 @@ button:disabled, .btn:disabled {
 
 /* ─── Azure Usage Warning Banner ───────────────────────────────────────── */
 .azure-warning-banner {
-    background: linear-gradient(135deg, #FEF3C7, #FDE68A);
-    border: 1px solid #F59E0B;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
     border-radius: 10px;
     padding: 0.6rem 1rem;
     margin-bottom: 0.75rem;
     animation: slideDown 0.3s ease;
 }
 .azure-warning-banner.azure-danger {
-    background: linear-gradient(135deg, #FEE2E2, #FECACA);
-    border-color: #EF4444;
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.3);
 }
 .azure-warning-content {
     display: flex;
@@ -3643,9 +3645,9 @@ button:disabled, .btn:disabled {
     gap: 0.5rem;
     font-size: 0.85rem;
     font-weight: 500;
-    color: #92400E;
+    color: var(--warning);
 }
-.azure-danger .azure-warning-content { color: #991B1B; }
+.azure-danger .azure-warning-content { color: var(--danger); }
 .azure-warning-close {
     margin-left: auto;
     background: none;
@@ -3676,7 +3678,7 @@ button:disabled, .btn:disabled {
     animation: fadeIn 0.2s ease;
 }
 .azure-usage-card {
-    background: var(--card-bg, #fff);
+    background: var(--surface);
     border-radius: 16px;
     box-shadow: 0 20px 60px rgba(0,0,0,0.15);
     width: min(420px, 90vw);
@@ -3770,19 +3772,19 @@ button:disabled, .btn:disabled {
     margin-top: 0.5rem;
 }
 .azure-scan-info.info-local {
-    background: #EFF6FF;
-    color: #1E40AF;
-    border: 1px solid #BFDBFE;
+    background: rgba(59, 130, 246, 0.08);
+    color: var(--primary);
+    border: 1px solid rgba(59, 130, 246, 0.2);
 }
 .azure-scan-info.info-azure {
-    background: #F0FDF4;
-    color: #166534;
-    border: 1px solid #BBF7D0;
+    background: rgba(16, 185, 129, 0.08);
+    color: var(--accent-dark);
+    border: 1px solid rgba(16, 185, 129, 0.2);
 }
 .azure-scan-info.info-blocked {
-    background: #FEF3C7;
-    color: #92400E;
-    border: 1px solid #FDE68A;
+    background: rgba(245, 158, 11, 0.08);
+    color: var(--warning);
+    border: 1px solid rgba(245, 158, 11, 0.2);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4416,4 +4418,265 @@ kbd {
     font-weight: 500;
     color: var(--text);
     box-shadow: 0 1px 0 var(--border);
+}
+
+/* ─── Form Validation Error Highlighting ─────────────────────────────────── */
+.input-error {
+    border-color: #ef4444 !important;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15) !important;
+    animation: shake 0.3s ease-in-out;
+}
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+}
+
+/* ─── Confidence Badge Tooltip ─────────────────────────────────────────────── */
+.conf-tooltip {
+    position: relative;
+    cursor: help;
+}
+.conf-tooltip::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.35rem 0.6rem;
+    background: var(--text);
+    color: var(--bg);
+    border-radius: var(--radius-sm);
+    font-size: 0.68rem;
+    font-weight: 500;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    z-index: 100;
+}
+.conf-tooltip:hover::after {
+    opacity: 1;
+}
+
+/* ─── Catalog Pagination ───────────────────────────────────────────────────── */
+.catalog-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 0;
+    margin-top: 0.5rem;
+}
+.catalog-pagination .btn {
+    min-width: 2rem;
+}
+.catalog-pagination .page-info {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+.catalog-sort-header th {
+    cursor: pointer;
+    user-select: none;
+    transition: color var(--duration) var(--ease);
+    position: relative;
+}
+.catalog-sort-header th:hover {
+    color: var(--primary);
+}
+.catalog-sort-header th .sort-icon {
+    display: inline-block;
+    width: 12px;
+    margin-left: 4px;
+    opacity: 0.4;
+    font-size: 0.7rem;
+    vertical-align: middle;
+}
+.catalog-sort-header th.sort-active .sort-icon {
+    opacity: 1;
+    color: var(--primary);
+}
+
+/* ─── Undo Delete Toast ────────────────────────────────────────────────────── */
+.toast-undo {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.toast-undo-btn {
+    background: rgba(255,255,255,0.25);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.4);
+    border-radius: var(--radius-sm);
+    padding: 0.15rem 0.65rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    transition: background 0.15s ease;
+}
+.toast-undo-btn:hover {
+    background: rgba(255,255,255,0.4);
+}
+.toast-undo-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    background: rgba(255,255,255,0.6);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    animation: undo-countdown 5s linear forwards;
+}
+@keyframes undo-countdown {
+    from { width: 100%; }
+    to { width: 0%; }
+}
+
+/* ─── Daily Report Preview Modal ──────────────────────────────────────────── */
+.daily-report-preview {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+.daily-report-preview table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+.daily-report-preview th {
+    background: var(--surface);
+    padding: 0.5rem;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--border-light);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.daily-report-preview td {
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border-light);
+}
+.daily-report-preview .report-summary {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+.daily-report-preview .report-stat {
+    background: var(--surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 1rem;
+    text-align: center;
+}
+.daily-report-preview .report-stat-value {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--primary);
+    display: block;
+}
+.daily-report-preview .report-stat-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+.daily-report-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-light);
+}
+
+/* ─── Print Stylesheet ─────────────────────────────────────────────────────── */
+@media print {
+    /* Hide navigation, controls, footer, modals overlay */
+    .app-header, .bottom-nav, .tab-bar, .nav-container,
+    .batch-bar, .receipt-bulk-actions, .post-confirm-panel,
+    .action-buttons, .receipt-actions, .receipt-checkbox,
+    .shortcut-btn, .shortcuts-panel, .toast-container,
+    #scrollTopBtn, .receipt-edit-toolbar, .receipt-detail-num button,
+    .modal-close-btn, .modal-actions, .batch-actions,
+    .header-actions, .section-header button, .csv-import-area,
+    .product-form, .empty-state button, .lightbox-overlay {
+        display: none !important;
+    }
+
+    /* Reset backgrounds and shadows */
+    body, .app-header, .modal, .modal-overlay, .receipt-card,
+    .receipt-detail-view, .receipt-stat-card {
+        background: #fff !important;
+        color: #000 !important;
+        box-shadow: none !important;
+    }
+
+    /* Make modal content printable */
+    .modal-overlay {
+        position: static !important;
+        background: transparent !important;
+        z-index: auto !important;
+        display: block !important;
+    }
+    .modal {
+        position: static !important;
+        max-width: 100% !important;
+        width: 100% !important;
+        max-height: none !important;
+        overflow: visible !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        transform: none !important;
+    }
+    .modal-body {
+        max-height: none !important;
+        overflow: visible !important;
+        padding: 0 !important;
+    }
+
+    /* Receipt detail print */
+    .receipt-detail-table {
+        width: 100%;
+        border-collapse: collapse;
+        page-break-inside: avoid;
+    }
+    .receipt-detail-table th,
+    .receipt-detail-table td {
+        border: 1px solid #ccc !important;
+        padding: 4px 8px !important;
+        color: #000 !important;
+    }
+    .receipt-detail-stats {
+        page-break-inside: avoid;
+    }
+    .receipt-stat-card {
+        border: 1px solid #ccc !important;
+    }
+    .receipt-detail-math {
+        page-break-inside: avoid;
+    }
+
+    /* Confidence badges — black & white */
+    .conf-high, .conf-mid, .conf-low,
+    .badge-conf-high, .badge-conf-mid, .badge-conf-low {
+        background: #eee !important;
+        color: #000 !important;
+        border: 1px solid #999 !important;
+    }
+
+    /* Ensure images print */
+    .receipt-detail-image img {
+        max-width: 300px;
+        page-break-inside: avoid;
+    }
+
+    /* Hide everything except the open modal (if receipt detail is open) */
+    .tab-content:not(.active) { display: none !important; }
+
+    /* Page margins */
+    @page {
+        margin: 1.5cm;
+    }
 }

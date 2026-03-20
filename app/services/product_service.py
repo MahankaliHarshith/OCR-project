@@ -7,6 +7,8 @@ import/export, and fuzzy search capabilities.
 import csv
 import io
 import logging
+import threading
+import time
 
 from app.database import db
 
@@ -16,8 +18,27 @@ logger = logging.getLogger(__name__)
 class ProductService:
     """Service layer for product catalog management."""
 
+    # TTL for cached catalog lookups (seconds).
+    # Prevents redundant DB round-trips when multiple pipeline steps
+    # call get_product_code_map / get_product_catalog_full per scan.
+    _CATALOG_CACHE_TTL = 10.0
+
     def __init__(self):
         self.db = db
+        # Catalog cache: avoids repeated DB queries during a single scan pipeline
+        self._cache_lock = threading.Lock()
+        self._code_map_cache: dict[str, str] | None = None
+        self._code_map_ts: float = 0.0
+        self._catalog_full_cache: dict[str, dict] | None = None
+        self._catalog_full_ts: float = 0.0
+
+    def _invalidate_catalog_cache(self) -> None:
+        """Clear cached catalog data after any mutation (add/update/delete/import)."""
+        with self._cache_lock:
+            self._code_map_cache = None
+            self._code_map_ts = 0.0
+            self._catalog_full_cache = None
+            self._catalog_full_ts = 0.0
 
     def get_all_products(self, limit: int = 0, offset: int = 0) -> list[dict]:
         """Get active products from the catalog (paginated)."""
@@ -65,6 +86,7 @@ class ProductService:
             raise ValueError(f"Product code '{code}' already exists.")
 
         product = self.db.add_product(code, name.strip(), category.strip(), unit.strip())
+        self._invalidate_catalog_cache()
         logger.info(f"Product added: {code} → {name}")
         return product
 
@@ -85,6 +107,7 @@ class ProductService:
             raise ValueError(f"Product code '{code}' not found.")
 
         result = self.db.update_product(code, **kwargs)
+        self._invalidate_catalog_cache()
         logger.info(f"Product updated: {code}")
         return result
 
@@ -101,6 +124,7 @@ class ProductService:
         code = code.upper().strip()
         result = self.db.delete_product(code)
         if result:
+            self._invalidate_catalog_cache()
             logger.info(f"Product deleted: {code}")
         return result
 
@@ -112,12 +136,37 @@ class ProductService:
         return results
 
     def get_product_code_map(self) -> dict[str, str]:
-        """Get simple code → name mapping for the parser."""
-        return self.db.get_product_code_map()
+        """Get simple code → name mapping for the parser.
+
+        TTL-cached to avoid redundant DB queries when multiple pipeline
+        steps call this within the same scan (~10s window).
+        """
+        now = time.time()
+        with self._cache_lock:
+            if self._code_map_cache is not None and (now - self._code_map_ts) < self._CATALOG_CACHE_TTL:
+                return self._code_map_cache
+        # Fetch outside lock to avoid holding it during DB I/O
+        result = self.db.get_product_code_map()
+        with self._cache_lock:
+            self._code_map_cache = result
+            self._code_map_ts = time.time()
+        return result
 
     def get_product_catalog_full(self) -> dict[str, dict]:
-        """Get full catalog keyed by product code."""
-        return self.db.get_product_catalog_full()
+        """Get full catalog keyed by product code.
+
+        TTL-cached to avoid redundant DB queries when multiple pipeline
+        steps call this within the same scan (~10s window).
+        """
+        now = time.time()
+        with self._cache_lock:
+            if self._catalog_full_cache is not None and (now - self._catalog_full_ts) < self._CATALOG_CACHE_TTL:
+                return self._catalog_full_cache
+        result = self.db.get_product_catalog_full()
+        with self._cache_lock:
+            self._catalog_full_cache = result
+            self._catalog_full_ts = time.time()
+        return result
 
     def import_from_csv(self, csv_content: str) -> dict:
         """
@@ -174,6 +223,8 @@ class ProductService:
                 errors.append(f"Error importing row {row}: {e}")
 
         logger.info(f"CSV import: {added} added, {skipped} skipped, {len(errors)} errors")
+        if added > 0:
+            self._invalidate_catalog_cache()
         return {
             "added": added,
             "skipped": skipped,

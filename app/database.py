@@ -79,8 +79,22 @@ class ConnectionPool:
         # Create a fresh connection for this thread
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
+
+        # ── Performance-critical PRAGMAs ──────────────────────────────────
+        # These are set per-connection (not persistent like journal_mode).
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 5000")
+        # synchronous=NORMAL is safe with WAL mode — reduces fsync calls
+        # from every commit to once per WAL checkpoint (~2-5× write speedup)
+        conn.execute("PRAGMA synchronous = NORMAL")
+        # 8 MB page cache (default is ~2 MB) — fewer disk reads for hot data
+        conn.execute("PRAGMA cache_size = -8000")
+        # 256 MB memory-mapped I/O — OS page cache handles reads directly,
+        # bypassing SQLite's own read() calls (~30% faster reads on warm DB)
+        conn.execute("PRAGMA mmap_size = 268435456")
+        # Temp tables/indexes in memory instead of disk (sorts, GROUP BY)
+        conn.execute("PRAGMA temp_store = MEMORY")
+
         self._local.conn = conn
 
         with self._lock:
@@ -414,6 +428,7 @@ class MigrationManager:
             current = 1
             logger.info("Schema migration: existing DB marked as v1 (baseline)")
 
+        applied_any = False
         for version, name, migration in self.MIGRATIONS:
             if version <= current:
                 continue
@@ -433,11 +448,24 @@ class MigrationManager:
                     (version, name),
                 )
                 conn.commit()
+                applied_any = True
                 logger.info("Schema migration applied: v%d — %s", version, name)
             except Exception as exc:
                 conn.rollback()
                 logger.error("Migration v%d (%s) failed: %s", version, name, exc)
                 raise
+
+        # Run ANALYZE after migrations so the query planner has up-to-date
+        # index statistics. Without this, SQLite may choose full table scans
+        # over indexed lookups on newly-created indexes.
+        if applied_any:
+            try:
+                conn = self._pool.get()
+                conn.execute("ANALYZE")
+                conn.commit()
+                logger.info("ANALYZE completed — query planner statistics updated")
+            except Exception as exc:
+                logger.warning("ANALYZE failed (non-fatal): %s", exc)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -5,7 +5,7 @@
 **Key constraint:** Operates within Azure free tier (500 pages/month) via 6-layer cost defense. Works fully offline with local EasyOCR alone.  
 **Latest audit:** 🏆 **91/100 (Grade A)** — 100% code detection, 100% qty accuracy on synthetic images, 0 critical failures.  
 **Smart OCR:** Phase 2 complete — duplicate detection, quality scoring (0–100 + letter grade), validation rules, OCR correction feedback loop, date/store extraction. 7 bugs found & fixed via deep edge-case testing.  
-**Tests:** **314 tests passing** (283 unit + 31 integration) across 15+ test files.
+**Tests:** **594 tests passing** (563 unit + 31 integration) across 15+ test files.
 
 ---
 
@@ -20,32 +20,42 @@ OCR project/
 │   ├── CONTEXT.md                                # This file — project context & architecture
 │   ├── DEEP_AUDIT_REPORT.md                      # Audit results (91/100 A) + training guide
 │   ├── HYBRID_OCR_ARCHITECTURE.md
+│   ├── PERFORMANCE_AUDIT_REPORT.md                # 3-phase performance optimization audit
+│   ├── SPEED_AND_ACCURACY_AUDIT.md
+│   ├── RECEIPT_PLACEMENT_AND_FORMAT_GUIDE.md
+│   ├── RECEIPT_SPACING_AND_BEST_PRACTICES.md
 │   ├── AI_Receipt_Generation_Prompts.md
 │   ├── Receipt_Design_and_Scanning_Guide.md
 │   └── PRD.txt
+├── DEVELOPMENT_GUIDE.md                              # Agent instructions + pre-flight checklist
+├── OPTIMIZATION_HISTORY.md                            # Performance engineering log (20s → <100ms cached)
 ├── app/
-│   ├── config.py (240L)         main.py (254L)   middleware.py (232L)
-│   ├── database.py (1328L)      db_postgres.py (449L)
+│   ├── config.py (261L)         main.py (254L)   middleware.py (232L)
+│   ├── database.py (1178L)      db_postgres.py (449L)
 │   ├── logging_config.py (125L) json_logging.py (136L)
 │   ├── observability.py (327L)  tracing.py (187L)   metrics.py (122L)
 │   ├── error_tracking.py (175L) websocket.py (92L)
-│   ├── api/routes.py (974L)     ← +54L for Smart OCR endpoints
+│   ├── api/routes.py (1145L)    ← +SSE streaming + Tally export endpoints
 │   ├── ocr/
-│   │   ├── preprocessor.py (1002L)  engine.py (374L)     parser.py (2468L)
-│   │   ├── azure_engine.py (570L)   hybrid_engine.py (1192L)
-│   │   ├── total_verifier.py (714L) quality_scorer.py (175L) validators.py (186L)
+│   │   ├── preprocessor.py (1041L)  engine.py (407L)     parser.py (2473L)
+│   │   ├── azure_engine.py (602L)   hybrid_engine.py (1506L)
+│   │   ├── total_verifier.py (714L) quality_scorer.py (149L) validators.py (186L)
 │   │   ├── usage_tracker.py (364L)  image_cache.py (261L)
 │   ├── services/
-│   │   ├── receipt_service.py (980L)  product_service.py (169L)  excel_service.py (327L)
-│   │   ├── batch_service.py (441L)    dedup_service.py (131L)    correction_service.py (111L)
+│   │   ├── receipt_service.py (1024L) product_service.py (216L)  excel_service.py (330L)
+│   │   ├── batch_service.py (457L)    dedup_service.py (131L)    correction_service.py (111L)
+│   │   ├── tally_service.py (237L)    ← Tally-compatible XML purchase voucher export
 │   ├── static/
-│   │   ├── index.html (954L)  styles.css (2991L)  app.js (3985L)  lucide.min.js
+│   │   ├── index.html (1060L) styles.css (4221L)  app.js (5138L)  lucide.min.js
 │   └── training/
 │       ├── routes.py (352L)  benchmark.py (358L)  optimizer.py (290L)
 │       ├── data_manager.py (284L)  template_learner.py (303L)
 │       └── real_world_trainer.py (909L)  # Adaptive trainer with error mining + learned rules
 ├── scripts/
 │   ├── start_server.py  start_public.py  start_devtunnel.py  train.py  trainer.py (530L)
+│   ├── benchmark_now.py (274L)  check_azure_status.py (148L)  azure_performance.py (203L)
+│   ├── scan_one.py  scan_handwritten.py  scan_ideal_receipt.py  scan_srirama_azure.py  show_results.py
+│   ├── test_srirama_local.py  test_srirama_scan.py
 │   ├── dev/ benchmark_azure_vs_local.py  benchmark_pipeline.py  diag_edge.py  dump_ocr.py
 │   └── generators/ create_test_receipt.py  generate_edge_case_receipts.py  generate_test_receipts.py
 ├── tests/
@@ -84,7 +94,7 @@ OCR project/
 | `IMAGE_QUALITY_GATE_ENABLED` | `true` | Reject blurry/dark images from Azure |
 | `IMAGE_QUALITY_MIN_SHARPNESS` | `30.0` | Laplacian variance threshold |
 | `IMAGE_QUALITY_MIN_BRIGHTNESS` | `40` | Mean pixel value threshold |
-| `IMAGE_CACHE_MAX_SIZE` | `200` | LRU entries |
+| `IMAGE_CACHE_MAX_SIZE` | `500` | LRU entries |
 | `IMAGE_CACHE_TTL` | `86400` | Seconds (24h) |
 | `RATE_LIMIT_RPM` | `30` | Per-IP general rate limit |
 | `RATE_LIMIT_SCAN_RPM` | `10` | Per-IP scan rate limit |
@@ -106,12 +116,18 @@ OCR project/
 | `SENTRY_ENVIRONMENT` | `development` | Sentry environment tag |
 | `OTEL_TRACING_ENABLED` | `false` | Enable OpenTelemetry distributed tracing |
 | `OTEL_EXPORTER_ENDPOINT` | `localhost:4317` | OTLP endpoint for trace export |
+| `AZURE_IMAGE_FORMAT` | `jpeg` | Upload format for Azure (`jpeg` or `webp` — WebP is 25-34% smaller) |
+| `AZURE_SPECULATIVE_PARALLEL` | `false` | Fire Azure concurrently with local screen (trades cost for speed) |
+| `AZURE_POLLING_INTERVAL` | `0.5` | Seconds between Azure result polls (down from 1.0) |
+| `PYTORCH_NUM_THREADS` | `0` | CPU threads for EasyOCR inference (0=auto) |
+| `SSE_PROGRESS_ENABLED` | `true` | Enable Server-Sent Events for real-time scan progress |
+| `BATCH_AZURE_MAX_CONCURRENT` | `5` | Max concurrent Azure calls in batch mode |
 
 **dotenv:** `config.py` calls `load_dotenv(BASE_DIR / ".env")` at import (silent if python-dotenv missing).
 
 ---
 
-## Key Config Constants (`app/config.py` — 227L)
+## Key Config Constants (`app/config.py` — 261L)
 
 ```
 Paths:     BASE_DIR / uploads / exports / models / logs / data / backups (all auto-created)
@@ -120,14 +136,20 @@ Paths:     BASE_DIR / uploads / exports / models / logs / data / backups (all au
 EasyOCR:   CANVAS_SIZE=1280 (optimized from 1536 for same-receipt-type speed)
            MAG_RATIO=1.8 (optimized from 2.0 — ~15% speed gain)
            MIN_SIZE=10, CONFIDENCE_THRESHOLD=0.40, USE_GPU=False
-           SMART_PASS_THRESHOLD=3 (skip 2nd OCR pass once 3+ items found)
+           SMART_PASS_THRESHOLD=4 (skip 2nd OCR pass once 4+ items found — raised from 3 for accuracy)
            PARALLEL_DUAL_PASS=True (ThreadPoolExecutor dual-pass)
+           PYTORCH_NUM_THREADS=0 (0=auto, limits CPU threads for EasyOCR inference)
 
 Azure:     AZURE_API_TIMEOUT=30, AZURE_IMAGE_MAX_DIMENSION=1500, AZURE_IMAGE_QUALITY=85
            AZURE_RECEIPT_CONFIDENCE_THRESHOLD=0.6, AZURE_RECEIPT_MIN_ITEMS=1
            HYBRID_CROSS_VERIFY=False  (True = always run local after Azure → doubles cost)
+           AZURE_IMAGE_FORMAT="jpeg" (supports "webp" for 25-34% smaller uploads)
+           AZURE_SPECULATIVE_PARALLEL=False (fire Azure concurrently with local — trades cost for speed)
+           AZURE_POLLING_INTERVAL=0.5 (seconds between Azure result polls, down from 1.0)
+           BATCH_AZURE_MAX_CONCURRENT=5 (max concurrent Azure calls in batch mode)
 
-Preprocess: IMAGE_MAX_DIMENSION=1800, CLAHE_CLIP_LIMIT=2.0, CLAHE_TILE_GRID=(8,8)
+Preprocess: IMAGE_MAX_DIMENSION=1600 (optimized from 1800 — ~21% fewer pixels, same accuracy)
+           CLAHE_CLIP_LIMIT=2.0, CLAHE_TILE_GRID=(8,8)
 
 Excel:     EXCEL_HEADER_COLOR="4472C4", ALT_ROW_COLOR="F2F2F2", LOW_CONF_COLOR="FFD966"
 
@@ -136,11 +158,15 @@ Fuzzy:     FUZZY_MATCH_CUTOFF=0.72, FUZZY_MAX_RESULTS=5
 
 App:       MAX_FILE_SIZE_MB=20, ALLOWED_EXTENSIONS={jpg,jpeg,png,bmp,tiff,webp}
            API_DOCS_ENABLED=True (controls /docs and /redoc endpoints)
+           SSE_PROGRESS_ENABLED=True (Server-Sent Events for real-time scan progress)
+
+Cache:     IMAGE_CACHE_MAX_SIZE=500 (LRU entries, increased from 200)
+           IMAGE_CACHE_TTL=86400 (24h)
 ```
 
 ---
 
-## Database Architecture (`database.py` — 1328L)
+## Database Architecture (`database.py` — 1178L)
 
 ### Architecture (6 subsystems)
 
@@ -241,24 +267,37 @@ schema_migrations: version(PK), name, applied_at   ← migration tracking (v1–
 
 ---
 
-## Hybrid OCR Pipeline (AUTO mode — `hybrid_engine.py` — 1170L)
+## Hybrid OCR Pipeline (AUTO mode — `hybrid_engine.py` — 1506L)
+
+### Parallel Fast-Screen + Azure Routing Architecture (v3.0)
+
+Rewrote from serial "local-first-then-Azure" to **parallel fast-screen + Azure routing**:
 
 ```
 [0] image_cache.get(SHA-256)          → HIT: return free          (strategy: auto-cached)
 [1] _check_image_quality()            → sharpness<30 OR dark<40:
                                          return local only         (auto-quality-gate)
-[2] _run_local_pipeline() (free)
-    crop → turbo/fast → count items
-    → optional color EXIF-corrected pass
-    conf≥0.85 AND detections≥4
-    AND catalog_match≥30%?            → return local              (auto-local-skip)
+[2] PARALLEL FAST SCREEN:
+    ┌──────────────────────────────────────────────────────┐
+    │  Thread A: _run_local_pipeline() (free)              │
+    │    crop → turbo/fast → count items                   │
+    │    → optional color EXIF-corrected pass              │
+    │                                                      │
+    │  Thread B: Prepare Azure image bytes (WebP/JPEG)     │
+    │    (runs concurrently with local screen)              │
+    └──────────────────────────────────────────────────────┘
+    Local good enough? (conf≥0.85 AND detections≥4
+    AND catalog_match≥30%)            → return local              (auto-local-skip)
 [3] usage_tracker.can_call_azure()    → blocked?  return local     (auto-usage-limited)
-[4] Azure — single model per AZURE_MODEL_STRATEGY
+[4] Azure — pre-built image bytes sent immediately (no disk re-read)
     "receipt-only"     → prebuilt-receipt  $0.01     ← DEFAULT
     "read-only"        → prebuilt-read     $0.0015
     "receipt-then-read"→ receipt then read (up to 2 pages!)
+    Polling interval: 0.5s (configurable, down from 1.0s)
     → image_cache.put() → return                                   (auto-azure-read/receipt)
 [5] Azure failed → return local                                    (auto-fallback-local)
+[Optional] AZURE_SPECULATIVE_PARALLEL=True → fire Azure concurrently with local screen
+           (trades cost for speed — Azure starts before local decision)
 [Optional] HYBRID_CROSS_VERIFY=True → run local again to cross-check (1.15× boost on overlap)
 ```
 
@@ -272,10 +311,10 @@ schema_migrations: version(PK), name, applied_at   ← migration tracking (v1–
 
 ---
 
-## Preprocessing Pipeline (`preprocessor.py` — 1014L)
+## Preprocessing Pipeline (`preprocessor.py` — 1041L)
 
 ```
-Raw image → _load_with_exif_correction() → resize (max 1800px)
+Raw image → _load_with_exif_correction() → resize (max 1600px)
 → grayscale → deskew (HoughLinesP, ±15°, skip if angle < 1.5° for speed)
 → quality check (Laplacian + brightness)
 → enhance: Gaussian blur(3,3) + unsharp if blurry + bilateral if low quality
@@ -294,7 +333,7 @@ Returns `(ndarray, metadata_dict)`. `detect_grid_structure()` → True if ≥6 h
 
 ## OCR Engines
 
-### `engine.py` — OCREngine (EasyOCR) — 373L
+### `engine.py` — OCREngine (EasyOCR) — 407L
 
 | Method | Canvas | MagRatio | width_ths | Notes |
 |---|---|---|---|---|
@@ -309,11 +348,13 @@ Returns `(ndarray, metadata_dict)`. `detect_grid_structure()` → True if ≥6 h
 
 JIT warmup on init (dummy 1024×768 image → eliminates 5-8s first-scan cold start). All return `[{bbox, text, confidence, needs_review}]`.
 
-### `azure_engine.py` — AzureOCREngine — 579L
+### `azure_engine.py` — AzureOCREngine — 602L
 - `extract_receipt_structured(path)` → `{items, merchant, total, subtotal, tax, ocr_detections, ...}` (prebuilt-receipt)
 - `extract_text_read(path)` → EasyOCR-compatible list (prebuilt-read)
 - `extract_text_from_bytes(bytes, model)` → same as above but from in-memory bytes
-- `_optimize_image_for_upload()` → JPEG 1500px 85q (4MB → ~300KB typical)
+- `_optimize_image_for_upload()` → JPEG/WebP 1500px 85q (4MB → ~300KB typical). WebP encoding 25-34% smaller than JPEG.
+- `preloaded_image` parameter to skip disk re-reads (used by parallel architecture)
+- Configurable polling interval (0.5s default, down from 1.0s)
 - Records usage even on failure. Polygon bboxes in clockwise TL,TR,BR,BL order.
 
 ---
@@ -333,7 +374,7 @@ JIT warmup on init (dummy 1024×768 image → eliminates 5-8s first-scan cold st
 
 ---
 
-## Quality Scorer (`quality_scorer.py` — 175L)
+## Quality Scorer (`quality_scorer.py` — 149L)
 
 Computes a 0–100 quality score and letter grade (A/B/C/D) per receipt:
 
@@ -388,7 +429,7 @@ Daily entries auto-pruned after 7 days. Free tier = 500 pages/month = ~22 pages/
 
 ## Image Cache (`image_cache.py` — 262L)
 
-- SHA-256 of file bytes → LRU OrderedDict (max 200 entries, 24h TTL)
+- SHA-256 of file bytes → LRU OrderedDict (max 500 entries, 24h TTL)
 - **Disk-persisted** to `data/image_cache.json` — survives server restarts
 - `_make_json_safe()` handles numpy types. `_save_to_disk_unlocked()` runs inside threading.Lock.
 - `get_stats()` returns `{size, hit_rate, azure_calls_saved, persisted: True/False}`
@@ -423,12 +464,13 @@ Daily entries auto-pruned after 7 days. Free tier = 500 pages/month = ~22 pages/
 
 ---
 
-## REST API (`routes.py` — 974L)
+## REST API (`routes.py` — 1145L)
 
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/health` | version, ocr_mode, azure_available, local_loaded |
 | POST | `/api/receipts/scan` | 1MB chunk streaming, UUID suffix on filename, async via asyncio.to_thread |
+| POST | `/api/receipts/scan-stream` | **SSE streaming** — Server-Sent Events for real-time OCR progress updates |
 | POST | `/api/receipts/batch-async` | Async batch processing, returns batch_id immediately |
 | GET | `/api/batch/{id}` | Poll batch job status |
 | GET/DELETE | `/api/receipts/{id}` | 🔒 DELETE protected |
@@ -439,7 +481,9 @@ Daily entries auto-pruned after 7 days. Free tier = 500 pages/month = ~22 pages/
 | GET/POST/PUT/DELETE | `/api/products[/{code}]` | Full CRUD, soft-delete, pagination (limit/offset) |
 | GET/POST | `/api/products/search` · `/api/products/export/csv` · `/api/products/import/csv` | CSV import validates: .csv ext, 1MB max, UTF-8 |
 | POST/GET | `/api/export/excel` · `/api/export/daily` | |
-| GET | `/api/export/download/{filename}` | Path traversal guard, .xlsx/.csv only |
+| POST | `/api/export/tally` | **Tally XML export** — TallyPrime-compatible purchase voucher XML |
+| GET | `/api/export/tally/daily` | **Daily Tally export** — all receipts for a date as Tally XML |
+| GET | `/api/export/download/{filename}` | Path traversal guard, .xlsx/.csv/.xml only |
 | GET | `/uploads/{filename}` | Secure image serving (replaces raw static mount), image ext only |
 | GET | `/api/dashboard` | Parallel DB queries via asyncio.gather (2-3× faster), includes `ocr_engine: get_engine_status()` |
 | GET | `/api/ocr/status` | Full engine status |
@@ -476,7 +520,7 @@ Real-time batch processing updates via `ws://host:port/ws/batch/{batch_id}`:
 
 ## Service Layer
 
-**`receipt_service.py` (980L)** — 6-step pipeline:
+**`receipt_service.py` (1024L)** — 6-step pipeline:
 1. `_save_uploaded_image()` → `uploads/receipt_YYYYMMDD_HHMMSS_<uuid6>.ext`
 2. `preprocessor.preprocess()` → save processed image
 3. `detect_grid_structure()` → `hybrid_engine.process_image(path, processed, is_structured)`
@@ -494,8 +538,9 @@ Real-time batch processing updates via `ws://host:port/ws/batch/{batch_id}`:
 
 **`dedup_service.py` (131L)** — 3-layer duplicate detection: perceptual image hash (8×8 grayscale average hash, hamming distance ≤5) + content fingerprint (SHA-256 of sorted code:qty pairs) + user confirmation prompt. 24h dedup window. Bug fixes: handles SQL NULL hashes, None codes, empty fingerprints.  
 **`correction_service.py` (111L)** — OCR correction feedback loop: records user corrections (code/qty changes), builds lookup map from corrections with ≥2 occurrences (filters noise), thread-safe cache with invalidation. Parser checks this map before fuzzy matching.  
-**`product_service.py` (169L)** — CRUD + CSV import/export, fuzzy search via difflib.  
-**`excel_service.py` (327L)** — 2-sheet .xlsx: "Daily Sales Report" + "Summary" with OpenPyXL styles.
+**`tally_service.py` (237L)** — Generates Tally-compatible XML and JSON from receipt data. Creates purchase vouchers with proper ENVELOPE/HEADER/BODY structure for TallyPrime HTTP API or Gateway import.  
+**`product_service.py` (216L)** — CRUD + CSV import/export, fuzzy search via difflib.  
+**`excel_service.py` (330L)** — 2-sheet .xlsx: "Daily Sales Report" + "Summary" with OpenPyXL styles.
 
 ---
 
@@ -656,11 +701,17 @@ training_data/
 
 ## Frontend (`app/static/`)
 
-**`index.html` (954L)** — Multi-tab SPA: Scan | Receipts | Catalog | Training. Camera Scanner overlay with `<video>` viewfinder + canvas capture. Quick stats bar. Editable results table (code / name / qty / confidence / delete).
+**`index.html` (1060L)** — Multi-tab SPA: Scan | Receipts | Catalog | Training. Camera Scanner overlay with `<video>` viewfinder + canvas capture. Quick stats bar. Editable results table (code / name / qty / confidence / delete).
 
-**`styles.css` (2991L)** — CSS custom properties: `--primary:#4F6BF6`, `--accent:#10B981`, 5 shadow levels, spring easing. Glassmorphic header, skeleton loading, toast notifications.
+**`styles.css` (4221L)** — CSS custom properties: `--primary:#4F6BF6`, `--accent:#10B981`, 5 shadow levels, spring easing. Glassmorphic header, skeleton loading, toast notifications. Print styles for daily report preview.
 
-**`app.js` (3985L)** key behaviors:
+**`app.js` (5138L)** key behaviors:
+- SSE streaming: real-time OCR progress via EventSource (falls back to regular endpoint)
+- Undo delete: 5-second undo window on receipt deletion instead of permanent-delete
+- Daily report preview modal with print support
+- Tally XML export buttons on receipt cards and daily report modal
+- Styled modals: `showStyledConfirm()` and `showStyledPrompt()` replace native confirm/prompt
+- Tab AbortController: cancels pending API calls on tab switch
 - Client compress: resize >1800px → JPEG 0.88 before upload
 - Camera: `getUserMedia()` → `canvas.toBlob()` → `processFile()`
 - Clipboard paste: `document.addEventListener('paste')` (images only, scan tab)
@@ -763,6 +814,24 @@ training_data/
 - Short-digit Y-distance dedup: 1-2 digit numbers use raw Y-distance (35px threshold)
 - Position-based echo dedup: same (x,y) within 30×15px → keep best confidence
 
+### v3.0.0 Performance Overhaul (March 2026)
+
+**Scan time: ~20s → 5–9s (optimized hybrid), <100ms (cache hit)**
+
+| Optimization | Impact |
+|---|---|
+| Parallel fast-screen + Azure routing | Eliminated serial local→Azure bottleneck |
+| WebP Azure uploads | 25–34% smaller upload size |
+| Preloaded image param | No disk re-read for Azure |
+| Azure polling 1.0s → 0.5s | Faster Azure result retrieval |
+| Blur detection downscale to ~500px | 4× faster quality check |
+| Skip white-balance on cropped docs | ~5–8ms saved per scan |
+| IMAGE_MAX_DIMENSION 1800 → 1600 | ~21% fewer pixels to process |
+| Smart pass threshold 3 → 4 | Better accuracy (raised for reliability) |
+| DB PRAGMAs (sync=NORMAL, cache=8MB, mmap=256MB) | 2–5× faster DB writes |
+| Image cache 200 → 500 entries | More cache hits |
+| PyTorch CPU thread configuration | Controlled CPU utilization |
+
 ### Smart OCR Deep Testing (v2.1 — March 2026)
 
 **7 bugs found and fixed** via comprehensive edge-case testing:
@@ -781,15 +850,15 @@ training_data/
 
 ### Remaining Limitations (EasyOCR on CPU)
 - OCR O/1 confusion: "PEPW1" reads as "PEPW1O" (indistinguishable from "PEPW10") — handled by ambiguous_oi resolver
-- Speed bottleneck: 93% of scan time is EasyOCR CRAFT + CRNN on CPU (~14s avg). GPU would cut to ~2-3s.
+- Speed: ~5–9s scan time on optimized hybrid pipeline (was ~20s). GPU would cut to ~2-3s.
 - 1 messy-style edge case total not read (high jitter + rotation on text)
-- Azure Document Intelligence would significantly improve accuracy + speed for production use
+- Azure Document Intelligence significantly improves accuracy + speed for production use
 
 ---
 
 ## Test Suite Structure
 
-**314 tests passing (283 unit + 31 integration) · 73% code coverage · 15+ test files** (threshold: 70%)
+**594 tests passing (563 unit + 31 integration) · 73% code coverage · 15+ test files** (threshold: 70%)
 
 ### Unit / Module Tests
 | Test | Lines | Tests | Coverage |

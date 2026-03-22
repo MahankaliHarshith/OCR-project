@@ -8,7 +8,7 @@
 ![Azure](https://img.shields.io/badge/Azure_Doc_Intel-Optional-0078D4?logo=microsoftazure&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Audit](https://img.shields.io/badge/Audit_Score-91%2F100_(Grade_A)-brightgreen)
-![Tests](https://img.shields.io/badge/Tests-314_passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-594_passing-brightgreen)
 ![Smart OCR](https://img.shields.io/badge/Smart_OCR-Phase_2_Complete-blue)
 
 ---
@@ -48,7 +48,9 @@
   - **OCR Correction Feedback** — Records user corrections, builds lookup map (≥2 occurrences), auto-corrects known OCR misreads on future scans
   - **Date & Store Extraction** — Extracts receipt date (10+ formats) and store name from OCR text
 - **Input Validation** — Comprehensive OCR result validators with confidence thresholds and sanity checks
-- **Real-time Web Interface** — Single-page app with camera capture, clipboard paste, drag-and-drop upload
+- **SSE Real-Time Progress** — Server-Sent Events streaming endpoint for live OCR scan progress updates in the browser
+- **Tally Export** — Generate TallyPrime-compatible XML purchase vouchers for accounting integration
+- **Real-time Web Interface** — Single-page app with camera capture, clipboard paste, drag-and-drop upload, styled modals, undo-delete
 - **Excel Export** — Styled multi-sheet reports (Daily Sales + Summary) with confidence highlighting
 - **Product Catalog** — Full CRUD with CSV import/export and fuzzy search
 - **Training System** — Built-in benchmark runner, parameter optimizer, template learner, data manager, and **real-world adaptive trainer** with error pattern mining, confusion matrix analysis, auto-generated substitution rules, and interactive CLI
@@ -70,7 +72,7 @@
 - **Duplicate Detection** — Receipt dedup service prevents double-scans of the same image
 - **Correction Service** — Post-OCR correction pipeline for automated error fixups
 - **CI/CD** — GitHub Actions pipeline (lint + test matrix + Docker build), pre-commit hooks (ruff + formatting)
-- **Testing** — 314 tests passing (283 unit + 31 integration), 103 edge-case tests for Smart OCR, 7 bugs found and fixed via deep testing
+- **Testing** — 594 tests passing (563 unit + 31 integration), 103 edge-case tests for Smart OCR, 7 bugs found and fixed via deep testing
 - **Docker** — Multi-stage production image, non-root user, healthcheck, docker-compose with Prometheus + Grafana + Jaeger + Loki + Promtail + Alertmanager + named volumes
 
 ---
@@ -165,7 +167,7 @@ Detailed end-to-end flow showing every stage a receipt goes through — from use
 ║  STEP 2: IMAGE PREPROCESSING (ImagePreprocessor)                     ║
 ║     ┌─────────────────────────────────────────────┐                  ║
 ║     │ 1. EXIF rotation fix                        │                  ║
-║     │ 2. Resize (max 1800px)                      │                  ║
+║     │ 2. Resize (max 1600px)                      │                  ║
 ║     │ 3. Document scan (edge detection →          │                  ║
 ║     │    contour → 4-point perspective warp)      │                  ║
 ║     │ 4. White balance (gray-world correction)    │                  ║
@@ -431,12 +433,13 @@ POST /api/batch (up to 20 files)
 │   │   └── image_cache.py        #   SHA-256 LRU result cache
 │   │
 │   ├── services/
-│   │   ├── receipt_service.py    #   Scan orchestration pipeline (980L, 6-step + Smart OCR)
+│   │   ├── receipt_service.py    #   Scan orchestration pipeline (1024L, 6-step + Smart OCR)
 │   │   ├── product_service.py    #   Product CRUD + CSV import/export
 │   │   ├── excel_service.py      #   Styled Excel report generation
 │   │   ├── batch_service.py      #   Async background batch processing
 │   │   ├── dedup_service.py      #   Duplicate receipt detection (image hash + content fingerprint)
-│   │   └── correction_service.py #   OCR correction feedback loop (learn from user edits)
+│   │   ├── correction_service.py #   OCR correction feedback loop (learn from user edits)
+│   │   └── tally_service.py      #   Tally-compatible XML purchase voucher export
 │   │
 │   └── static/                   # Frontend assets
 │       ├── index.html            #   3-tab SPA (Scan | Receipts | Catalog)
@@ -452,7 +455,7 @@ POST /api/batch (up to 20 files)
 │   ├── template_learner.py       #   Receipt template pattern learning
 │   └── real_world_trainer.py     #   Adaptive trainer — error mining, confusion matrix, learned rules
 │
-├── tests/                        # Test suite (314 tests: 283 unit + 31 integration)
+├── tests/                        # Test suite (594 tests: 563 unit + 31 integration)
 │   ├── test_app.py               #   Unit tests (pytest) — parser, Excel, DB
 │   ├── test_smart_ocr.py         #   Smart OCR pipeline tests (702L, 67 tests)
 │   ├── test_smart_ocr_edge_cases.py  #   Smart OCR edge cases (991L, 103 tests, 9 classes)
@@ -480,6 +483,10 @@ POST /api/batch (up to 20 files)
 │   ├── start_devtunnel.py        #   Dev tunnel launcher
 │   ├── start_public.py           #   ngrok public URL launcher
 │   ├── trainer.py                #   Interactive real-world trainer CLI (9 commands)
+│   ├── benchmark_now.py          #   Live OCR pipeline speed/accuracy measurement
+│   ├── check_azure_status.py     #   Azure DI SDK/credentials diagnostics
+│   ├── azure_performance.py      #   Azure-specific performance testing
+│   ├── scan_one.py / scan_handwritten.py / scan_ideal_receipt.py  # Quick scan utilities
 │   ├── dev/                      #   Development & debugging tools
 │   └── generators/               #   Test data generation scripts
 │
@@ -488,8 +495,15 @@ POST /api/batch (up to 20 files)
 │   ├── CONTEXT.md                #   Technical context reference
 │   ├── HYBRID_OCR_ARCHITECTURE.md
 │   ├── DEEP_AUDIT_REPORT.md      #   Audit results (91/100 Grade A) + training guide
+│   ├── PERFORMANCE_AUDIT_REPORT.md #  3-phase performance optimization audit
+│   ├── SPEED_AND_ACCURACY_AUDIT.md
+│   ├── RECEIPT_PLACEMENT_AND_FORMAT_GUIDE.md
+│   ├── RECEIPT_SPACING_AND_BEST_PRACTICES.md
 │   ├── AI_Receipt_Generation_Prompts.md
 │   └── Receipt_Design_and_Scanning_Guide.md
+│
+├── DEVELOPMENT_GUIDE.md          # Agent instructions + pre-flight checklist
+├── OPTIMIZATION_HISTORY.md        # Performance engineering log (20s → <100ms cached)
 │
 ├── models/                       # EasyOCR model weights (auto-downloaded)
 ├── training_data/                # Training system data
@@ -604,6 +618,7 @@ Interactive API documentation is available at **[http://localhost:8000/docs](htt
 |--------|----------|-------------|
 | `GET` | `/api/health` | Health check + engine status |
 | `POST` | `/api/receipts/scan` | Upload and scan a receipt image |
+| `POST` | `/api/receipts/scan-stream` | SSE streaming scan with real-time progress events |
 | `POST` | `/api/receipts/scan-batch` | Scan up to 10 receipts (synchronous) |
 | `POST` | `/api/batch` | Submit up to 20 receipts for async processing |
 | `GET` | `/api/batch` | List recent async batch jobs |
@@ -622,6 +637,8 @@ Interactive API documentation is available at **[http://localhost:8000/docs](htt
 | `POST` · `GET` | `/api/products/import/csv` · `export/csv` | CSV import / export |
 | `POST` | `/api/export/excel` | Generate Excel report |
 | `GET` | `/api/export/daily` | Daily sales report |
+| `POST` | `/api/export/tally` | Generate Tally-compatible XML purchase voucher |
+| `GET` | `/api/export/tally/daily` | Daily receipts as Tally XML |
 | `GET` | `/api/export/download/{file}` | Download an export file |
 | `GET` | `/api/dashboard` | Dashboard statistics |
 | `GET` | `/api/ocr/status` | OCR engine status |
@@ -696,7 +713,7 @@ Image Upload
 
 ### Image Preprocessing Pipeline
 
-1. **Load** — EXIF-corrected orientation → resize to max 1800px
+1. **Load** — EXIF-corrected orientation → resize to max 1600px
 2. **Document Scan** — Edge detection → contour → 4-point perspective warp
 3. **White Balance** — Gray-world color correction
 4. **Grayscale** conversion
@@ -767,7 +784,7 @@ On first initialization, the database is seeded with **18 paint-shop products**:
 
 ## Testing
 
-**314 tests passing** (283 unit + 31 integration) · **73% code coverage** (threshold: 70%) across 15+ test files.
+**594 tests passing** (563 unit + 31 integration) · **73% code coverage** (threshold: 70%) across 15+ test files.
 
 ```bash
 # Run all unit tests with coverage
@@ -1385,6 +1402,28 @@ Hooks: trailing whitespace, EOF fixer, YAML/TOML check, large file guard, merge 
 ---
 
 ## Changelog
+
+### v3.0.0 — Performance Overhaul + SSE + Tally Export (March 2026)
+
+**OCR Pipeline Performance (~20s → 5–9s scan time):**
+- **Hybrid engine rewrite** — Parallel fast-screen + Azure routing replaces serial local-first-then-Azure flow. Pre-built Azure image bytes run concurrently with local screen.
+- **Azure engine: WebP encoding** — 25–34% smaller uploads. Preloaded image parameter skips disk re-reads. Configurable polling interval (0.5s, down from 1.0s).
+- **Preprocessor optimizations** — Skip white-balance on cropped docs, downscale blur detection to ~500px (4× faster), reduce max dimension 1800 → 1600 (~21% fewer pixels)
+- **Database PRAGMAs** — `synchronous=NORMAL`, `cache_size=8MB`, `mmap_size=256MB`, `temp_store=MEMORY`. Run ANALYZE after migrations.
+- **New config** — WebP format, speculative parallel mode, PyTorch thread count, SSE toggle, batch Azure concurrency, image cache 200 → 500
+
+**New Features:**
+- **SSE streaming endpoint** (`POST /api/receipts/scan-stream`) — Server-Sent Events for real-time OCR progress in browser, with EventSource fallback
+- **Tally export service** (237L) — TallyPrime-compatible XML purchase vouchers; `POST /api/export/tally` + `GET /api/export/tally/daily`
+- **Frontend** — Undo-delete with 5s window, daily report preview modal with print, Tally XML export buttons, tab AbortController, styled modals replacing native confirm/prompt
+
+**New Scripts & Documentation:**
+- `benchmark_now.py` — live OCR pipeline speed/accuracy benchmarking
+- `check_azure_status.py` — Azure DI SDK/credentials diagnostics
+- `azure_performance.py` — Azure-specific performance testing
+- `DEVELOPMENT_GUIDE.md` — agent instructions with pre-flight checklist
+- `OPTIMIZATION_HISTORY.md` — performance engineering log (20s → <100ms cached)
+- `PERFORMANCE_AUDIT_REPORT.md` — 3-phase optimization deep audit
 
 ### v2.1.0 — Smart OCR + Deep Testing (March 2026)
 
